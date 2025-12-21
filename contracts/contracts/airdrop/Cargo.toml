@@ -1,0 +1,30 @@
+[package]
+name = "airdrop"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Batch CW20 token distribution contract for USTR CMM"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+library = []
+cosmwasm_1_2 = ["cosmwasm-std/cosmwasm_1_2"]
+
+[dependencies]
+cosmwasm-std.workspace = true
+cosmwasm-schema.workspace = true
+cw-storage-plus.workspace = true
+cw2.workspace = true
+cw20.workspace = true
+thiserror.workspace = true
+schemars.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+cw-multi-test.workspace = true
+cosmwasm-std.workspace = true
+

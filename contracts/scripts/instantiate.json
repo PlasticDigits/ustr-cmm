@@ -1,0 +1,54 @@
+{
+  "description": "Example instantiate messages for USTR CMM contracts",
+  "note": "Replace placeholder addresses with actual deployed addresses",
+  
+  "ustr_token": {
+    "name": "USTR",
+    "symbol": "USTR",
+    "decimals": 6,
+    "initial_balances": [],
+    "initial_minters": ["terra1...admin_address"],
+    "marketing": {
+      "project": "USTR CMM",
+      "description": "Repeg token for the USTR CMM collateralized unstablecoin system",
+      "marketing": "terra1...marketing_address"
+    }
+  },
+  
+  "treasury": {
+    "governance": "terra1...admin_address"
+  },
+  
+  "ustc_swap": {
+    "ustr_token": "terra1...ustr_token_address",
+    "treasury": "terra1...treasury_address",
+    "start_time": 1735689600,
+    "start_rate": "1.5",
+    "end_rate": "2.5",
+    "duration_seconds": 8640000,
+    "admin": "terra1...admin_address"
+  },
+  
+  "airdrop": {
+    "admin": "terra1...admin_address"
+  },
+
+  "testnet": {
+    "note": "Testnet-specific configuration",
+    "rpc": "https://terra-classic-testnet-rpc.publicnode.com",
+    "chain_id": "rebel-2",
+    "existing_code_ids": {
+      "cw20_mintable": 1641
+    }
+  },
+  
+  "mainnet": {
+    "note": "Mainnet-specific configuration",
+    "rpc": "https://terra-classic-rpc.publicnode.com",
+    "chain_id": "columbus-5",
+    "existing_code_ids": {
+      "cw20_mintable": 10184
+    }
+  }
+}
+

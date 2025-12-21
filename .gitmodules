@@ -1,0 +1,6 @@
+[submodule "contracts/external/cw20-mintable"]
+	path = contracts/external/cw20-mintable
+	url = https://github.com/PlasticDigits/cw20-mintable.git
+[submodule "contracts/external/cmm-ustc-preregister"]
+	path = contracts/external/cmm-ustc-preregister
+	url = https://github.com/PlasticDigits/cmm-ustc-preregister.git

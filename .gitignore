@@ -1,0 +1,47 @@
+# Rust / CosmWasm build artifacts
+target/
+artifacts/
+*.wasm
+
+# Coverage
+tarpaulin*
+tarpaulin-report.html
+cobertura.xml
+*.profraw
+lcov.info
+coverage/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Node.js (for frontend)
+node_modules/
+dist/
+dist-ssr/
+build/
+.cache/
+.parcel-cache/
+.vite/
+*.tsbuildinfo
+
+# OS files
+Thumbs.db
