@@ -31,6 +31,8 @@
     - [Appendix B: Economic Calculations](#appendix-b-economic-calculations)
 
 > **📚 Economic Theory & Bibliography**: For comprehensive economic theory, design rationale, comparisons with other stablecoin systems, and academic references, see [docs/ECONOMICS.md](./docs/ECONOMICS.md).
+>
+> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
 
 ---
 
@@ -39,7 +41,7 @@
 USTR CMM is a collateralized monetary system designed for TerraClassic that introduces two primary tokens:
 
 - **USTR**: A repeg token acquired through USTC deposits, providing early supporters exposure to the ecosystem's growth
-- **UST1**: A future collateralized **unstablecoin** backed by USTC and a diversified basket of crypto assets, with dynamic minting based on collateralization ratios
+- **UST1**: A future collateralized **unstablecoin** backed by USTC and a diversified basket of crypto assets—including on-chain real-world assets (RWAs) and synthetic assets—with dynamic minting based on collateralization ratios
 
 ### Unstablecoin vs Stablecoin
 
@@ -59,7 +61,7 @@ This proposal outlines the architecture, economics, and implementation plan for 
 
 1. Deploying USTR as a CW20 mintable token
 2. Establishing a secure treasury contract to hold protocol assets
-3. Honoring preregistration deposits (16.7M USTC → 16.7M USTR at 1:1 ratio)
+3. Honoring preregistration deposits (a substantial amount of USTC → USTR at 1:1 ratio)
 4. Implementing a one-way USTC→USTR public swap with a time-decaying exchange rate
 
 The system is designed with a clear separation of concerns, emphasizing security, transparency, and a path toward decentralized governance. Note: Neither USTR nor UST1 is the governance token; governance will be added in a future phase, backed by CL8Y nodes.
@@ -87,7 +89,7 @@ Following the Terra ecosystem events, the TerraClassic community has continued t
 
 ### Current Asset Position
 
-The protocol begins with approximately **16.7 million USTC** already deposited via the preregistration smart contract on TerraClassic ([cmm-ustc-preregister](https://github.com/PlasticDigits/cmm-ustc-preregister), [smart contract source](https://github.com/PlasticDigits/cmm-ustc-preregister/tree/main/smartcontracts-terraclassic)). These preregistration depositors will receive **1 USTR for each 1 USTC** they contributed at the 1:1 ratio.
+The protocol begins with a **substantial amount of USTC** already deposited via the preregistration smart contract on TerraClassic ([cmm-ustc-preregister](https://github.com/PlasticDigits/cmm-ustc-preregister), [smart contract source](https://github.com/PlasticDigits/cmm-ustc-preregister/tree/main/smartcontracts-terraclassic)). The preregistration contract remains open and users are continuing to deposit, so the final amount will be determined at the time of migration. These preregistration depositors will receive **1 USTR for each 1 USTC** they contributed at the 1:1 ratio.
 
 The preregistration contract (currently live on mainnet) allows the admin to transfer the deposited USTC to a designated receiver address after a 7-day timelock. The admin will set the treasury contract address as the receiver, wait 7 days, then execute the transfer as a standard CW20 transfer.
 
@@ -176,16 +178,22 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 |----------|-------|
 | **Name** | USTR |
 | **Symbol** | USTR |
-| **Decimals** | 6 |
+| **Decimals** | 18 |
 | **Type** | Repeg token (not governance) |
 | **Standard** | CW20 Mintable (based on [PlasticDigits/cw20-mintable](https://github.com/PlasticDigits/cw20-mintable)) |
-| **Initial Supply** | ~16.7M (minted 1:1 for preregistration participants) |
+| **Initial Supply** | Substantial (minted 1:1 for preregistration participants) |
 | **Max Supply** | Uncapped (additional supply via public swap) |
 | **Minters** | Admin (for preregistration), Swap Contract (for public swap) |
 
+**Note on Decimals**: CW20 Mintable tokens use 18 decimals. The CMM system is compatible with any decimal count—including the native `uusd` 6 decimal format—and automatically handles decimal conversions using each token's on-chain decimal configuration.
+
 **Key Characteristics**:
-- Preregistration participants receive 1 USTR for each 1 USTC deposited
-- Public swap participants receive USTR at time-decaying rates (1.5→2.5 USTC per USTR)
+- **Preregistration participants** receive 1 USTR for each 1 USTC deposited (1:1 ratio)
+- **Public swap participants** receive USTR at time-decaying rates that increase from 1.5 to 2.5 USTC per USTR over 100 days:
+  - The rate starts at 1.5 USTC per USTR at public swap launch
+  - The rate linearly increases to 2.5 USTC per USTR by day 100
+  - This creates a **Schelling point attractor** that encourages early adoption—participants who swap early pay significantly less than late participants
+  - The increasing cost creates urgency and rewards conviction in the project
 - Standard CW20 functionality: transfers, allowances, burn
 - Future utility: staking pools, LP provision, buy-and-burn mechanism (Phase 2+)
 
@@ -195,12 +203,12 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 |----------|-------|
 | **Name** | UST1 Unstablecoin |
 | **Symbol** | UST1 |
-| **Decimals** | 6 |
+| **Decimals** | 18 |
 | **Type** | Collateralized unstablecoin (not governance) |
 | **Standard** | CW20 Mintable |
 | **Price Target** | $1 (not a peg; market-determined with collateral backing) |
 | **Initial Supply** | 0 (CR is infinite at launch) |
-| **Collateralization** | Over-collateralized basket (USTC + auction-acquired volatile assets) |
+| **Collateralization** | Over-collateralized basket (USTC + auction-acquired volatile assets, including on-chain RWAs and synthetic assets) |
 
 **Collateralization Ratio (CR) Tiers**:
 
@@ -226,11 +234,13 @@ UST1 is minted at a rate of `(collateral_above_190% / 5 years)` and distributed 
 - Each pool is a separate smart contract
 - **Pool allocation**: Governance sets the distribution split among the three pools (adjustable)
 - **Minting trigger**: Anyone can call a public method to mint the accrued UST1 (calculated per-second) to the pools
-- **Distribution rate**: Each pool distributes its UST1 balance over 5 years (UST1 per second = balance / 5 years)
-- **CR drop handling**: If CR drops below 190% during a distribution period, pending distributions are canceled
+- **Distribution rate**: Each pool distributes its UST1 balance over 5 years (UST1 per second = balance / 5 years). This rate is **updated every time an action is taken** on the rolling pool:
+  - For **staking pools**: The rate is recalculated on every deposit, withdraw, and claim action
+  - For the **buy-back & burn pool**: The rate is recalculated on every BB&B trigger, which can be called by anyone at any time; a relayer script will execute this a minimum of once every 24 hours
+- **CR drop handling**: If CR drops below 190%, pending distributions are **cancelled per-second**. The CR recalculation can be called at any time by anyone and **must always be called before UST1 mints** to the pools to ensure accurate distribution based on current collateralization
 - **Staking pools**: Standard staking mechanics with per-second reward accrual, updated on deposit/withdraw/transfer
 - **Buy-and-burn pool**: Anyone can trigger burns at any time; uses the same per-second UST1 tracking with 5-year division
-- **Governance adjustability**: Distribution rates and CR tier thresholds can be adjusted by governance
+- **Governance adjustability**: Governance creates auctions and sets basket targets, oracle configurations, future automated auction parameters, CR tier thresholds, distribution rates, and any other adjustable CMM parameters
 
 **Auction Mechanism**:
 
@@ -279,7 +289,7 @@ To encourage active participation, an additional 5% of the auction's UST1 is all
 
 **Note**: Full oracle integration and asset valuation methodology will be detailed in Phase 2 specifications.
 
-**Note**: At launch, with 16.7M USTC collateral and 0 UST1 supply, CR = ∞ (infinite), placing the system in the BLUE tier from day one.
+**Note**: At launch, with the preregistration USTC collateral and 0 UST1 supply, CR = ∞ (infinite), placing the system in the BLUE tier from day one.
 
 ---
 
@@ -340,6 +350,16 @@ The treasury must handle both:
 - **CW20 tokens**: Any CW20 token sent to the treasury
 
 For CW20 tokens, the treasury accepts any CW20 token sent to it—no deposit mechanism is required. Users simply send CW20 tokens directly to the treasury address for the best UX. The treasury maintains a **governance-managed whitelist** of known CW20 addresses; the `AllBalances {}` query iterates over this whitelist and queries each token's balance.
+
+**CW20 Abuse Prevention**: While anyone can send any CW20 token to the treasury, **only tokens on the whitelist are counted toward the Collateralization Ratio (CR)**. This prevents a common attack vector where bad actors could:
+1. Create a worthless CW20 token
+2. Artificially inflate its price on a DEX
+3. Send it to the treasury
+4. Pull liquidity after the CR is calculated
+
+By requiring governance whitelisting before a token affects CR calculations, the system is protected from this manipulation.
+
+**Decimal Handling**: The system uses each token's on-chain decimal count when calculating CR ratios. This ensures that the CR calculation matches oracle prices regardless of whether a token uses 6 decimals (like native `uusd`), 18 decimals (like most CW20s), or any other decimal configuration.
 
 #### Withdrawal Mechanism
 
@@ -472,7 +492,15 @@ PendingAdmin {
 4. Contract verifies swap period is active (current time between start and end)
 5. Contract calculates current rate based on elapsed time (using 10^18 precision)
 6. Contract calculates USTR amount: `ustr_amount = floor(ustc_amount / current_rate)`
-7. Contract transfers USTC to treasury (native bank send; note: TerraClassic applies a network-level transfer tax on `uusd` that the user pays; the treasury receives the post-tax amount)
+7. Contract transfers USTC to treasury (native bank send)
+
+**On-Chain Tax Handling**: TerraClassic applies a network-level **USTC Burn Tax** on `uusd` transfers. According to the [official TerraClassic tax documentation](https://terra-classic.io/docs/develop/module-specifications/tax), the `ComputeTax()` function multiplies each spend coin by the `BurnTaxRate` and truncates to integers. Zero results skip deduction.
+
+When transferring USTC from the preregistration contract to the treasury:
+- The burn tax is applied to the transfer amount
+- The treasury receives the **post-tax amount**
+- This is accounted for in the CR calculations
+- The burn tax effectively reduces circulating USTC supply, which benefits the ecosystem
 8. Contract mints USTR to user (CW20 mint call to USTR token)
 9. Contract updates statistics
 10. Contract emits swap event
@@ -577,13 +605,13 @@ The swap mechanism creates a natural price discovery and distribution system wit
 
 | Source | USTC Deposited | Rate | USTR Minted |
 |--------|----------------|------|-------------|
-| Preregistration | 16.7M USTC | 1:1 (1.0) | 16.7M USTR |
+| Preregistration | Substantial amount | 1:1 (1.0) | Equal USTR |
 | Public Swap | Variable | 1.5 → 2.5 | Variable |
 
 **Treasury Accumulation**
 
 All USTC (both preregistration and public swap) flows directly to the treasury as collateral:
-- 16.7M USTC from preregistration participants
+- A substantial amount of USTC from preregistration participants (still growing as deposits continue)
 - Additional USTC from public swap participants
 - This collateral backs future UST1 issuance
 - Initial CR = ∞ (infinite) since UST1 supply = 0
@@ -687,6 +715,15 @@ Transition to a multi-signature setup:
 - Geographic and jurisdictional distribution
 - Defined signers from community
 
+**Important Clarification**: The multi-sig signers are **security layer volunteers only**—they are not owners of the protocol and do not receive any profits, fees, or financial benefits from their role. Their sole purpose is to provide an additional security layer by approving or vetoing governance actions.
+
+**3-of-5 Multi-Sig Dashboard**:
+- A dedicated dashboard will be provided with **human-readable explanations** of all proposals
+- **Only the dev admin can create proposals**—this reduces risk from multi-sig wallet holders' potential lack of technical knowledge or loss of keys
+- The multi-sig exists **solely as a veto system** to prevent a compromised dev admin wallet from harming the protocol
+- Multi-sig signers review proposals and either approve or veto; they cannot create, modify, or independently execute protocol actions
+- This design ensures that even if the dev admin's keys are compromised, malicious proposals can be blocked by the multi-sig security layer
+
 ### Phase 3: DAO Governance
 
 Full decentralization through on-chain governance:
@@ -700,7 +737,7 @@ The 7-day timelock on admin/governance address changes in both contracts is desi
 
 **Governance Transition Mechanism**: When CL8Y governance is deployed, the admin/governance address in the treasury and swap contracts will be changed to point to the CL8Y governance contract. The governance contract will then call the appropriate execute methods on behalf of token holders. The specifics of CL8Y governance (node acquisition, voting weights, quorum requirements) are outside the scope of this proposal.
 
-**Multi-sig Configuration** (Phase 2): A 3-of-5 or similar threshold scheme is planned, but specific keyholders have not yet been determined.
+**Multi-sig Configuration** (Phase 2): A 3-of-5 or similar threshold scheme is planned, but specific keyholders have not yet been determined. Note that multi-sig signers serve as a security veto layer only—they do not own the protocol or receive any financial compensation.
 
 ---
 
@@ -735,12 +772,31 @@ The frontend provides a user-friendly interface for interacting with the USTR CM
 - Total treasury holdings (public data)
 - Asset breakdown visualization
 - Historical treasury growth chart
+- **Collateralization Ratio (CR) display with trend line**
+- Current CR tier indicator (RED/YELLOW/GREEN/BLUE)
 
-**5. Governance Interface** (for admin)
+**5. Single Source of Truth (SSoT) Dashboard**
+
+The SSoT Dashboard serves as the **authoritative reference** for the CMM system state:
+- **CR Ratios**: Real-time and historical collateralization ratio tracking
+- **Basket of Assets**: Complete breakdown of treasury holdings with valuations
+- **System State**: Current tier, pool balances, distribution rates
+- **Whitelist Status**: Which CW20 tokens are counted toward CR
+- **Oracle Prices**: Current price feeds used for CR calculations
+
+This dashboard eliminates reliance on third-party data aggregators that may report information incorrectly. Given the CW20 abuse vector (where false tokens could affect ratios if not properly filtered), having an authoritative SSoT prevents misinformation and gives users confidence in the true system state.
+
+**6. Governance Interface** (for admin)
 - Propose governance change
 - Accept pending governance
 - Cancel governance proposal
 - Withdraw assets (with confirmation flow)
+
+**7. Multi-Sig Dashboard** (Phase 2)
+- Human-readable proposal summaries
+- Proposal approval/veto interface
+- Multi-sig signer status
+- Pending proposal queue with explanations
 
 ### Technical Stack
 
@@ -1012,7 +1068,7 @@ ustr-cmm/
 4. **Post-Deployment Configuration**
    - Add swap contract as USTR minter
    - Remove deployer from USTR minters list
-   - Transfer initial USTC to treasury
+   - Transfer initial USTC to treasury (accounting for burn tax)
    - Verify all permissions
 
 ### Network Configuration
@@ -1105,7 +1161,7 @@ After each deployment:
 
 The USTR CMM project establishes the foundation for a sustainable, collateralized unstablecoin system on TerraClassic. By implementing a carefully designed token distribution mechanism, secure treasury management, and a clear upgrade path, the project aims to:
 
-1. **Honor preregistration commitments**: 16.7M USTR minted 1:1 for early USTC depositors
+1. **Honor preregistration commitments**: USTR minted 1:1 for early USTC depositors
 2. **Incentivize further participation**: Time-decaying swap rate rewards early public participants
 3. **Build a transparent, over-collateralized reserve**: All USTC flows to treasury as UST1 collateral
 4. **Create infrastructure for UST1**: Collateralization ratio tiers (RED/YELLOW/GREEN/BLUE) govern minting and redemption
@@ -1199,7 +1255,7 @@ Where:
 
 | Participant | USTC Deposited | Rate | USTR Received |
 |-------------|----------------|------|---------------|
-| All preregistration users | 16,700,000 USTC | 1.0 (1:1) | 16,700,000 USTR |
+| All preregistration users | Substantial amount | 1.0 (1:1) | Equal USTR |
 
 **Public Swap Examples**
 
@@ -1218,14 +1274,14 @@ Where:
 
 ### Treasury Growth Example
 
-| Event | USTC Added | Total Treasury USTC | Total USTR Supply |
-|-------|------------|---------------------|-------------------|
-| Launch (preregistration) | 16,700,000 | 16,700,000 | 16,700,000 |
-| After Day 0 swaps | 1,000,000 | 17,700,000 | 17,366,667 |
-| After Day 50 swaps | 2,000,000 | 19,700,000 | 18,366,667 |
-| After Day 100 (end) | 1,500,000 | 21,200,000 | 18,966,667 |
+| Event | Description | Effect |
+|-------|-------------|--------|
+| Launch (preregistration) | Initial USTC transferred | CR = ∞ (BLUE tier) |
+| Day 0 swaps | Public swap begins at 1.5 rate | Treasury grows, USTR minted |
+| Day 50 swaps | Rate at 2.0 | More USTC per USTR |
+| Day 100 (end) | Rate at 2.5, swap closes | Final treasury + supply determined |
 
-*Note: Example numbers only. Actual totals depend on participation.*
+*Note: Actual totals depend on participation. Preregistration deposits are ongoing.*
 
 ---
 

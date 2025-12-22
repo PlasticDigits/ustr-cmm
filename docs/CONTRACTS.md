@@ -2,6 +2,8 @@
 
 This document provides detailed interface specifications for all USTR CMM smart contracts.
 
+> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
+>
 > **Development Reference**: For working examples of TerraClassic contract patterns, see the 
 > git submodules in `contracts/external/`. The `cw20-mintable` submodule demonstrates CosmWasm 
 > contract structure, and `cmm-ustc-preregister/smartcontracts-terraclassic/` shows a complete 
@@ -22,7 +24,7 @@ local testing and development purposes.
 pub struct InstantiateMsg {
     pub name: String,
     pub symbol: String,
-    pub decimals: u8,
+    pub decimals: u8,  // CW20 Mintable uses 18 decimals; CMM compatible with any decimal count
     pub initial_balances: Vec<Cw20Coin>,
     pub mint: Option<MinterResponse>,
     pub marketing: Option<InstantiateMarketingInfo>,
@@ -315,6 +317,31 @@ pub struct Asset {
     pub amount: Uint128,
 }
 ```
+
+## Decimal Handling
+
+The CMM system handles tokens with varying decimal configurations:
+
+| Token Type | Typical Decimals | Example |
+|------------|------------------|---------|
+| Native `uusd` | 6 | 1 USTC = 1,000,000 uusd |
+| CW20 Mintable | 18 | 1 USTR = 10^18 base units |
+| Other CW20s | Varies | Checked on-chain |
+
+**CR Calculation**: The system queries each token's on-chain decimal count and normalizes all values before calculating collateralization ratios. This ensures oracle prices (typically in USD per whole token) match the internal accounting regardless of decimal configuration.
+
+## On-Chain Tax Handling
+
+TerraClassic applies a **USTC Burn Tax** on `uusd` transfers. Per the [official TerraClassic tax documentation](https://terra-classic.io/docs/develop/module-specifications/tax):
+
+- `ComputeTax()` multiplies each spend coin by `BurnTaxRate` and truncates to integers
+- Zero results skip deduction
+- The treasury receives the **post-tax amount** when USTC is transferred
+
+**Impact on CMM**:
+- When transferring USTC from preregistration to treasury, the burn tax applies
+- CR calculations account for the actual received amount
+- The burn tax reduces circulating USTC supply (ecosystem benefit)
 
 ---
 

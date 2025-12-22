@@ -1,6 +1,8 @@
 # USTR CMM Economic Design
 
 > **A Comprehensive Guide to the Economics of the Collateralized Unstablecoin System**
+>
+> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
 
 This document explains the economic theory, mechanisms, and rationale behind every component of the USTR CMM system. It is written for investors, developers, community members, and anyone seeking to understand why this system is designed the way it is.
 
@@ -246,13 +248,13 @@ This is the opposite of a rigid peg, which becomes more fragile under stress. Ev
 USTR is distributed through two channels:
 
 **1. Preregistration (1:1 Rate)**
-- 16.7 million USTR for early participants
+- A substantial amount of USTR for early participants (deposits still ongoing)
 - Each 1 USTC deposited = 1 USTR received
 - Rewards the earliest believers who took the most risk
 
 **2. Public Swap (Time-Decaying Rate)**
 - 100-day swap period
-- Rate increases from 1.5 to 2.5 USTC per USTR
+- Rate **starts at 1.5 and increases to 2.5** USTC per USTR
 - Early participants pay 40% less than late participants
 - Creates urgency and rewards conviction
 
@@ -264,7 +266,14 @@ USTR is distributed through two channels:
 | 75 | 2.25 | +50% |
 | 100 | 2.50 | +67% |
 
-This mechanism creates a natural **Schelling point** and price ceiling for USTR—if it trades above the current swap rate, arbitrageurs can mint new USTR and sell it.
+**Why 1:1 → 1.5 → 2.5?**
+
+The rate structure creates a **Schelling point attractor** for early price:
+- **Preregistration at 1:1**: Rewards the earliest believers who committed before the system was built
+- **Public swap starts at 1.5**: Immediate premium incentivizes preregistration and creates urgency at launch
+- **Linear increase to 2.5 over 100 days**: Continued urgency throughout the swap period
+
+This creates a natural price ceiling for USTR—if it trades above the current swap rate, arbitrageurs can mint new USTR and sell it. The escalating rate rewards conviction and creates clear incentives for early adoption.
 
 ### Path to $1: The Long-Term Vision
 
@@ -408,12 +417,19 @@ The treasury begins with USTC as the primary collateral, but the goal is **aggre
 
 **Target portfolio evolution:**
 
-| Phase | USTC % | Other Stables % | Blue-Chip Crypto % |
-|-------|--------|-----------------|-------------------|
-| Launch | 100% | 0% | 0% |
-| Year 1 | 60% | 20% | 20% |
-| Year 3 | 30% | 30% | 40% |
-| Mature | <10% | 40% | 50% |
+| Phase | USTC % | Other Stables % | Blue-Chip Crypto % | RWAs + Synthetics % |
+|-------|--------|-----------------|-------------------|---------------------|
+| Launch | 100% | 0% | 0% | 0% |
+| Year 1 | 60% | 15% | 15% | 10% |
+| Year 3 | 30% | 25% | 30% | 15% |
+| Mature | <10% | 30% | 40% | 20% |
+
+**Collateral Types:**
+- **USTC**: Foundation collateral from preregistration
+- **Other Stables**: USDC, USDT, etc. for diversification
+- **Blue-Chip Crypto**: BTC, ETH (via wrapped versions)
+- **On-chain RWAs**: Tokenized real-world assets
+- **Synthetic Assets**: On-chain synthetic representations of traditional assets
 
 **Why diversify away from USTC?**
 
@@ -589,11 +605,28 @@ Daily distribution = Pool balance / (5 years in days)
 - Unused distributions carry forward
 - CR drops below 190% pause new minting, not distribution of existing pool
 
+**Distribution Rate Updates:**
+
+The distribution rate (UST1 per second = balance / 5 years) is **recalculated every time an action is taken** on the rolling pool:
+- **For staking pools**: Updated on every deposit, withdraw, and claim
+- **For buy-back & burn pool**: Updated on every BB&B trigger (can be called by anyone; relayer runs minimum once per 24 hours)
+
+**CR Drop Handling:**
+
+- CR is calculated per-second and can be recalculated at any time
+- If CR drops below 190%, pending distributions are **cancelled per-second**
+- CR recalculation **must always be called before UST1 mints** to pools to ensure accurate state
+
 **Governance adjustability:**
 
-- Pool split ratios can be adjusted (e.g., 40% UST1 staking, 40% USTR buy-and-burn, 20% USTR staking)
-- CR tier thresholds can be adjusted based on real-world data
-- Distribution periods could be modified in extreme circumstances
+Governance can adjust:
+- Pool split ratios (e.g., 40% UST1 staking, 40% USTR buy-and-burn, 20% USTR staking)
+- CR tier thresholds based on real-world data
+- Distribution periods in extreme circumstances
+- **Basket targets**: Which assets to acquire and target percentages
+- **Oracle configurations**: Price feed sources and parameters
+- **Auction parameters**: Future automated auction settings
+- **Any adjustable CMM parameters**
 
 ---
 
@@ -945,6 +978,20 @@ Governance for USTR CMM will be managed through **CL8Y nodes**—an NFT-based go
 Visit **[CL8Y.com](https://cl8y.com)**
 
 The CL8Y community supports the TerraClassic ecosystem and is building the governance infrastructure for USTR CMM. Governance specifics—including node distribution, voting weights, and quorum requirements—are managed by that community.
+
+### Multi-Sig Security Layer (Phase 2)
+
+Before full DAO governance, a multi-sig layer provides security:
+
+**Key Points:**
+- **3-of-5 threshold scheme** (or similar)
+- Multi-sig signers are **security volunteers only**—they receive no ownership, profits, or financial benefits
+- **Dev admin retains sole proposal creation authority**—signers cannot create proposals
+- Multi-sig acts as a **veto-only system** to prevent compromised admin actions
+- A dashboard provides **human-readable proposal explanations** so signers can make informed decisions
+- This design prevents both:
+  - Compromised admin keys from unilaterally harming the protocol
+  - Multi-sig signer inexperience or key loss from blocking operations
 
 ---
 

@@ -1,8 +1,10 @@
 # USTR CMM Architecture
 
+> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
+
 ## System Overview
 
-The USTR CMM system consists of four primary smart contracts that work together to implement a collateralized stablecoin system on TerraClassic.
+The USTR CMM system consists of four primary smart contracts that work together to implement a collateralized unstablecoin system on TerraClassic.
 
 ## Contract Diagram
 
@@ -31,9 +33,9 @@ The USTR CMM system consists of four primary smart contracts that work together 
 │  └──────────────┘                          └───────────────────┘   │
 │                                                                     │
 │  ┌──────────────┐     [PHASE 2]                                    │
-│  │  UST1 TOKEN  │     Collateralized stablecoin                    │
+│  │  UST1 TOKEN  │     Collateralized unstablecoin                  │
 │  │  (CW20)      │     minted against treasury assets               │
-│  └──────────────┘                                                  │
+│  └──────────────┘     (incl. RWAs + synthetic assets)              │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -82,7 +84,7 @@ The USTR CMM system consists of four primary smart contracts that work together 
 
 ### UST1 Token Contract (Phase 2)
 
-**Purpose**: Collateralized stablecoin
+**Purpose**: Collateralized unstablecoin backed by diversified basket including RWAs and synthetic assets
 
 **Key Functions**:
 - Mint against collateral
@@ -92,6 +94,8 @@ The USTR CMM system consists of four primary smart contracts that work together 
 **Dependencies**:
 - Treasury (collateral source)
 - Oracle (price feeds)
+
+**Decimal Handling**: The system uses each token's on-chain decimal configuration for CR calculations, ensuring oracle prices match regardless of decimal count (6 for native `uusd`, 18 for most CW20s, etc.).
 
 ## Data Flow
 
@@ -230,15 +234,49 @@ Key frontend examples in `frontend-dapp/`:
 
 ---
 
+## Frontend Dashboard Architecture
+
+### Single Source of Truth (SSoT) Dashboard
+
+The SSoT Dashboard is a critical system component that serves as the authoritative reference for CMM state:
+
+**Core Features**:
+- **CR Ratios Display**: Real-time collateralization ratio with historical trend line
+- **Current Tier Indicator**: Visual display of RED/YELLOW/GREEN/BLUE status
+- **Basket of Assets**: Complete treasury holdings breakdown with valuations
+- **Whitelist Status**: Shows which CW20 tokens are counted toward CR calculations
+- **Oracle Price Feeds**: Current prices used for valuations
+
+**Why SSoT Matters**:
+- Eliminates reliance on third-party data aggregators that may report incorrectly
+- Prevents misinformation from false CW20 tokens affecting perceived ratios
+- Provides single authoritative view of system state
+- Enables users to verify on-chain data directly
+
+### Multi-Sig Dashboard (Phase 2)
+
+- Human-readable proposal explanations
+- Approval/veto interface for multi-sig signers
+- Proposal queue with clear descriptions
+- Multi-sig signers serve as security veto layer only (no ownership or financial benefit)
+
 ## Upgrade Path
 
 ### Phase 1 → Phase 2
 
-Adding UST1 stablecoin:
+Adding UST1 unstablecoin:
 1. Deploy UST1 token contract
 2. Deploy collateralization contract (configured to query treasury balances for CR calculation)
 3. Add collateralization contract as UST1 minter
 4. Collateral remains in treasury; governance may authorize withdrawals only for buyback auctions (when UST1 trades below $1)
+
+### Phase 1.5 → Phase 2: Multi-Sig Transition
+
+Adding multi-sig security layer:
+1. Deploy multi-sig contract (3-of-5 threshold)
+2. Multi-sig signers are security volunteers—no ownership or profit rights
+3. Dev admin retains sole proposal creation authority
+4. Multi-sig acts as veto-only system to prevent compromised admin actions
 
 ### Phase 2 → Phase 3
 

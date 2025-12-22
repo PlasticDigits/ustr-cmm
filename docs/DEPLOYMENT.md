@@ -1,5 +1,7 @@
 # USTR CMM Deployment Guide
 
+> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
+
 This document outlines the deployment procedures for USTR CMM contracts on TerraClassic.
 
 ## Prerequisites
@@ -259,8 +261,11 @@ terrad tx wasm execute $USTR_TOKEN \
 
 ## Step 5: Transfer Initial USTC to Treasury
 
+**Note on USTC Burn Tax**: TerraClassic applies a burn tax on `uusd` transfers. Per the [official documentation](https://terra-classic.io/docs/develop/module-specifications/tax), `ComputeTax()` multiplies each spend coin by `BurnTaxRate` and truncates to integers. The treasury will receive the post-tax amount.
+
 ```bash
-terrad tx bank send wallet $TREASURY 16700000000000uusd \
+# Transfer USTC to treasury (burn tax will be applied)
+terrad tx bank send wallet $TREASURY <AMOUNT>uusd \
   --chain-id $CHAIN_ID \
   --node $RPC \
   --gas auto \
@@ -268,6 +273,9 @@ terrad tx bank send wallet $TREASURY 16700000000000uusd \
   --fees 100000000uluna \
   --broadcast-mode sync \
   -y
+
+# Note: Replace <AMOUNT> with actual preregistration amount
+# The treasury receives post-tax amount which is accounted for in CR calculations
 ```
 
 ## Verification
