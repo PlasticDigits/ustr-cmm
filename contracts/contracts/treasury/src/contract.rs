@@ -578,6 +578,8 @@ mod tests {
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
     use cosmwasm_std::{coin, coins, from_json, Timestamp, Uint128};
     use cw20::BalanceResponse as Cw20BalanceResponse;
+    use sha2::{Digest, Sha256};
+    use hex;
 
     const GOVERNANCE: &str = "governance_addr";
     const NEW_GOVERNANCE: &str = "new_governance_addr";
@@ -2609,6 +2611,81 @@ mod tests {
         assert_eq!(whitelist.addresses[0].as_str(), "a_token");
         assert_eq!(whitelist.addresses[1].as_str(), "m_token");
         assert_eq!(whitelist.addresses[2].as_str(), "z_token");
+    }
+
+    #[test]
+    fn test_propose_withdraw_id_collision_exceeds_limit() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let env = mock_env();
+        let destination_addr = Addr::unchecked(USER);
+        let asset = AssetInfo::Native {
+            denom: DENOM_USTC.to_string(),
+        };
+        let amount = Uint128::from(1000u128);
+
+        // Generate the initial withdrawal ID that will be used
+        let initial_id = generate_withdrawal_id(&destination_addr, &asset, amount, env.block.time);
+
+        // Pre-populate storage with the initial ID to trigger collision
+        let dummy_withdrawal = PendingWithdrawal {
+            destination: destination_addr.clone(),
+            asset: asset.clone(),
+            amount,
+            execute_after: env.block.time.plus_seconds(DEFAULT_TIMELOCK_DURATION),
+        };
+        PENDING_WITHDRAWALS
+            .save(deps.as_mut().storage, initial_id.as_str(), &dummy_withdrawal)
+            .unwrap();
+
+        // Pre-populate storage with withdrawal IDs that will collide in the loop
+        // The loop generates new IDs using: hash(previous_id + counter + nanos)
+        let mut current_id = initial_id.clone();
+        for counter in 0u64..=1001u64 {
+            // Generate the ID that would be created in the loop at this iteration
+            let mut hasher = Sha256::new();
+            hasher.update(current_id.as_bytes());
+            hasher.update(&counter.to_be_bytes());
+            hasher.update(&env.block.time.nanos().to_be_bytes());
+            let hash = hasher.finalize();
+            let next_id = hex::encode(&hash[..16]);
+
+            // Save this ID to storage to force a collision
+            let dummy_withdrawal = PendingWithdrawal {
+                destination: destination_addr.clone(),
+                asset: asset.clone(),
+                amount,
+                execute_after: env.block.time.plus_seconds(DEFAULT_TIMELOCK_DURATION),
+            };
+            PENDING_WITHDRAWALS
+                .save(deps.as_mut().storage, next_id.as_str(), &dummy_withdrawal)
+                .unwrap();
+
+            current_id = next_id;
+        }
+
+        // Fund treasury
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(1000, DENOM_USTC));
+
+        // Now try to propose a withdrawal - it should hit the collision limit
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: DENOM_USTC.to_string(),
+            },
+            amount,
+        };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        match err {
+            ContractError::Std(cosmwasm_std::StdError::GenericErr { msg }) => {
+                assert_eq!(msg, "Failed to generate unique withdrawal ID");
+            }
+            _ => panic!("Expected generic error for failed withdrawal ID generation"),
+        }
     }
 }
 
