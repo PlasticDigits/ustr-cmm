@@ -2650,6 +2650,682 @@ mod tests {
         assert_eq!(whitelist.addresses[2].as_str(), "z_token");
     }
 
+    // ============ UUSD (Primary Native Token) TESTS ============
+    //
+    // These tests focus specifically on uusd operations since it's the primary
+    // token the Treasury will handle. While other tests use DENOM_USTC (which
+    // is "uusd"), these tests provide comprehensive coverage of the full uusd
+    // lifecycle: receiving, querying, proposing withdrawal, and executing withdrawal.
+
+    #[test]
+    fn test_uusd_receive_and_query_balance() {
+        // Test that the treasury can receive uusd and the balance is queryable
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let env = mock_env();
+        let initial_amount = Uint128::from(5_000_000u128); // 5 USTC
+
+        // Simulate treasury receiving uusd (native tokens are tracked via bank module)
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(5_000_000, "uusd"));
+
+        // Query the balance
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::Balance {
+                asset: AssetInfo::Native {
+                    denom: "uusd".to_string(),
+                },
+            },
+        )
+        .unwrap();
+        let balance: BalanceResponse = from_json(res).unwrap();
+
+        assert_eq!(balance.amount, initial_amount);
+        match balance.asset {
+            AssetInfo::Native { denom } => assert_eq!(denom, "uusd"),
+            _ => panic!("Expected Native uusd asset"),
+        }
+
+        // Also verify it shows up in AllBalances query
+        let res = query(deps.as_ref(), env, QueryMsg::AllBalances {}).unwrap();
+        let all_balances: AllBalancesResponse = from_json(res).unwrap();
+
+        assert_eq!(all_balances.balances.len(), 1);
+        assert_eq!(all_balances.balances[0].amount, initial_amount);
+        match &all_balances.balances[0].asset {
+            AssetInfo::Native { denom } => assert_eq!(denom, "uusd"),
+            _ => panic!("Expected Native uusd asset in AllBalances"),
+        }
+    }
+
+    #[test]
+    fn test_uusd_propose_withdraw() {
+        // Test the complete proposal flow for uusd withdrawal
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let env = mock_env();
+        let withdraw_amount = Uint128::from(3_000_000u128); // 3 USTC
+
+        // Fund treasury with uusd (10 USTC)
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(10_000_000, "uusd"));
+
+        // Propose withdrawal of uusd
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: withdraw_amount,
+        };
+
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Verify response attributes
+        assert_eq!(res.attributes.len(), 5);
+        assert_eq!(res.attributes[0].key, "action");
+        assert_eq!(res.attributes[0].value, "propose_withdraw");
+        assert_eq!(res.attributes[2].key, "destination");
+        assert_eq!(res.attributes[2].value, USER);
+        assert_eq!(res.attributes[3].key, "amount");
+        assert_eq!(res.attributes[3].value, withdraw_amount.to_string());
+
+        // Extract withdrawal ID
+        let withdrawal_id = res.attributes[1].value.clone();
+        assert!(!withdrawal_id.is_empty());
+
+        // Verify pending withdrawal was stored
+        let pending = PENDING_WITHDRAWALS.load(&deps.storage, withdrawal_id.as_str()).unwrap();
+        assert_eq!(pending.destination.as_str(), USER);
+        assert_eq!(pending.amount, withdraw_amount);
+        match &pending.asset {
+            AssetInfo::Native { denom } => assert_eq!(denom, "uusd"),
+            _ => panic!("Expected Native uusd asset in pending withdrawal"),
+        }
+        assert_eq!(
+            pending.execute_after.seconds(),
+            env.block.time.seconds() + DEFAULT_TIMELOCK_DURATION
+        );
+
+        // Verify withdrawal shows up in pending withdrawals query
+        let res = query(deps.as_ref(), env, QueryMsg::PendingWithdrawals {}).unwrap();
+        let pending_list: PendingWithdrawalsResponse = from_json(res).unwrap();
+
+        assert_eq!(pending_list.withdrawals.len(), 1);
+        assert_eq!(pending_list.withdrawals[0].withdrawal_id, withdrawal_id);
+        assert_eq!(pending_list.withdrawals[0].amount, withdraw_amount);
+    }
+
+    #[test]
+    fn test_uusd_execute_withdraw_after_timelock() {
+        // Test the complete execution flow for uusd withdrawal after timelock expires
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let mut env = mock_env();
+        let withdraw_amount = Uint128::from(3_000_000u128); // 3 USTC
+
+        // Fund treasury with uusd (10 USTC)
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(10_000_000, "uusd"));
+
+        // Propose withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: withdraw_amount,
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let withdrawal_id = res.attributes[1].value.clone();
+
+        // Advance time past the 7-day timelock
+        env.block.time = Timestamp::from_seconds(
+            env.block.time.seconds() + DEFAULT_TIMELOCK_DURATION + 1,
+        );
+
+        // Execute the withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: withdrawal_id.clone(),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Verify response
+        assert_eq!(res.messages.len(), 1);
+        assert_eq!(res.attributes[0].key, "action");
+        assert_eq!(res.attributes[0].value, "execute_withdraw");
+        assert_eq!(res.attributes[1].key, "withdrawal_id");
+        assert_eq!(res.attributes[1].value, withdrawal_id);
+        assert_eq!(res.attributes[2].key, "destination");
+        assert_eq!(res.attributes[2].value, USER);
+        assert_eq!(res.attributes[3].key, "amount");
+        assert_eq!(res.attributes[3].value, withdraw_amount.to_string());
+
+        // Verify the message is a BankMsg::Send with uusd
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, USER);
+                assert_eq!(amount.len(), 1);
+                assert_eq!(amount[0].denom, "uusd");
+                assert_eq!(amount[0].amount, withdraw_amount);
+            }
+            _ => panic!("Expected BankMsg::Send for uusd withdrawal"),
+        }
+
+        // Verify pending withdrawal was removed
+        assert!(PENDING_WITHDRAWALS.may_load(&deps.storage, withdrawal_id.as_str()).unwrap().is_none());
+
+        // Verify withdrawal no longer shows in pending query
+        let res = query(deps.as_ref(), env, QueryMsg::PendingWithdrawals {}).unwrap();
+        let pending_list: PendingWithdrawalsResponse = from_json(res).unwrap();
+        assert!(pending_list.withdrawals.is_empty());
+    }
+
+    #[test]
+    fn test_uusd_full_lifecycle_receive_propose_withdraw() {
+        // Comprehensive end-to-end test of the uusd lifecycle
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let mut env = mock_env();
+
+        // Step 1: Treasury receives initial uusd funding
+        let initial_funding = Uint128::from(100_000_000u128); // 100 USTC
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(100_000_000, "uusd"));
+
+        // Verify initial balance
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::Balance {
+                asset: AssetInfo::Native {
+                    denom: "uusd".to_string(),
+                },
+            },
+        )
+        .unwrap();
+        let balance: BalanceResponse = from_json(res).unwrap();
+        assert_eq!(balance.amount, initial_funding);
+
+        // Step 2: Governance proposes first withdrawal
+        let first_withdrawal = Uint128::from(25_000_000u128); // 25 USTC
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: first_withdrawal,
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let first_withdrawal_id = res.attributes[1].value.clone();
+
+        // Step 3: Wait for timelock to expire
+        env.block.time = Timestamp::from_seconds(
+            env.block.time.seconds() + DEFAULT_TIMELOCK_DURATION + 1,
+        );
+
+        // Step 4: Execute first withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: first_withdrawal_id.clone(),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Verify it generates the correct bank message
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, USER);
+                assert_eq!(amount[0].denom, "uusd");
+                assert_eq!(amount[0].amount, first_withdrawal);
+            }
+            _ => panic!("Expected BankMsg::Send"),
+        }
+
+        // Step 5: Simulate balance update after withdrawal (in real chain this happens automatically)
+        let remaining_balance = initial_funding - first_withdrawal;
+        deps.querier.update_balance(
+            env.contract.address.clone(),
+            coins(remaining_balance.u128(), "uusd"),
+        );
+
+        // Verify updated balance
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::Balance {
+                asset: AssetInfo::Native {
+                    denom: "uusd".to_string(),
+                },
+            },
+        )
+        .unwrap();
+        let balance: BalanceResponse = from_json(res).unwrap();
+        assert_eq!(balance.amount, remaining_balance);
+
+        // Step 6: Propose second withdrawal (different destination)
+        let second_withdrawal = Uint128::from(10_000_000u128); // 10 USTC
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: "another_recipient".to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: second_withdrawal,
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let second_withdrawal_id = res.attributes[1].value.clone();
+
+        // Step 7: Wait for second timelock
+        env.block.time = Timestamp::from_seconds(
+            env.block.time.seconds() + DEFAULT_TIMELOCK_DURATION + 1,
+        );
+
+        // Step 8: Execute second withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: second_withdrawal_id.clone(),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, "another_recipient");
+                assert_eq!(amount[0].denom, "uusd");
+                assert_eq!(amount[0].amount, second_withdrawal);
+            }
+            _ => panic!("Expected BankMsg::Send"),
+        }
+
+        // Verify all withdrawals are cleared
+        let res = query(deps.as_ref(), env, QueryMsg::PendingWithdrawals {}).unwrap();
+        let pending_list: PendingWithdrawalsResponse = from_json(res).unwrap();
+        assert!(pending_list.withdrawals.is_empty());
+    }
+
+    #[test]
+    fn test_uusd_partial_withdrawal() {
+        // Test withdrawing only a portion of uusd balance
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let mut env = mock_env();
+        let total_balance = Uint128::from(50_000_000u128); // 50 USTC
+        let partial_amount = Uint128::from(15_000_000u128); // 15 USTC
+
+        // Fund treasury
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(50_000_000, "uusd"));
+
+        // Propose partial withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: partial_amount,
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let withdrawal_id = res.attributes[1].value.clone();
+
+        // Advance time and execute
+        env.block.time = Timestamp::from_seconds(
+            env.block.time.seconds() + DEFAULT_TIMELOCK_DURATION + 1,
+        );
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: withdrawal_id.clone(),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Verify correct partial amount is sent
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, USER);
+                assert_eq!(amount[0].amount, partial_amount);
+                // Treasury still has remaining balance (35 USTC)
+            }
+            _ => panic!("Expected BankMsg::Send"),
+        }
+
+        // Update balance to reflect withdrawal
+        let remaining = total_balance - partial_amount;
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(remaining.u128(), "uusd"));
+
+        // Verify remaining balance
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::Balance {
+                asset: AssetInfo::Native {
+                    denom: "uusd".to_string(),
+                },
+            },
+        )
+        .unwrap();
+        let balance: BalanceResponse = from_json(res).unwrap();
+        assert_eq!(balance.amount, remaining);
+    }
+
+    #[test]
+    fn test_uusd_withdraw_insufficient_balance() {
+        // Test that withdrawal fails when uusd balance is insufficient
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let mut env = mock_env();
+        let available_balance = Uint128::from(5_000_000u128); // 5 USTC
+        let requested_amount = Uint128::from(10_000_000u128); // 10 USTC
+
+        // Fund treasury with less than requested
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(5_000_000, "uusd"));
+
+        // Propose withdrawal for more than available
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: requested_amount,
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let withdrawal_id = res.attributes[1].value.clone();
+
+        // Advance time past timelock
+        env.block.time = Timestamp::from_seconds(
+            env.block.time.seconds() + DEFAULT_TIMELOCK_DURATION + 1,
+        );
+
+        // Try to execute - should fail due to insufficient balance
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: withdrawal_id.clone(),
+        };
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+
+        match err {
+            ContractError::InsufficientBalance { requested, available } => {
+                assert_eq!(requested, requested_amount.to_string());
+                assert_eq!(available, available_balance.to_string());
+            }
+            _ => panic!("Expected InsufficientBalance error"),
+        }
+
+        // Verify withdrawal is NOT removed (can be retried after funding)
+        assert!(PENDING_WITHDRAWALS.may_load(&deps.storage, withdrawal_id.as_str()).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_uusd_cancel_pending_withdrawal() {
+        // Test cancelling a uusd withdrawal proposal
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let env = mock_env();
+        let amount = Uint128::from(20_000_000u128); // 20 USTC
+
+        // Fund treasury
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(20_000_000, "uusd"));
+
+        // Propose withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount,
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let withdrawal_id = res.attributes[1].value.clone();
+
+        // Verify it's pending
+        assert!(PENDING_WITHDRAWALS.may_load(&deps.storage, withdrawal_id.as_str()).unwrap().is_some());
+
+        // Cancel the withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::CancelWithdraw {
+            withdrawal_id: withdrawal_id.clone(),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        assert_eq!(res.attributes[0].key, "action");
+        assert_eq!(res.attributes[0].value, "cancel_withdraw");
+        assert_eq!(res.attributes[1].key, "withdrawal_id");
+        assert_eq!(res.attributes[1].value, withdrawal_id);
+
+        // Verify withdrawal was removed
+        assert!(PENDING_WITHDRAWALS.may_load(&deps.storage, withdrawal_id.as_str()).unwrap().is_none());
+
+        // Verify no pending withdrawals
+        let res = query(deps.as_ref(), env, QueryMsg::PendingWithdrawals {}).unwrap();
+        let pending_list: PendingWithdrawalsResponse = from_json(res).unwrap();
+        assert!(pending_list.withdrawals.is_empty());
+    }
+
+    #[test]
+    fn test_uusd_multiple_pending_withdrawals() {
+        // Test having multiple pending uusd withdrawals simultaneously
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let mut env = mock_env();
+
+        // Fund treasury with enough for all withdrawals
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(100_000_000, "uusd"));
+
+        // Propose first withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: Uint128::from(10_000_000u128),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let withdrawal_id_1 = res.attributes[1].value.clone();
+
+        // Advance time slightly (to get different ID)
+        env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 60);
+
+        // Propose second withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: "recipient_two".to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: Uint128::from(20_000_000u128),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let withdrawal_id_2 = res.attributes[1].value.clone();
+
+        // Advance time again
+        env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 60);
+
+        // Propose third withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: "recipient_three".to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: Uint128::from(30_000_000u128),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let withdrawal_id_3 = res.attributes[1].value.clone();
+
+        // Verify all three are pending
+        let res = query(deps.as_ref(), env.clone(), QueryMsg::PendingWithdrawals {}).unwrap();
+        let pending_list: PendingWithdrawalsResponse = from_json(res).unwrap();
+        assert_eq!(pending_list.withdrawals.len(), 3);
+
+        // Verify each withdrawal has unique ID
+        let ids: Vec<&String> = pending_list.withdrawals.iter()
+            .map(|w| &w.withdrawal_id)
+            .collect();
+        assert!(ids.contains(&&withdrawal_id_1));
+        assert!(ids.contains(&&withdrawal_id_2));
+        assert!(ids.contains(&&withdrawal_id_3));
+
+        // Advance past all timelocks
+        env.block.time = Timestamp::from_seconds(
+            env.block.time.seconds() + DEFAULT_TIMELOCK_DURATION + 1,
+        );
+
+        // Execute withdrawals in non-sequential order (2, 1, 3)
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: withdrawal_id_2.clone(),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, "recipient_two");
+                assert_eq!(amount[0].amount, Uint128::from(20_000_000u128));
+            }
+            _ => panic!("Expected BankMsg::Send"),
+        }
+
+        // Execute first
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: withdrawal_id_1.clone(),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, USER);
+                assert_eq!(amount[0].amount, Uint128::from(10_000_000u128));
+            }
+            _ => panic!("Expected BankMsg::Send"),
+        }
+
+        // Verify only one remaining
+        let res = query(deps.as_ref(), env.clone(), QueryMsg::PendingWithdrawals {}).unwrap();
+        let pending_list: PendingWithdrawalsResponse = from_json(res).unwrap();
+        assert_eq!(pending_list.withdrawals.len(), 1);
+        assert_eq!(pending_list.withdrawals[0].withdrawal_id, withdrawal_id_3);
+
+        // Execute last
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: withdrawal_id_3.clone(),
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, "recipient_three");
+                assert_eq!(amount[0].amount, Uint128::from(30_000_000u128));
+            }
+            _ => panic!("Expected BankMsg::Send"),
+        }
+
+        // All cleared
+        let res = query(deps.as_ref(), env, QueryMsg::PendingWithdrawals {}).unwrap();
+        let pending_list: PendingWithdrawalsResponse = from_json(res).unwrap();
+        assert!(pending_list.withdrawals.is_empty());
+    }
+
+    #[test]
+    fn test_uusd_withdrawal_timelock_enforcement() {
+        // Test that the 7-day timelock is strictly enforced for uusd
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let mut env = mock_env();
+        let amount = Uint128::from(10_000_000u128);
+
+        // Fund treasury
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(10_000_000, "uusd"));
+
+        // Propose withdrawal
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount,
+        };
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        let withdrawal_id = res.attributes[1].value.clone();
+
+        // Try to execute at various times before timelock expires
+        let test_times = [
+            1,                                  // 1 second after proposal
+            3600,                               // 1 hour
+            86400,                              // 1 day
+            604799,                             // 1 second before expiry
+            DEFAULT_TIMELOCK_DURATION - 1,      // Just before expiry
+        ];
+
+        let proposal_time = env.block.time.seconds();
+        for seconds in test_times {
+            env.block.time = Timestamp::from_seconds(proposal_time + seconds);
+
+            let info = mock_info(GOVERNANCE, &[]);
+            let msg = ExecuteMsg::ExecuteWithdraw {
+                withdrawal_id: withdrawal_id.clone(),
+            };
+            let err = execute(deps.as_mut(), env.clone(), info, msg).unwrap_err();
+
+            match err {
+                ContractError::TimelockNotExpired { remaining_seconds } => {
+                    assert!(remaining_seconds > 0);
+                    assert_eq!(remaining_seconds, DEFAULT_TIMELOCK_DURATION - seconds);
+                }
+                _ => panic!("Expected TimelockNotExpired error at {} seconds", seconds),
+            }
+        }
+
+        // Verify withdrawal is still pending
+        assert!(PENDING_WITHDRAWALS.may_load(&deps.storage, withdrawal_id.as_str()).unwrap().is_some());
+
+        // Now try at exact expiry time - should still fail
+        env.block.time = Timestamp::from_seconds(proposal_time + DEFAULT_TIMELOCK_DURATION);
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: withdrawal_id.clone(),
+        };
+        // At exactly the timelock time, execute_after is NOT yet passed
+        // This is because execute_after = proposal_time + timelock, and we check `env.block.time < execute_after`
+        let err = execute(deps.as_mut(), env.clone(), info, msg).unwrap_err();
+        match err {
+            ContractError::TimelockNotExpired { remaining_seconds } => {
+                assert_eq!(remaining_seconds, 0);
+            }
+            _ => panic!("Expected TimelockNotExpired error at exactly timelock duration"),
+        }
+
+        // Finally, 1 second after timelock - should succeed
+        env.block.time = Timestamp::from_seconds(proposal_time + DEFAULT_TIMELOCK_DURATION + 1);
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ExecuteWithdraw {
+            withdrawal_id: withdrawal_id.clone(),
+        };
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+        assert_eq!(res.messages.len(), 1);
+    }
+
     #[test]
     fn test_propose_withdraw_id_collision_exceeds_limit() {
         let mut deps = mock_dependencies();
