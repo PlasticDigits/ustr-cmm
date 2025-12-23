@@ -69,6 +69,8 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - `CancelWithdraw { withdrawal_id }` - Cancels a specific pending withdrawal (governance only)
 - `AddCw20 { contract_addr }` - Adds CW20 token to balance tracking whitelist
 - `RemoveCw20 { contract_addr }` - Removes CW20 token from whitelist
+- `SetSwapContract { contract_addr }` - Sets the authorized swap contract address (governance only)
+- `SwapDeposit {}` - Accepts USTC for swap; notifies swap contract to mint USTR to sender (any user, requires USTC funds)
 - `Receive(Cw20ReceiveMsg)` - CW20 receive hook for accepting direct token transfers
 
 **Query Messages**:
@@ -121,6 +123,8 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 **Description**: Time-limited, one-way exchange mechanism that allows users to convert USTC into USTR at a rate that increases over 100 days, incentivizing early participation.
 
+**Tax-Optimized Architecture**: Users send USTC directly to the Treasury contract (not the Swap contract) to avoid the 0.5% burn tax. The Treasury notifies this contract of deposits, and this contract mints USTR to the depositor. See [On-Chain Tax Handling](#on-chain-tax-handling) for details.
+
 **Economic Parameters**:
 - Start rate: 1.5 USTC per 1 USTR
 - End rate: 2.5 USTC per 1 USTR
@@ -129,7 +133,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Post-duration: No further USTR issuance
 
 **Execute Messages**:
-- `Swap` - Accepts USTC (sent as native funds), mints USTR to sender
+- `NotifyDeposit { depositor, amount }` - Called by Treasury to notify of a swap deposit; mints USTR to depositor
 - `EmergencyPause` - Pauses swap functionality (admin only)
 - `EmergencyResume` - Resumes swap functionality (admin only)
 - `ProposeAdmin` - Initiates 7-day timelock for admin transfer
@@ -147,25 +151,25 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 **Key Development Decisions**:
 
-1. **Linear Rate Progression**: Rate follows linear interpolation: `rate(t) = start_rate + ((end_rate - start_rate) * elapsed_seconds / total_seconds)`. This creates a Schelling point attractor that encourages early adoption.
+1. **Tax-Optimized Flow**: Users send USTC to Treasury via `MsgExecuteContract` (no tax), Treasury notifies Swap contract, Swap contract mints USTR. This ensures 100% of USTC reaches treasury rather than 99.5%.
 
-2. **High Precision Calculations**: Uses CosmWasm's `Decimal` type (10^18 precision) for intermediate calculations to avoid rounding errors at per-second granularity.
+2. **Treasury-Only Caller**: Only the authorized Treasury contract can call `NotifyDeposit`. This prevents unauthorized minting.
 
-3. **Floor Rounding**: Final USTR amounts use floor rounding to favor the protocol and prevent rounding exploits.
+3. **Linear Rate Progression**: Rate follows linear interpolation: `rate(t) = start_rate + ((end_rate - start_rate) * elapsed_seconds / total_seconds)`. This creates a Schelling point attractor that encourages early adoption.
 
-4. **Minimum Swap Amount**: Swaps less than 1 USTC (1,000,000 micro units) are rejected to prevent dust attacks. At ~$0.02 per USTC, executing 1M spam transactions would cost $20,000+, exceeding exploit profit.
+4. **High Precision Calculations**: Uses CosmWasm's `Decimal` type (10^18 precision) for intermediate calculations to avoid rounding errors at per-second granularity.
 
-5. **Atomic Execution**: Entire swap operation (USTC transfer → USTR mint) happens atomically. If any step fails, entire transaction rolls back.
+5. **Floor Rounding**: Final USTR amounts use floor rounding to favor the protocol and prevent rounding exploits.
 
-6. **Native Token Only**: Contract only accepts `uusd` native denomination. Rejects LUNC or other native tokens to prevent confusion.
+6. **Minimum Swap Amount**: Swaps less than 1 USTC (1,000,000 micro units) are rejected to prevent dust attacks. At ~$0.02 per USTC, executing 1M spam transactions would cost $20,000+, exceeding exploit profit.
 
-7. **Permanent Disable**: After 100 days, contract is permanently disabled. No reactivation possible. Admin can only recover stuck assets.
+7. **Atomic Execution**: Entire swap operation (deposit notification → USTR mint) happens atomically. If any step fails, entire transaction rolls back.
 
-8. **Emergency Pause**: Admin can pause swaps while queries remain available, allowing users to check rates and status during emergencies.
+8. **Permanent Disable**: After 100 days, contract is permanently disabled. No reactivation possible. Admin can only recover stuck assets.
 
-9. **7-Day Admin Timelock**: Admin address changes require 7-day timelock (same as treasury governance) for security.
+9. **Emergency Pause**: Admin can pause swaps while queries remain available, allowing users to check rates and status during emergencies.
 
-10. **Burn Tax Handling**: TerraClassic's USTC burn tax applies to transfers. Treasury receives post-tax amount, which is accounted for in CR calculations.
+10. **7-Day Admin Timelock**: Admin address changes require 7-day timelock (same as treasury governance) for security.
 
 **Full Specification**: See [PROPOSAL.md](../PROPOSAL.md#ustc-to-ustr-swap-contract) for complete interface details.
 
@@ -238,14 +242,33 @@ The CMM system handles tokens with varying decimal configurations:
 
 ## On-Chain Tax Handling
 
-TerraClassic applies a **USTC Burn Tax** on `uusd` transfers. Per the [official TerraClassic tax documentation](https://terra-classic.io/docs/develop/module-specifications/tax):
+TerraClassic applies a **0.5% Burn Tax** on native token transfers via `BankMsg::Send`. This tax is queried via `/terra/tx/v1beta1/compute_tax`.
 
-- `ComputeTax()` multiplies each spend coin by `BurnTaxRate` and truncates to integers
-- Zero results skip deduction
-- The treasury receives the **post-tax amount** when USTC is transferred
+### Tax Behavior by Transaction Type
 
-**Impact on CMM**:
-- When transferring USTC from preregistration to treasury, the burn tax applies
+| Transaction Type | Tax Applied |
+|------------------|-------------|
+| `MsgSend` (wallet → wallet) | ✅ 0.5% tax |
+| `MsgExecuteContract` with funds (user → contract) | ❌ No tax |
+| `BankMsg::Send` from contract (contract → wallet/contract) | ✅ 0.5% tax |
+
+### Tax-Optimized Swap Architecture
+
+To avoid the 0.5% tax on swap deposits, the CMM uses a **direct deposit** pattern. All steps execute **atomically within a single transaction**:
+
+1. **User sends USTC to Treasury** via `MsgExecuteContract` (SwapDeposit message) → **No tax**
+2. **Treasury calls Swap contract** via `WasmMsg::Execute` (NotifyDeposit submessage)
+3. **Swap contract mints USTR** to the user via `WasmMsg::Execute` (Mint submessage)
+
+This ensures 100% of user USTC reaches the treasury, rather than 99.5%.
+
+**Atomic Guarantees**: All submessages execute in the same transaction. If any step fails (swap paused, period ended, mint fails), the entire transaction reverts and the user's USTC is returned.
+
+### Preregistration Transfer
+
+When transferring USTC from the preregistration contract to treasury via `BankMsg::Send`, the 0.5% burn tax applies:
+- Preregistration contract holds 1,000,000 USTC
+- Treasury receives 995,000 USTC (0.5% burned)
 - CR calculations account for the actual received amount
 - The burn tax reduces circulating USTC supply (ecosystem benefit)
 

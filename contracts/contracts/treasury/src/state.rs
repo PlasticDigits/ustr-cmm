@@ -11,6 +11,8 @@ pub struct Config {
     pub governance: Addr,
     /// Duration of governance change delay in seconds (7 days = 604,800)
     pub timelock_duration: u64,
+    /// Authorized swap contract address for deposit notifications (optional)
+    pub swap_contract: Option<Addr>,
 }
 
 /// Pending governance change proposal

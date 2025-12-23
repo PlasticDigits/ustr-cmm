@@ -18,19 +18,24 @@ The USTR CMM system consists of four primary smart contracts that work together 
 │  │   Wallets    │                          │  (Admin/DAO)      │   │
 │  └──────┬───────┘                          └─────────┬─────────┘   │
 │         │                                            │             │
-│         │ USTC                                       │             │
+│         │ USTC (MsgExecuteContract)                  │             │
+│         │ [NO TAX - direct to contract]              │             │
 │         ▼                                            │             │
-│  ┌──────────────┐        USTC              ┌─────────▼─────────┐   │
-│  │  USTC-SWAP   │─────────────────────────▶│    TREASURY       │   │
-│  │  CONTRACT    │                          │    CONTRACT       │   │
-│  └──────┬───────┘                          └─────────┬─────────┘   │
-│         │                                            │             │
-│         │ Mint                              Withdraw │             │
-│         ▼                                            ▼             │
-│  ┌──────────────┐                          ┌───────────────────┐   │
-│  │  USTR TOKEN  │                          │   Assets (USTC,   │   │
-│  │  (CW20)      │                          │   CW20 tokens)    │   │
-│  └──────────────┘                          └───────────────────┘   │
+│  ┌──────────────────────────────────────────────────▼─────────┐   │
+│  │                      TREASURY CONTRACT                      │   │
+│  │  ┌─────────────────────────────────────────────────────┐   │   │
+│  │  │  SwapDeposit { swap_contract }                      │   │   │
+│  │  │  - Accepts USTC deposits for swap                   │   │   │
+│  │  │  - Emits deposit event with sender + amount         │   │   │
+│  │  │  - Notifies swap contract of deposit                │   │   │
+│  │  └─────────────────────────────────────────────────────┘   │   │
+│  └────────────────────────────┬───────────────────────────────┘   │
+│                               │ Notify deposit                     │
+│                               ▼                                    │
+│  ┌──────────────┐      ┌──────────────┐                           │
+│  │  USTR TOKEN  │◄─────│  USTC-SWAP   │  Tracks deposits,         │
+│  │  (CW20)      │ Mint │  CONTRACT    │  calculates rate,         │
+│  └──────────────┘      └──────────────┘  mints USTR               │
 │                                                                     │
 │  ┌──────────────┐     [PHASE 2]                                    │
 │  │  UST1 TOKEN  │     Collateralized unstablecoin                  │
@@ -39,6 +44,16 @@ The USTR CMM system consists of four primary smart contracts that work together 
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Tax Optimization
+
+TerraClassic applies a **0.5% burn tax** on native token transfers via `BankMsg::Send`. To avoid this tax and ensure 100% of user USTC reaches the treasury:
+
+- **Users send USTC directly to Treasury** via `MsgExecuteContract` (no tax on contract calls)
+- **Treasury accepts the deposit** and notifies the Swap contract
+- **Swap contract mints USTR** to the user based on the deposit
+
+This architecture avoids the intermediate `BankMsg::Send` that would incur the 0.5% tax.
 
 ## Contract Responsibilities
 
@@ -58,29 +73,32 @@ The USTR CMM system consists of four primary smart contracts that work together 
 
 ### Treasury Contract
 
-**Purpose**: Secure custody of all protocol assets
+**Purpose**: Secure custody of all protocol assets + swap deposit acceptance
 
 **Key Functions**:
 - Accept and hold native tokens (USTC, LUNC)
 - Accept and hold CW20 tokens
+- **Accept swap deposits** via `SwapDeposit` message (tax-free path)
+- Notify swap contract of deposits for USTR minting
 - Governance-controlled withdrawals with 7-day timelock
 - 7-day timelock on governance changes
 
-**Dependencies**: None (base contract)
+**Dependencies**: 
+- USTC-Swap Contract (for deposit notifications)
 
 ### USTC-Swap Contract
 
-**Purpose**: Time-limited USTC→USTR exchange
+**Purpose**: Time-limited USTC→USTR exchange rate tracking and minting
 
 **Key Functions**:
-- Accept USTC deposits
+- **Receive deposit notifications** from Treasury
 - Calculate current exchange rate
-- Forward USTC to treasury
-- Mint USTR to users
+- Mint USTR to users based on deposit amount
+- Track swap statistics
 
 **Dependencies**: 
 - USTR Token (minter)
-- Treasury (recipient)
+- Treasury (deposit source, must be authorized caller)
 
 ### UST1 Token Contract (Phase 2)
 
@@ -99,16 +117,40 @@ The USTR CMM system consists of four primary smart contracts that work together 
 
 ## Data Flow
 
-### Swap Flow
+### Swap Flow (Tax-Optimized, Atomic)
+
+All steps execute **atomically within a single transaction** via CosmWasm submessages:
 
 ```
-1. User → USTC-Swap: Send USTC with Swap message
-2. USTC-Swap: Calculate rate = start + (end - start) * elapsed / duration
-3. USTC-Swap: Calculate ustr_amount = ustc_amount / rate
-4. USTC-Swap → Treasury: Transfer USTC (native send)
-5. USTC-Swap → USTR Token: Mint USTR to user
-6. USTR Token → User: User receives USTR
+┌─────────────────── SINGLE ATOMIC TRANSACTION ───────────────────┐
+│                                                                 │
+│  1. User → Treasury: SwapDeposit {} with USTC                  │
+│     [NO TAX: MsgExecuteContract, not BankMsg::Send]            │
+│                           │                                     │
+│                           ▼ (submessage)                        │
+│  2. Treasury → Swap: NotifyDeposit { depositor, amount }       │
+│     [WasmMsg::Execute - same transaction]                      │
+│                           │                                     │
+│                           ▼                                     │
+│  3. Swap: Calculate rate, validate period active               │
+│  4. Swap: Calculate ustr_amount = ustc_amount / rate           │
+│                           │                                     │
+│                           ▼ (submessage)                        │
+│  5. Swap → USTR Token: Mint USTR to depositor                  │
+│     [WasmMsg::Execute - same transaction]                      │
+│                                                                 │
+│  If ANY step fails → entire transaction reverts                │
+│                       (USTC returned to user)                  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+**Why This Flow?** TerraClassic's 0.5% burn tax applies to `BankMsg::Send` (native transfers). 
+By having users send USTC directly to Treasury via `MsgExecuteContract`, we avoid the tax entirely.
+The Treasury holds 100% of the deposited USTC rather than 99.5%.
+
+**Atomic Guarantees**: Treasury calls Swap via `WasmMsg::Execute`, Swap calls USTR via `WasmMsg::Execute`.
+All submessages execute in the same transaction context. If any fails, everything reverts.
 
 ### Governance Change Flow
 
@@ -155,12 +197,18 @@ The USTR CMM system consists of four primary smart contracts that work together 
 | `pending_withdrawals` | `Map<String, PendingWithdrawal>` | Pending withdrawal proposals |
 | `cw20_whitelist` | `Map<Addr, bool>` | CW20 tokens included in balance tracking |
 
+### Treasury State (Swap-Related)
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `swap_contract` | `Option<Addr>` | Authorized swap contract for deposit notifications |
+
 ### USTC-Swap State
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `config` | `Config` | Token addresses, rates, timing |
-| `total_ustc_received` | `Uint128` | Cumulative USTC deposited |
+| `config` | `Config` | Token addresses, rates, timing, treasury address |
+| `total_ustc_received` | `Uint128` | Cumulative USTC deposited (tracked via notifications) |
 | `total_ustr_minted` | `Uint128` | Cumulative USTR issued |
 | `paused` | `bool` | Emergency pause status |
 
@@ -171,10 +219,11 @@ The USTR CMM system consists of four primary smart contracts that work together 
 | Contract | Role | Permissions |
 |----------|------|-------------|
 | USTR Token | Minter | Mint tokens |
-| Treasury | Governance | Propose governance, withdraw |
+| Treasury | Governance | Propose governance, withdraw, set swap contract |
 | Treasury | Pending Governance | Accept governance |
+| Treasury | Any User | Deposit USTC for swap (via SwapDeposit) |
 | USTC-Swap | Admin | Pause/resume, update admin |
-| USTC-Swap | Any User | Swap USTC for USTR |
+| USTC-Swap | Treasury | Notify deposits (triggers USTR mint) |
 
 ### Timelock Protection
 

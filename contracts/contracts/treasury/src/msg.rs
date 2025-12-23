@@ -51,6 +51,16 @@ pub enum ExecuteMsg {
     /// Only callable by governance
     RemoveCw20 { contract_addr: String },
 
+    /// Sets the authorized swap contract address for deposit notifications
+    /// Only callable by governance
+    SetSwapContract { contract_addr: String },
+
+    /// Accepts USTC deposits for swap (tax-optimized)
+    /// Users send USTC directly to Treasury via MsgExecuteContract (no tax)
+    /// Treasury notifies swap contract to mint USTR to depositor
+    /// Minimum deposit: 1 USTC (1,000,000 uusd)
+    SwapDeposit {},
+
     /// CW20 receive hook - accepts direct CW20 token transfers
     /// Called automatically when CW20 tokens are sent to this contract
     Receive(Cw20ReceiveMsg),
@@ -90,6 +100,7 @@ pub enum QueryMsg {
 pub struct ConfigResponse {
     pub governance: Addr,
     pub timelock_duration: u64,
+    pub swap_contract: Option<Addr>,
 }
 
 /// A single pending governance proposal entry

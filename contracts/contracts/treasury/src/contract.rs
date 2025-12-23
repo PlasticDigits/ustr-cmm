@@ -18,6 +18,7 @@ use cosmwasm_std::{
     to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Env, MessageInfo,
     Order, Response, StdResult, Uint128, WasmMsg,
 };
+use cosmwasm_schema::cw_serde;
 use sha2::{Digest, Sha256};
 use cw2::set_contract_version;
 use cw20::Cw20ExecuteMsg;
@@ -35,6 +36,12 @@ use crate::state::{
 use common::AssetInfo;
 use cw20::Cw20ReceiveMsg;
 
+/// USTC denomination on TerraClassic
+const USTC_DENOM: &str = "uusd";
+
+/// Minimum swap deposit amount: 1 USTC = 1,000,000 uusd
+const MIN_SWAP_AMOUNT: u128 = 1_000_000;
+
 // ============ INSTANTIATE ============
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -51,6 +58,7 @@ pub fn instantiate(
     let config = Config {
         governance: governance.clone(),
         timelock_duration: DEFAULT_TIMELOCK_DURATION,
+        swap_contract: None,
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -90,6 +98,10 @@ pub fn execute(
         }
         ExecuteMsg::AddCw20 { contract_addr } => execute_add_cw20(deps, info, contract_addr),
         ExecuteMsg::RemoveCw20 { contract_addr } => execute_remove_cw20(deps, info, contract_addr),
+        ExecuteMsg::SetSwapContract { contract_addr } => {
+            execute_set_swap_contract(deps, info, contract_addr)
+        }
+        ExecuteMsg::SwapDeposit {} => execute_swap_deposit(deps, env, info),
         ExecuteMsg::Receive(msg) => execute_receive_cw20(deps, info, msg),
     }
 }
@@ -438,6 +450,89 @@ fn execute_remove_cw20(
         .add_attribute("contract_addr", addr))
 }
 
+fn execute_set_swap_contract(
+    deps: DepsMut,
+    info: MessageInfo,
+    contract_addr: String,
+) -> Result<Response, ContractError> {
+    let mut config = CONFIG.load(deps.storage)?;
+
+    // Only governance can set swap contract
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    let swap_addr = deps.api.addr_validate(&contract_addr)?;
+    config.swap_contract = Some(swap_addr.clone());
+    CONFIG.save(deps.storage, &config)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_swap_contract")
+        .add_attribute("swap_contract", swap_addr))
+}
+
+fn execute_swap_deposit(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+
+    // Check swap contract is set
+    let swap_contract = config.swap_contract.ok_or(ContractError::SwapContractNotSet)?;
+
+    // Validate funds - must be exactly USTC
+    if info.funds.is_empty() {
+        return Err(ContractError::InvalidSwapFunds {
+            received: vec!["empty".to_string()],
+        });
+    }
+
+    if info.funds.len() != 1 || info.funds[0].denom != USTC_DENOM {
+        let received: Vec<String> = info
+            .funds
+            .iter()
+            .map(|c| format!("{}:{}", c.denom, c.amount))
+            .collect();
+        return Err(ContractError::InvalidSwapFunds { received });
+    }
+
+    let ustc_amount = info.funds[0].amount;
+
+    // Check minimum amount
+    if ustc_amount < Uint128::from(MIN_SWAP_AMOUNT) {
+        return Err(ContractError::BelowMinimumSwap {
+            received: ustc_amount.to_string(),
+        });
+    }
+
+    // Notify swap contract via WasmMsg::Execute (atomic submessage)
+    // The swap contract will handle rate calculation and USTR minting
+    let notify_msg = WasmMsg::Execute {
+        contract_addr: swap_contract.to_string(),
+        msg: to_json_binary(&SwapExecuteMsg::NotifyDeposit {
+            depositor: info.sender.to_string(),
+            amount: ustc_amount,
+        })?,
+        funds: vec![],
+    };
+
+    Ok(Response::new()
+        .add_message(notify_msg)
+        .add_attribute("action", "swap_deposit")
+        .add_attribute("depositor", info.sender)
+        .add_attribute("ustc_amount", ustc_amount))
+}
+
+/// Message sent to swap contract to notify of deposit
+/// This matches the expected ExecuteMsg::NotifyDeposit enum variant format
+/// When serialized: {"notify_deposit": {"depositor": "...", "amount": "..."}}
+#[cw_serde]
+enum SwapExecuteMsg {
+    /// Called by Treasury when user deposits USTC for swap
+    NotifyDeposit { depositor: String, amount: Uint128 },
+}
+
 fn execute_receive_cw20(
     deps: DepsMut,
     info: MessageInfo,
@@ -477,6 +572,7 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
     Ok(ConfigResponse {
         governance: config.governance,
         timelock_duration: config.timelock_duration,
+        swap_contract: config.swap_contract,
     })
 }
 
@@ -3398,6 +3494,454 @@ mod tests {
                 assert_eq!(msg, "Failed to generate unique withdrawal ID");
             }
             _ => panic!("Expected generic error for failed withdrawal ID generation"),
+        }
+    }
+
+    // ============ SWAP CONTRACT TESTS ============
+
+    #[test]
+    fn test_set_swap_contract_governance_only() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+
+        // Governance can set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+        assert_eq!(res.attributes[0].value, "set_swap_contract");
+        assert_eq!(res.attributes[1].value, swap_addr);
+
+        // Verify it's saved
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.swap_contract, Some(Addr::unchecked(swap_addr)));
+    }
+
+    #[test]
+    fn test_set_swap_contract_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        // Non-governance cannot set swap contract
+        let info = mock_info(USER, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: "swap_contract_addr".to_string(),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_set_swap_contract_updates_existing() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr_1 = "swap_contract_addr_1";
+        let swap_addr_2 = "swap_contract_addr_2";
+
+        // Set first swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr_1.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+
+        // Update to second swap contract
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr_2.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Verify updated
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.swap_contract, Some(Addr::unchecked(swap_addr_2)));
+    }
+
+    #[test]
+    fn test_swap_deposit_success() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+        let ustc_amount = Uint128::from(10_000_000u128); // 10 USTC
+
+        // Set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // User deposits USTC
+        let info = mock_info(USER, &coins(ustc_amount.u128(), DENOM_USTC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Verify attributes
+        assert_eq!(res.attributes[0].value, "swap_deposit");
+        assert_eq!(res.attributes[1].value, USER);
+        assert_eq!(res.attributes[2].value, ustc_amount.to_string());
+
+        // Verify WasmMsg::Execute to swap contract
+        assert_eq!(res.messages.len(), 1);
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { contract_addr, msg, funds }) => {
+                assert_eq!(contract_addr, swap_addr);
+                assert!(funds.is_empty());
+
+                // Verify message structure (JSON: {"notify_deposit": {...}})
+                let notify_msg: SwapExecuteMsg = from_json(msg.clone()).unwrap();
+                match notify_msg {
+                    SwapExecuteMsg::NotifyDeposit { depositor, amount } => {
+                        assert_eq!(depositor, USER);
+                        assert_eq!(amount, ustc_amount);
+                    }
+                }
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
+        }
+
+        // Verify USTC is held by treasury (no transfer, just held)
+        // The funds are sent via MessageInfo and held by the contract
+        // Update querier balance to reflect the deposit
+        let env = mock_env();
+        deps.querier
+            .update_balance(env.contract.address.clone(), coins(ustc_amount.u128(), DENOM_USTC));
+        
+        // Verify balance via query
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::Balance {
+                asset: AssetInfo::Native {
+                    denom: DENOM_USTC.to_string(),
+                },
+            },
+        )
+        .unwrap();
+        let balance: BalanceResponse = from_json(res).unwrap();
+        assert_eq!(balance.amount, ustc_amount);
+    }
+
+    #[test]
+    fn test_swap_deposit_swap_contract_not_set() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        // Try to deposit without setting swap contract
+        let info = mock_info(USER, &coins(1_000_000, DENOM_USTC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::SwapContractNotSet);
+    }
+
+    #[test]
+    fn test_swap_deposit_empty_funds() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+
+        // Set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Try to deposit with no funds
+        let info = mock_info(USER, &[]);
+        let msg = ExecuteMsg::SwapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        match err {
+            ContractError::InvalidSwapFunds { received } => {
+                assert_eq!(received, vec!["empty".to_string()]);
+            }
+            _ => panic!("Expected InvalidSwapFunds error"),
+        }
+    }
+
+    #[test]
+    fn test_swap_deposit_wrong_denom() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+
+        // Set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Try to deposit LUNC instead of USTC
+        let info = mock_info(USER, &coins(1_000_000, DENOM_LUNC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        match err {
+            ContractError::InvalidSwapFunds { received } => {
+                assert_eq!(received.len(), 1);
+                assert!(received[0].contains("uluna"));
+            }
+            _ => panic!("Expected InvalidSwapFunds error"),
+        }
+    }
+
+    #[test]
+    fn test_swap_deposit_multiple_denoms() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+
+        // Set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Try to deposit with multiple denoms
+        let mut funds = coins(1_000_000, DENOM_USTC);
+        funds.extend(coins(1_000_000, DENOM_LUNC));
+        let info = mock_info(USER, &funds);
+        let msg = ExecuteMsg::SwapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        match err {
+            ContractError::InvalidSwapFunds { received } => {
+                assert_eq!(received.len(), 2);
+            }
+            _ => panic!("Expected InvalidSwapFunds error"),
+        }
+    }
+
+    #[test]
+    fn test_swap_deposit_below_minimum() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+
+        // Set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Try to deposit less than 1 USTC (999,999 uusd)
+        let info = mock_info(USER, &coins(999_999, DENOM_USTC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        match err {
+            ContractError::BelowMinimumSwap { received } => {
+                assert_eq!(received, "999999");
+            }
+            _ => panic!("Expected BelowMinimumSwap error"),
+        }
+    }
+
+    #[test]
+    fn test_swap_deposit_exact_minimum() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+        let ustc_amount = Uint128::from(1_000_000u128); // Exactly 1 USTC
+
+        // Set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Deposit exactly 1 USTC (should succeed)
+        let info = mock_info(USER, &coins(ustc_amount.u128(), DENOM_USTC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+        assert_eq!(res.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_config_query_includes_swap_contract() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        // Initially swap_contract should be None
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap();
+        let config: ConfigResponse = from_json(res).unwrap();
+        assert_eq!(config.swap_contract, None);
+
+        // Set swap contract
+        let swap_addr = "swap_contract_addr";
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Query again - should include swap contract
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap();
+        let config: ConfigResponse = from_json(res).unwrap();
+        assert_eq!(
+            config.swap_contract,
+            Some(Addr::unchecked(swap_addr))
+        );
+        assert_eq!(config.governance, Addr::unchecked(GOVERNANCE));
+        assert_eq!(config.timelock_duration, DEFAULT_TIMELOCK_DURATION);
+    }
+
+    #[test]
+    fn test_swap_deposit_atomic_execution() {
+        // Test that the WasmMsg::Execute is properly set up for atomic execution
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+        let ustc_amount = Uint128::from(5_000_000u128); // 5 USTC
+
+        // Set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Deposit USTC
+        let info = mock_info(USER, &coins(ustc_amount.u128(), DENOM_USTC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Verify the submessage is properly formatted for atomic execution
+        // The swap contract will be called in the same transaction
+        assert_eq!(res.messages.len(), 1);
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr,
+                msg: _,
+                funds,
+            }) => {
+                assert_eq!(contract_addr, swap_addr);
+                // No funds sent - swap contract doesn't need them, it just needs notification
+                assert!(funds.is_empty());
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
+        }
+    }
+
+    #[test]
+    fn test_swap_notify_message_json_format() {
+        // Verify the message format matches swap contract expectations
+        // The swap contract expects: {"notify_deposit": {"depositor": "...", "amount": "..."}}
+        let msg = SwapExecuteMsg::NotifyDeposit {
+            depositor: "user_address".to_string(),
+            amount: Uint128::from(1_000_000u128),
+        };
+
+        let json = to_json_binary(&msg).unwrap();
+        let json_str = String::from_utf8(json.to_vec()).unwrap();
+
+        // Verify JSON structure
+        assert!(json_str.contains("notify_deposit"));
+        assert!(json_str.contains("depositor"));
+        assert!(json_str.contains("user_address"));
+        assert!(json_str.contains("amount"));
+        assert!(json_str.contains("1000000"));
+
+        // Verify we can deserialize back
+        let decoded: SwapExecuteMsg = from_json(json).unwrap();
+        match decoded {
+            SwapExecuteMsg::NotifyDeposit { depositor, amount } => {
+                assert_eq!(depositor, "user_address");
+                assert_eq!(amount, Uint128::from(1_000_000u128));
+            }
+        }
+    }
+
+    #[test]
+    fn test_swap_deposit_large_amount() {
+        // Test with a large USTC amount to ensure no overflow issues
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr = "swap_contract_addr";
+        // 1 billion USTC (1,000,000,000 * 1,000,000 = 10^15 uusd)
+        let ustc_amount = Uint128::from(1_000_000_000_000_000u128);
+
+        // Set swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Deposit large amount
+        let info = mock_info(USER, &coins(ustc_amount.u128(), DENOM_USTC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Verify correct amount in message
+        assert_eq!(res.messages.len(), 1);
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) => {
+                let notify_msg: SwapExecuteMsg = from_json(msg.clone()).unwrap();
+                match notify_msg {
+                    SwapExecuteMsg::NotifyDeposit { depositor, amount } => {
+                        assert_eq!(depositor, USER);
+                        assert_eq!(amount, ustc_amount);
+                    }
+                }
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
+        }
+    }
+
+    #[test]
+    fn test_swap_contract_can_be_changed() {
+        // Test that governance can update the swap contract address
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let swap_addr_1 = "swap_contract_addr_1";
+        let swap_addr_2 = "swap_contract_addr_2";
+
+        // Set first swap contract
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr_1.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+
+        // User deposits with first contract
+        let user_info = mock_info(USER, &coins(1_000_000, DENOM_USTC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        let res = execute(deps.as_mut(), mock_env(), user_info.clone(), msg).unwrap();
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { contract_addr, .. }) => {
+                assert_eq!(contract_addr, swap_addr_1);
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
+        }
+
+        // Governance changes swap contract
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: swap_addr_2.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // User deposits with second contract
+        let msg = ExecuteMsg::SwapDeposit {};
+        let res = execute(deps.as_mut(), mock_env(), user_info, msg).unwrap();
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { contract_addr, .. }) => {
+                assert_eq!(contract_addr, swap_addr_2);
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
         }
     }
 }

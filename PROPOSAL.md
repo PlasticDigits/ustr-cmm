@@ -125,22 +125,23 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 │   │               │                                     │   (Admin EOA)   │ │
 │   └───────┬───────┘                                     └────────┬────────┘ │
 │           │                                                      │          │
-│           │ USTC                                                 │          │
+│           │ USTC (MsgExecuteContract)                            │          │
+│           │ [NO TAX - direct to contract]                        │          │
 │           ▼                                                      ▼          │
-│   ┌───────────────┐                                     ┌─────────────────┐ │
-│   │  Swap         │──────────── USTC ──────────────────▶│    Treasury     │ │
-│   │  Contract     │                                     │    Contract     │ │
-│   │               │◄─────── Admin Actions ──────────────│                 │ │
-│   │  [7-day       │         (with timelock)             │  [7-day         │ │
-│   │   timelock]   │                                     │   timelock on   │ │
-│   └───────┬───────┘                                     │   gov changes]  │ │
-│           │                                             └─────────────────┘ │
-│           │ Mint USTR                                                       │
-│           ▼                                                                 │
-│   ┌───────────────┐                                                         │
-│   │  USTR Token   │     Repeg token - no direct redemption                  │
-│   │  (CW20)       │                                                         │
-│   └───────────────┘                                                         │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │                        TREASURY CONTRACT                            │   │
+│   │  - Accepts USTC via SwapDeposit (tax-free)                          │   │
+│   │  - Notifies Swap contract of deposits                               │   │
+│   │  - 7-day timelock on governance changes + withdrawals               │   │
+│   └────────────────────────────┬────────────────────────────────────────┘   │
+│                                │ NotifyDeposit                              │
+│                                ▼                                            │
+│   ┌───────────────┐     ┌───────────────┐                                   │
+│   │  USTR Token   │◄────│  Swap         │  Tracks deposits, calculates     │
+│   │  (CW20)       │Mint │  Contract     │  rate, mints USTR to users       │
+│   └───────────────┘     │  [7-day       │                                   │
+│                         │   timelock]   │                                   │
+│                         └───────────────┘                                   │
 │                                                                             │
 │   ┌───────────────┐     [PHASE 2+]                                          │
 │   │  UST1 Token   │     Collateralized unstablecoin                         │
@@ -150,6 +151,8 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+**Tax Optimization**: Users send USTC to Treasury via `MsgExecuteContract` (SwapDeposit), which avoids TerraClassic's 0.5% burn tax. Treasury notifies Swap contract to mint USTR.
+
 **Timelock Notes**:
 - Treasury Contract: 7-day timelock applies to **governance address changes and withdrawals**
 - Swap Contract: 7-day timelock applies to **admin address changes only**
@@ -158,11 +161,13 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 ### Contract Relationships
 
 1. **USTR Token Contract**: Standard CW20 with mintable extension; the Swap Contract and admin are authorized as minters
-2. **Treasury Contract**: Holds all protocol assets (USTC, future basket tokens); controlled by governance with 7-day timelock on governance changes
-3. **Swap Contract**: Accepts USTC (denomination: `uusd`) from users, forwards to treasury, mints USTR to users at the current rate; includes 7-day timelock on admin changes
+2. **Treasury Contract**: Holds all protocol assets (USTC, future basket tokens); accepts swap deposits (tax-free) and notifies Swap contract; controlled by governance with 7-day timelock on governance changes
+3. **Swap Contract**: Receives deposit notifications from Treasury, calculates exchange rate, mints USTR to users; includes 7-day timelock on admin changes
 4. **Airdrop Contract**: Enables batch distribution of CW20 tokens to multiple recipients in a single transaction (similar to [disperse.app](https://disperse.app))
 5. **Preregistration Migration**: Admin airdrops 16.7M USTR to preregistration participants at 1:1 ratio for their deposited USTC
 6. **UST1 Token Contract** (Phase 2): CW20 with mintable extension; will be minted based on collateralization ratio tiers
+
+**Tax-Optimized Swap Flow**: Users send USTC to Treasury (not Swap contract) via `SwapDeposit {}` message. This uses `MsgExecuteContract` which avoids TerraClassic's 0.5% burn tax. Treasury notifies Swap contract, which mints USTR to the user.
 
 **USTR Minter Ownership**: The admin initially has authority to add/remove minters on the USTR token. This permission can be transferred to governance in a future phase. The minter list is not frozen and can be modified by the admin until governance transition.
 
@@ -309,6 +314,7 @@ The Treasury Contract serves as the secure custodian for all protocol assets. It
 | `pending_governance` | `Map<Addr, PendingGovernance>` | Mapping of proposed governance addresses to their proposals; multiple proposals can exist simultaneously |
 | `timelock_duration` | `u64` | Duration of governance change delay (7 days = 604,800 seconds) |
 | `cw20_whitelist` | `Map<Addr, bool>` | Map of CW20 addresses for balance tracking |
+| `swap_contract` | `Option<Addr>` | Authorized swap contract for deposit notifications (set via `SetSwapContract`) |
 
 ```
 PendingGovernance {
@@ -336,6 +342,8 @@ PendingGovernance {
 | `CancelWithdraw { withdrawal_id }` | Governance | Cancels a specific pending withdrawal |
 | `AddCw20 { contract_addr }` | Governance | Adds a CW20 token to the balance tracking whitelist |
 | `RemoveCw20 { contract_addr }` | Governance | Removes a CW20 token from the whitelist |
+| `SetSwapContract { contract_addr }` | Governance | Sets the authorized swap contract address for deposit notifications |
+| `SwapDeposit {}` | Any user | Accepts USTC for swap (minimum 1 USTC); notifies swap contract to mint USTR to sender |
 | `Receive(Cw20ReceiveMsg)` | CW20 contract | CW20 receive hook; accepts direct CW20 token transfers |
 
 **QueryMsg**
@@ -456,12 +464,12 @@ Where:
 | Field | Type | Description |
 |-------|------|-------------|
 | `ustr_token` | `Addr` | Address of the USTR CW20 contract |
-| `treasury` | `Addr` | Address of the treasury contract |
+| `treasury` | `Addr` | Address of the treasury contract (authorized caller for NotifyDeposit) |
 | `start_time` | `Timestamp` | Unix timestamp when swap period begins (set at instantiation) |
 | `end_time` | `Timestamp` | Unix timestamp when swap period ends (calculated from start_time + duration) |
 | `start_rate` | `Decimal` | Initial USTC/USTR rate (1.5) |
 | `end_rate` | `Decimal` | Final USTC/USTR rate (2.5) |
-| `total_ustc_received` | `Uint128` | Cumulative USTC deposited |
+| `total_ustc_received` | `Uint128` | Cumulative USTC deposited (tracked via Treasury notifications) |
 | `total_ustr_minted` | `Uint128` | Cumulative USTR issued |
 | `admin` | `Addr` | Admin address for emergency operations |
 | `pending_admin` | `Option<PendingAdmin>` | Proposed new admin with timestamp |
@@ -473,6 +481,8 @@ PendingAdmin {
     execute_after: Timestamp,  // block time when change can be executed
 }
 ```
+
+**Note**: The Swap contract does not hold USTC. Users send USTC to Treasury via `SwapDeposit`, and Treasury notifies this contract via `NotifyDeposit`. Only the Treasury contract is authorized to call `NotifyDeposit`.
 
 #### Messages
 
@@ -489,13 +499,15 @@ PendingAdmin {
 
 | Message | Authority | Description |
 |---------|-----------|-------------|
-| `Swap {}` | Any user | Accepts USTC (`uusd`, sent as native funds; minimum 1 USTC), mints USTR to sender |
+| `NotifyDeposit { depositor, amount }` | Treasury only | Called by Treasury when user deposits USTC for swap; mints USTR to depositor |
 | `EmergencyPause {}` | Admin | Pauses swap functionality |
 | `EmergencyResume {}` | Admin | Resumes swap functionality |
 | `ProposeAdmin { new_admin }` | Admin | Initiates 7-day timelock for admin transfer |
 | `AcceptAdmin {}` | Pending admin | Completes admin transfer after timelock |
 | `CancelAdminProposal {}` | Admin | Cancels pending admin change |
 | `RecoverAsset { asset, amount, recipient }` | Admin | Recovers stuck assets sent without using proper methods (available after swap period ends) |
+
+**Note on Tax Optimization**: Users do not call this contract directly. Instead, they send USTC to the Treasury contract via `SwapDeposit {}`, which notifies this contract to mint USTR. This avoids TerraClassic's 0.5% burn tax on `BankMsg::Send`.
 
 **QueryMsg**
 
@@ -508,36 +520,67 @@ PendingAdmin {
 | `Stats {}` | `StatsResponse` | Returns total USTC received, total USTR minted |
 | `PendingAdmin {}` | `Option<PendingAdminResponse>` | Returns pending admin proposal details |
 
-#### Swap Flow
+#### Swap Flow (Tax-Optimized, Atomic)
 
-1. User sends USTC (`uusd` native denomination) with `Swap {}` execute message
-2. Contract validates that native funds are exactly `uusd` (rejects LUNC or other native tokens)
-3. Contract rejects swaps less than 1 USTC (1,000,000 micro units)
-4. Contract verifies swap period is active (current time between start and end)
-5. Contract calculates current rate based on elapsed time (using 10^18 precision)
-6. Contract calculates USTR amount: `ustr_amount = floor(ustc_amount / current_rate)`
-7. Contract transfers USTC to treasury (native bank send)
+The swap uses a two-contract pattern to avoid TerraClassic's 0.5% burn tax. **All steps execute atomically within a single transaction** via CosmWasm submessages:
 
-**On-Chain Tax Handling**: TerraClassic applies a network-level **USTC Burn Tax** on `uusd` transfers. According to the [official TerraClassic tax documentation](https://terra-classic.io/docs/develop/module-specifications/tax), the `ComputeTax()` function multiplies each spend coin by the `BurnTaxRate` and truncates to integers. Zero results skip deduction.
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    SINGLE ATOMIC TRANSACTION                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  User calls: Treasury.SwapDeposit {} with USTC funds                   │
+│       │                                                                 │
+│       ▼                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ TREASURY CONTRACT                                               │   │
+│  │ 1. Validate funds are exactly uusd                              │   │
+│  │ 2. Reject if < 1 USTC minimum                                   │   │
+│  │ 3. Hold USTC (no tax - MsgExecuteContract)                      │   │
+│  │ 4. Call Swap.NotifyDeposit via WasmMsg::Execute (submessage)    │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       │                                                                 │
+│       ▼ (submessage - same transaction)                                │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ SWAP CONTRACT                                                   │   │
+│  │ 5. Verify caller is authorized Treasury                         │   │
+│  │ 6. Verify swap period is active                                 │   │
+│  │ 7. Calculate rate based on elapsed time                         │   │
+│  │ 8. Calculate ustr_amount = floor(ustc_amount / rate)            │   │
+│  │ 9. Mint USTR via WasmMsg::Execute (submessage)                  │   │
+│  │ 10. Update statistics, emit event                               │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       │                                                                 │
+│       ▼ (submessage - same transaction)                                │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │ USTR TOKEN CONTRACT                                             │   │
+│  │ 11. Mint USTR to original depositor                             │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  If ANY step fails → ENTIRE transaction rolls back (USTC returned)     │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
 
-When transferring USTC from the preregistration contract to the treasury:
-- The burn tax is applied to the transfer amount
-- The treasury receives the **post-tax amount**
-- This is accounted for in the CR calculations
-- The burn tax effectively reduces circulating USTC supply, which benefits the ecosystem
-8. Contract mints USTR to user (CW20 mint call to USTR token)
-9. Contract updates statistics
-10. Contract emits swap event
+**Atomic Guarantees**: CosmWasm submessages execute within the same transaction context. The Treasury calls Swap via `WasmMsg::Execute`, and Swap calls USTR Token via `WasmMsg::Execute`. If any submessage fails (e.g., swap is paused, period ended, or mint fails), the entire transaction reverts and the user's USTC is returned.
 
-**Atomic Execution**: The entire swap operation relies on CosmWasm's atomic execution guarantees. If any step fails (e.g., USTR mint fails after USTC transfer), the entire transaction is rolled back.
+**Why This Flow?** TerraClassic applies a **0.5% Burn Tax** on native token transfers via `BankMsg::Send`. By having users send USTC directly to Treasury via `MsgExecuteContract` (which is NOT taxed), and having Treasury notify the Swap contract (instead of the Swap contract forwarding USTC to Treasury), we ensure 100% of user USTC reaches the treasury.
+
+**On-Chain Tax Handling**: The 0.5% tax is queried via `/terra/tx/v1beta1/compute_tax`. Tax applies to:
+- `MsgSend` (wallet → wallet): Taxed
+- `MsgExecuteContract` with funds (user → contract): NOT taxed
+- `BankMsg::Send` from contract (contract → anywhere): Taxed
+
+**Preregistration Transfer Note**: When transferring USTC from the preregistration contract to the treasury via `BankMsg::Send`, the 0.5% burn tax applies. The treasury receives the post-tax amount, which is accounted for in CR calculations.
 
 #### Edge Cases
 
-- **Minimum amount**: Swaps of less than 1 USTC are rejected to prevent dust/rounding attacks (at ~$0.02 per USTC, the cost to execute 1M spam transactions would exceed $20,000, far exceeding any potential exploit profit)
+- **Minimum amount**: Swaps of less than 1 USTC are rejected by Treasury to prevent dust/rounding attacks (at ~$0.02 per USTC, the cost to execute 1M spam transactions would exceed $20,000, far exceeding any potential exploit profit)
 - **Precision handling**: Uses CosmWasm's `Decimal` type (10^18 precision) for intermediate calculations; floor rounding for final amounts
 - **Time boundaries**: Precise handling of start/end timestamp boundaries
 - **Partial seconds**: Rate calculation uses block timestamp, not simulated continuous time
-- **Wrong denomination**: Swaps with non-USTC native tokens are rejected
+- **Wrong denomination**: Treasury rejects SwapDeposit with non-USTC native tokens
+- **Unauthorized caller**: Swap contract rejects `NotifyDeposit` calls from any address other than Treasury
 - **Post-100-day**: Contract is effectively dead after the swap period ends; no reactivation possible
 
 #### Emergency Pause Behavior
@@ -546,11 +589,12 @@ When the swap is paused via `EmergencyPause`:
 - **Queries remain available**: Users can still query rates, simulate swaps, and check status
 - **No maximum duration**: The pause remains until admin calls `EmergencyResume`
 - **Admin authority**: Only the admin can resume operations
+- **Treasury behavior**: Treasury will reject `SwapDeposit` calls when swap contract is paused (swap contract returns error on `NotifyDeposit`)
 
 #### Post-Swap Period
 
 After day 100, the swap contract is permanently disabled:
-- No further swaps can be executed
+- No further swaps can be executed (Treasury's `SwapDeposit` will fail when notifying Swap contract)
 - Admin can recover any stuck assets via `RecoverAsset` (for tokens accidentally sent without using the swap method)
 - Contract cannot be reactivated
 
