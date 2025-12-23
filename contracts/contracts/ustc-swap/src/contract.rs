@@ -6,6 +6,7 @@ use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo,
     Response, StdResult, Timestamp, Uint128, WasmMsg,
 };
+// Note: BankMsg and Coin are still used by execute_recover_asset
 use cw2::set_contract_version;
 use cw20::Cw20ExecuteMsg;
 
@@ -16,7 +17,7 @@ use crate::msg::{
 };
 use crate::state::{
     Config, PendingAdmin, Stats, ADMIN_TIMELOCK_DURATION, CONFIG, CONTRACT_NAME, CONTRACT_VERSION,
-    MIN_SWAP_AMOUNT, PENDING_ADMIN, STATS, USTC_DENOM,
+    MIN_SWAP_AMOUNT, PENDING_ADMIN, STATS,
 };
 use common::AssetInfo;
 
@@ -76,7 +77,9 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Swap {} => execute_swap(deps, env, info),
+        ExecuteMsg::NotifyDeposit { depositor, amount } => {
+            execute_notify_deposit(deps, env, info, depositor, amount)
+        }
         ExecuteMsg::EmergencyPause {} => execute_emergency_pause(deps, info),
         ExecuteMsg::EmergencyResume {} => execute_emergency_resume(deps, info),
         ExecuteMsg::ProposeAdmin { new_admin } => execute_propose_admin(deps, env, info, new_admin),
@@ -90,8 +93,21 @@ pub fn execute(
     }
 }
 
-fn execute_swap(deps: DepsMut, env: Env, info: MessageInfo) -> Result<Response, ContractError> {
+/// Handle deposit notification from Treasury contract
+/// Treasury holds the USTC; this contract calculates and mints USTR to the depositor
+fn execute_notify_deposit(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    depositor: String,
+    ustc_amount: Uint128,
+) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
+
+    // Only treasury can call this
+    if info.sender != config.treasury {
+        return Err(ContractError::UnauthorizedTreasury);
+    }
 
     // Check if paused
     if config.paused {
@@ -108,21 +124,13 @@ fn execute_swap(deps: DepsMut, env: Env, info: MessageInfo) -> Result<Response, 
         return Err(ContractError::SwapEnded);
     }
 
-    // Validate funds - must be exactly USTC
-    if info.funds.is_empty() {
-        return Err(ContractError::NoFundsSent);
-    }
-
-    if info.funds.len() != 1 || info.funds[0].denom != USTC_DENOM {
-        return Err(ContractError::InvalidFunds);
-    }
-
-    let ustc_amount = info.funds[0].amount;
-
-    // Check minimum amount
+    // Validate amount (Treasury already validates minimum, but double-check)
     if ustc_amount < Uint128::from(MIN_SWAP_AMOUNT) {
         return Err(ContractError::BelowMinimumSwap);
     }
+
+    // Validate depositor address
+    let depositor_addr = deps.api.addr_validate(&depositor)?;
 
     // Calculate current rate
     let rate = calculate_current_rate(&config, env.block.time);
@@ -139,30 +147,20 @@ fn execute_swap(deps: DepsMut, env: Env, info: MessageInfo) -> Result<Response, 
     stats.total_ustr_minted += ustr_amount;
     STATS.save(deps.storage, &stats)?;
 
-    // Transfer USTC to treasury
-    let send_to_treasury = BankMsg::Send {
-        to_address: config.treasury.to_string(),
-        amount: vec![Coin {
-            denom: USTC_DENOM.to_string(),
-            amount: ustc_amount,
-        }],
-    };
-
-    // Mint USTR to user
+    // Mint USTR to depositor (Treasury already holds the USTC)
     let mint_ustr = WasmMsg::Execute {
         contract_addr: config.ustr_token.to_string(),
         msg: to_json_binary(&Cw20ExecuteMsg::Mint {
-            recipient: info.sender.to_string(),
+            recipient: depositor_addr.to_string(),
             amount: ustr_amount,
         })?,
         funds: vec![],
     };
 
     Ok(Response::new()
-        .add_message(send_to_treasury)
         .add_message(mint_ustr)
-        .add_attribute("action", "swap")
-        .add_attribute("sender", info.sender)
+        .add_attribute("action", "notify_deposit")
+        .add_attribute("depositor", depositor_addr)
         .add_attribute("ustc_amount", ustc_amount)
         .add_attribute("ustr_amount", ustr_amount)
         .add_attribute("rate", rate.to_string()))
@@ -459,7 +457,7 @@ fn query_pending_admin(deps: Deps) -> StdResult<Option<PendingAdminResponse>> {
 mod tests {
     use super::*;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{coins, Decimal};
+    use cosmwasm_std::{from_json, Addr, Decimal};
 
     const ADMIN: &str = "admin_addr";
     const USTR_TOKEN: &str = "ustr_token_addr";
@@ -493,21 +491,41 @@ mod tests {
     }
 
     #[test]
-    fn test_swap_before_start() {
+    fn test_notify_deposit_unauthorized() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Non-treasury caller should fail
+        let info = mock_info("random_user", &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: "user".to_string(),
+            amount: Uint128::from(1_000_000u128),
+        };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::UnauthorizedTreasury);
+    }
+
+    #[test]
+    fn test_notify_deposit_before_start() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         // Set start time in the future
         setup_contract(deps.as_mut(), env.block.time.seconds() + 1000);
 
-        let info = mock_info("user", &coins(1_000_000, USTC_DENOM));
-        let msg = ExecuteMsg::Swap {};
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: "user".to_string(),
+            amount: Uint128::from(1_000_000u128),
+        };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapNotStarted);
     }
 
     #[test]
-    fn test_swap_after_end() {
+    fn test_notify_deposit_after_end() {
         let mut deps = mock_dependencies();
         let mut env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
@@ -515,37 +533,62 @@ mod tests {
         // Advance time past end
         env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 8_640_001);
 
-        let info = mock_info("user", &coins(1_000_000, USTC_DENOM));
-        let msg = ExecuteMsg::Swap {};
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: "user".to_string(),
+            amount: Uint128::from(1_000_000u128),
+        };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapEnded);
     }
 
     #[test]
-    fn test_swap_below_minimum() {
+    fn test_notify_deposit_below_minimum() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
 
-        let info = mock_info("user", &coins(999_999, USTC_DENOM)); // Below 1 USTC
-        let msg = ExecuteMsg::Swap {};
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: "user".to_string(),
+            amount: Uint128::from(999_999u128), // Below 1 USTC
+        };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::BelowMinimumSwap);
     }
 
     #[test]
-    fn test_swap_wrong_denom() {
+    fn test_notify_deposit_success() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
 
-        let info = mock_info("user", &coins(1_000_000, "uluna")); // Wrong denom
-        let msg = ExecuteMsg::Swap {};
+        let info = mock_info(TREASURY, &[]);
+        let ustc_amount = Uint128::from(15_000_000u128); // 15 USTC
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: "user".to_string(),
+            amount: ustc_amount,
+        };
 
-        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
-        assert_eq!(err, ContractError::InvalidFunds);
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        // Should have 1 message: mint USTR
+        assert_eq!(res.messages.len(), 1);
+
+        // Check attributes
+        assert_eq!(res.attributes[0].value, "notify_deposit");
+        assert_eq!(res.attributes[1].value, "user");
+        assert_eq!(res.attributes[2].value, ustc_amount.to_string());
+
+        // At day 0, rate = 1.5, so 15 USTC / 1.5 = 10 USTR
+        assert_eq!(res.attributes[3].value, "10000000"); // 10 USTR in micro units
+
+        // Verify stats updated
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.total_ustc_received, ustc_amount);
+        assert_eq!(stats.total_ustr_minted, Uint128::from(10_000_000u128));
     }
 
     #[test]
@@ -562,9 +605,12 @@ mod tests {
         let config = CONFIG.load(&deps.storage).unwrap();
         assert!(config.paused);
 
-        // Try to swap while paused
-        let info = mock_info("user", &coins(1_000_000, USTC_DENOM));
-        let msg = ExecuteMsg::Swap {};
+        // Try to notify deposit while paused
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: "user".to_string(),
+            amount: Uint128::from(1_000_000u128),
+        };
         let err = execute(deps.as_mut(), env.clone(), info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapPaused);
 
@@ -603,6 +649,518 @@ mod tests {
             Timestamp::from_seconds(start_time + 8_640_000), // 100 days
         );
         assert_eq!(rate, Decimal::from_ratio(25u128, 10u128)); // 2.5
+    }
+
+    // ============ ADMIN TRANSFER TESTS ============
+
+    #[test]
+    fn test_propose_admin_success() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let new_admin = "new_admin_addr";
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::ProposeAdmin {
+            new_admin: new_admin.to_string(),
+        };
+
+        let res = execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+        assert_eq!(res.attributes[0].value, "propose_admin");
+        assert_eq!(res.attributes[1].value, new_admin);
+
+        // Verify pending admin stored
+        let pending = PENDING_ADMIN.load(&deps.storage).unwrap();
+        assert_eq!(pending.new_address.as_str(), new_admin);
+        assert_eq!(
+            pending.execute_after.seconds(),
+            env.block.time.seconds() + ADMIN_TIMELOCK_DURATION
+        );
+    }
+
+    #[test]
+    fn test_propose_admin_unauthorized() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("random_user", &[]);
+        let msg = ExecuteMsg::ProposeAdmin {
+            new_admin: "new_admin".to_string(),
+        };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_accept_admin_success() {
+        let mut deps = mock_dependencies();
+        let mut env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let new_admin = "new_admin_addr";
+
+        // Propose admin change
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::ProposeAdmin {
+            new_admin: new_admin.to_string(),
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Advance time past timelock
+        env.block.time = Timestamp::from_seconds(
+            env.block.time.seconds() + ADMIN_TIMELOCK_DURATION + 1,
+        );
+
+        // Accept as new admin
+        let info = mock_info(new_admin, &[]);
+        let msg = ExecuteMsg::AcceptAdmin {};
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        assert_eq!(res.attributes[0].value, "accept_admin");
+        assert_eq!(res.attributes[1].value, ADMIN);
+        assert_eq!(res.attributes[2].value, new_admin);
+
+        // Verify admin updated
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.admin.as_str(), new_admin);
+
+        // Verify pending cleared
+        assert!(PENDING_ADMIN.may_load(&deps.storage).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_accept_admin_no_pending() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("new_admin", &[]);
+        let msg = ExecuteMsg::AcceptAdmin {};
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::NoPendingAdmin);
+    }
+
+    #[test]
+    fn test_accept_admin_wrong_address() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Propose admin change
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::ProposeAdmin {
+            new_admin: "new_admin".to_string(),
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Try to accept as wrong address
+        let info = mock_info("wrong_address", &[]);
+        let msg = ExecuteMsg::AcceptAdmin {};
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::UnauthorizedPendingAdmin);
+    }
+
+    #[test]
+    fn test_accept_admin_timelock_not_expired() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let new_admin = "new_admin";
+
+        // Propose admin change
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::ProposeAdmin {
+            new_admin: new_admin.to_string(),
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Try to accept before timelock expires
+        let info = mock_info(new_admin, &[]);
+        let msg = ExecuteMsg::AcceptAdmin {};
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        match err {
+            ContractError::TimelockNotExpired { remaining_seconds } => {
+                assert!(remaining_seconds > 0);
+            }
+            _ => panic!("Expected TimelockNotExpired error"),
+        }
+    }
+
+    #[test]
+    fn test_cancel_admin_proposal_success() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Propose admin change
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::ProposeAdmin {
+            new_admin: "new_admin".to_string(),
+        };
+        execute(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+
+        // Cancel
+        let msg = ExecuteMsg::CancelAdminProposal {};
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        assert_eq!(res.attributes[0].value, "cancel_admin_proposal");
+
+        // Verify pending cleared
+        assert!(PENDING_ADMIN.may_load(&deps.storage).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_cancel_admin_proposal_unauthorized() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Propose admin change
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::ProposeAdmin {
+            new_admin: "new_admin".to_string(),
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Try to cancel as non-admin
+        let info = mock_info("random_user", &[]);
+        let msg = ExecuteMsg::CancelAdminProposal {};
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_cancel_admin_proposal_no_pending() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::CancelAdminProposal {};
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::NoPendingAdmin);
+    }
+
+    // ============ EMERGENCY PAUSE/RESUME UNAUTHORIZED TESTS ============
+
+    #[test]
+    fn test_emergency_pause_unauthorized() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("random_user", &[]);
+        let msg = ExecuteMsg::EmergencyPause {};
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_emergency_resume_unauthorized() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // First pause
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::EmergencyPause {};
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Try to resume as non-admin
+        let info = mock_info("random_user", &[]);
+        let msg = ExecuteMsg::EmergencyResume {};
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    // ============ RECOVER ASSET TESTS ============
+
+    #[test]
+    fn test_recover_asset_native_success() {
+        let mut deps = mock_dependencies();
+        let mut env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Advance past swap period end
+        env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 8_640_001);
+
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::RecoverAsset {
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: Uint128::from(1_000_000u128),
+            recipient: "recipient_addr".to_string(),
+        };
+
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        assert_eq!(res.attributes[0].value, "recover_asset");
+        assert_eq!(res.attributes[1].value, "recipient_addr");
+        assert_eq!(res.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_recover_asset_cw20_success() {
+        let mut deps = mock_dependencies();
+        let mut env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Advance past swap period end
+        env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 8_640_001);
+
+        let cw20_addr = Addr::unchecked("cw20_token");
+
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::RecoverAsset {
+            asset: AssetInfo::Cw20 {
+                contract_addr: cw20_addr,
+            },
+            amount: Uint128::from(1_000_000u128),
+            recipient: "recipient_addr".to_string(),
+        };
+
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        assert_eq!(res.attributes[0].value, "recover_asset");
+        assert_eq!(res.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_recover_asset_unauthorized() {
+        let mut deps = mock_dependencies();
+        let mut env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Advance past swap period end
+        env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 8_640_001);
+
+        let info = mock_info("random_user", &[]);
+        let msg = ExecuteMsg::RecoverAsset {
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: Uint128::from(1_000_000u128),
+            recipient: "recipient".to_string(),
+        };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_recover_asset_before_end() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Try to recover before swap period ends
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::RecoverAsset {
+            asset: AssetInfo::Native {
+                denom: "uusd".to_string(),
+            },
+            amount: Uint128::from(1_000_000u128),
+            recipient: "recipient".to_string(),
+        };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::RecoveryNotAvailable);
+    }
+
+    // ============ QUERY TESTS ============
+
+    #[test]
+    fn test_query_config() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let start_time = env.block.time.seconds();
+        setup_contract(deps.as_mut(), start_time);
+
+        let res = query(deps.as_ref(), env, QueryMsg::Config {}).unwrap();
+        let config: ConfigResponse = from_json(res).unwrap();
+
+        assert_eq!(config.ustr_token.as_str(), USTR_TOKEN);
+        assert_eq!(config.treasury.as_str(), TREASURY);
+        assert_eq!(config.admin.as_str(), ADMIN);
+        assert!(!config.paused);
+        assert_eq!(config.start_rate, Decimal::from_ratio(15u128, 10u128));
+        assert_eq!(config.end_rate, Decimal::from_ratio(25u128, 10u128));
+    }
+
+    #[test]
+    fn test_query_current_rate() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        let start_time = env.block.time.seconds();
+        setup_contract(deps.as_mut(), start_time);
+
+        let res = query(deps.as_ref(), env, QueryMsg::CurrentRate {}).unwrap();
+        let rate: RateResponse = from_json(res).unwrap();
+
+        assert_eq!(rate.rate, Decimal::from_ratio(15u128, 10u128)); // 1.5 at start
+        assert_eq!(rate.elapsed_seconds, 0);
+        assert_eq!(rate.total_seconds, 8_640_000);
+    }
+
+    #[test]
+    fn test_query_swap_simulation() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let ustc_amount = Uint128::from(15_000_000u128); // 15 USTC
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation { ustc_amount },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        assert_eq!(sim.ustc_amount, ustc_amount);
+        // At rate 1.5: 15 USTC / 1.5 = 10 USTR
+        assert_eq!(sim.ustr_amount, Uint128::from(10_000_000u128));
+        assert_eq!(sim.rate, Decimal::from_ratio(15u128, 10u128));
+    }
+
+    #[test]
+    fn test_query_status_before_start() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        // Set start time in the future
+        setup_contract(deps.as_mut(), env.block.time.seconds() + 1000);
+
+        let res = query(deps.as_ref(), env, QueryMsg::Status {}).unwrap();
+        let status: StatusResponse = from_json(res).unwrap();
+
+        assert!(!status.is_active);
+        assert!(!status.has_started);
+        assert!(!status.has_ended);
+        assert!(!status.is_paused);
+        assert_eq!(status.seconds_until_start, 1000);
+    }
+
+    #[test]
+    fn test_query_status_active() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let res = query(deps.as_ref(), env, QueryMsg::Status {}).unwrap();
+        let status: StatusResponse = from_json(res).unwrap();
+
+        assert!(status.is_active);
+        assert!(status.has_started);
+        assert!(!status.has_ended);
+        assert!(!status.is_paused);
+        assert_eq!(status.seconds_until_start, 0);
+        assert_eq!(status.seconds_remaining, 8_640_000);
+    }
+
+    #[test]
+    fn test_query_status_ended() {
+        let mut deps = mock_dependencies();
+        let mut env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Advance past end
+        env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 8_640_001);
+
+        let res = query(deps.as_ref(), env, QueryMsg::Status {}).unwrap();
+        let status: StatusResponse = from_json(res).unwrap();
+
+        assert!(!status.is_active);
+        assert!(status.has_started);
+        assert!(status.has_ended);
+        assert!(!status.is_paused);
+        assert_eq!(status.seconds_remaining, 0);
+    }
+
+    #[test]
+    fn test_query_status_paused() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Pause
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::EmergencyPause {};
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        let res = query(deps.as_ref(), env, QueryMsg::Status {}).unwrap();
+        let status: StatusResponse = from_json(res).unwrap();
+
+        assert!(!status.is_active); // Not active when paused
+        assert!(status.is_paused);
+    }
+
+    #[test]
+    fn test_query_stats() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Initial stats should be zero
+        let res = query(deps.as_ref(), env.clone(), QueryMsg::Stats {}).unwrap();
+        let stats: StatsResponse = from_json(res).unwrap();
+        assert_eq!(stats.total_ustc_received, Uint128::zero());
+        assert_eq!(stats.total_ustr_minted, Uint128::zero());
+
+        // Do a deposit
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: "user".to_string(),
+            amount: Uint128::from(15_000_000u128),
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Check updated stats
+        let res = query(deps.as_ref(), env, QueryMsg::Stats {}).unwrap();
+        let stats: StatsResponse = from_json(res).unwrap();
+        assert_eq!(stats.total_ustc_received, Uint128::from(15_000_000u128));
+        assert_eq!(stats.total_ustr_minted, Uint128::from(10_000_000u128));
+    }
+
+    #[test]
+    fn test_query_pending_admin_none() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let res = query(deps.as_ref(), env, QueryMsg::PendingAdmin {}).unwrap();
+        let pending: Option<PendingAdminResponse> = from_json(res).unwrap();
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn test_query_pending_admin_some() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Propose admin change
+        let info = mock_info(ADMIN, &[]);
+        let msg = ExecuteMsg::ProposeAdmin {
+            new_admin: "new_admin".to_string(),
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        let res = query(deps.as_ref(), env, QueryMsg::PendingAdmin {}).unwrap();
+        let pending: Option<PendingAdminResponse> = from_json(res).unwrap();
+        assert!(pending.is_some());
+        let pending = pending.unwrap();
+        assert_eq!(pending.new_address.as_str(), "new_admin");
     }
 }
 

@@ -144,6 +144,7 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
 mod tests {
     use super::*;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
+    use cosmwasm_std::from_json;
 
     const ADMIN: &str = "admin";
     const TOKEN: &str = "token_addr";
@@ -279,6 +280,16 @@ mod tests {
             ContractError::ZeroAmount { .. } => {}
             _ => panic!("Expected ZeroAmount error"),
         }
+    }
+
+    #[test]
+    fn test_query_config() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap();
+        let config: ConfigResponse = from_json(res).unwrap();
+        assert_eq!(config.admin.as_str(), ADMIN);
     }
 }
 

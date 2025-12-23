@@ -11,6 +11,9 @@ pub enum ContractError {
     #[error("Unauthorized: only admin can perform this action")]
     Unauthorized,
 
+    #[error("Unauthorized: only treasury contract can notify deposits")]
+    UnauthorizedTreasury,
+
     #[error("Unauthorized: only pending admin can accept")]
     UnauthorizedPendingAdmin,
 
@@ -29,14 +32,8 @@ pub enum ContractError {
     #[error("Swap period has ended")]
     SwapEnded,
 
-    #[error("Invalid funds: expected exactly USTC (uusd)")]
-    InvalidFunds,
-
     #[error("Minimum swap amount is 1 USTC (1,000,000 uusd)")]
     BelowMinimumSwap,
-
-    #[error("No funds sent")]
-    NoFundsSent,
 
     #[error("Asset recovery only available after swap period ends")]
     RecoveryNotAvailable,

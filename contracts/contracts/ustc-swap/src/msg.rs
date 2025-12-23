@@ -26,8 +26,15 @@ pub struct InstantiateMsg {
 /// Execute messages
 #[cw_serde]
 pub enum ExecuteMsg {
-    /// Accepts USTC (uusd, sent as native funds; minimum 1 USTC), mints USTR to sender
-    Swap {},
+    /// Called by Treasury when user deposits USTC for swap
+    /// Treasury holds the USTC, this contract mints USTR to depositor
+    /// Only callable by the authorized treasury contract
+    NotifyDeposit {
+        /// Address of the user who deposited USTC
+        depositor: String,
+        /// Amount of USTC deposited (in uusd micro units)
+        amount: Uint128,
+    },
 
     /// Pauses swap functionality (admin only)
     EmergencyPause {},

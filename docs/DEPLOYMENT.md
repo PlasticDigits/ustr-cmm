@@ -201,13 +201,15 @@ Create `swap_init.json`:
 {
   "ustr_token": "terra1...",
   "treasury": "terra1...",
+  "start_time": 1234567890,
   "start_rate": "1.5",
   "end_rate": "2.5",
   "duration_seconds": 8640000,
-  "admin": "terra1youradminwallet...",
-  "ustc_denom": "uusd"
+  "admin": "terra1youradminwallet..."
 }
 ```
+
+**Note**: `start_time` is a Unix epoch timestamp (seconds). Set this to the desired swap start time. You can get the current timestamp with `date +%s`.
 
 ```bash
 terrad tx wasm instantiate $SWAP_CODE_ID \
@@ -249,6 +251,23 @@ terrad tx wasm execute $USTR_TOKEN \
 ```bash
 terrad tx wasm execute $USTR_TOKEN \
   '{"remove_minter": {"minter": "terra1youraddress..."}}' \
+  --from wallet \
+  --chain-id $CHAIN_ID \
+  --node $RPC \
+  --gas auto \
+  --gas-adjustment 1.4 \
+  --fees 100000000uluna \
+  --broadcast-mode sync \
+  -y
+```
+
+### Set Swap Contract on Treasury
+
+The Treasury needs to know the Swap contract address to notify it of deposits:
+
+```bash
+terrad tx wasm execute $TREASURY \
+  '{"set_swap_contract": {"contract_addr": "'"$SWAP"'"}}' \
   --from wallet \
   --chain-id $CHAIN_ID \
   --node $RPC \
@@ -326,6 +345,7 @@ terrad query wasm contract-state smart $SWAP '{"status": {}}' \
 - [ ] Swap contract deployed with correct configuration
 - [ ] Swap contract added as USTR minter
 - [ ] Deployer removed from USTR minters
+- [ ] Swap contract set on Treasury (`set_swap_contract`)
 - [ ] Initial USTC transferred to treasury
 - [ ] All contract addresses documented
 - [ ] Frontend updated with contract addresses

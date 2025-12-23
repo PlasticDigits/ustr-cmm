@@ -93,7 +93,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 5. **Two-Step Governance Transfer**: New governance must explicitly accept the role after timelock expires, preventing accidental transfers.
 
-6. **Multiple Pending Proposals**: Multiple governance proposals can exist simultaneously. Each proposed address has its own timelock. When any proposal is accepted, all other pending proposals are automatically cleared since governance has changed.
+6. **Multiple Pending Proposals**: Multiple governance proposals can exist simultaneously. Each proposed address has its own timelock. When a proposal is accepted, **only that specific proposal is cleared**—other pending proposals remain valid. This prevents gas-griefing attacks where an attacker creates thousands of proposals to make acceptance prohibitively expensive. New governance should cancel any unwanted pending proposals after accepting.
 
 7. **Decimal Handling**: System uses each token's on-chain decimal count when calculating CR ratios, ensuring oracle prices match regardless of decimal configuration (6 for native `uusd`, 18 for most CW20s, etc.).
 
@@ -105,6 +105,9 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Current governance can cancel pending transfers and withdrawals
 - All actions emit events for transparency
 - No direct access to assets except via explicit withdrawal proposals
+- Gas attack prevention: accepting governance only clears the accepted proposal (not all pending proposals)
+
+**Withdrawal Tax Note**: Native token withdrawals use `BankMsg::Send`, which incurs TerraClassic's 0.5% burn tax. The `amount` specifies what is debited from treasury; the destination receives the post-tax amount.
 
 **Full Specification**: See [PROPOSAL.md](../PROPOSAL.md#treasury-contract) for complete interface details.
 
@@ -133,7 +136,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Post-duration: No further USTR issuance
 
 **Execute Messages**:
-- `NotifyDeposit { depositor, amount }` - Called by Treasury to notify of a swap deposit; mints USTR to depositor
+- `NotifyDeposit { depositor, amount }` - Called by Treasury when user deposits USTC via SwapDeposit; mints USTR to depositor (treasury only)
 - `EmergencyPause` - Pauses swap functionality (admin only)
 - `EmergencyResume` - Resumes swap functionality (admin only)
 - `ProposeAdmin` - Initiates 7-day timelock for admin transfer

@@ -323,7 +323,7 @@ PendingGovernance {
 }
 ```
 
-**Note**: Multiple governance proposals can be pending simultaneously. When a proposal is accepted, all other pending proposals are automatically cleared since governance has changed.
+**Note**: Multiple governance proposals can be pending simultaneously. When a proposal is accepted, **only that specific proposal is cleared**—other pending proposals remain valid and can still be accepted (if their timelocks have expired) or cancelled by the new governance. This design prevents a gas-griefing attack where an attacker could propose thousands of governance transfers to make acceptance prohibitively expensive if the contract had to iterate and clear all proposals on accept.
 
 #### Messages
 
@@ -413,6 +413,11 @@ This unified interface allows governance to manage all asset types through a sin
 5. **No Direct Access**: Treasury assets can only be moved via explicit withdrawal proposals
 6. **Event Emission**: All governance and withdrawal actions emit events for transparency
 7. **Multiple Pending Withdrawals**: Multiple withdrawal proposals can exist simultaneously, each with its own timelock
+8. **Gas Attack Prevention**: Accepting a governance proposal only clears that specific proposal; other pending proposals must be cancelled individually by new governance. This prevents gas-griefing attacks where an attacker could create thousands of proposals to make acceptance prohibitively expensive.
+
+#### Withdrawal Tax Note
+
+Native token withdrawals (USTC, LUNC) use `BankMsg::Send`, which incurs TerraClassic's 0.5% burn tax. The `amount` field in `ProposeWithdraw` specifies the amount **debited from treasury**; the destination receives the post-tax amount. For example, withdrawing 1,000,000 USTC results in ~995,000 USTC reaching the destination.
 
 ---
 
@@ -1290,7 +1295,7 @@ Batch CW20 token distribution contract (similar to [disperse.app](https://disper
 ### USTC Swap Contract
 
 **Execute**:
-- `Swap {}` (with native USTC `uusd` funds; minimum 1 USTC)
+- `NotifyDeposit { depositor, amount }` (treasury only; called when user deposits USTC via Treasury's SwapDeposit)
 - `EmergencyPause {}` (admin only)
 - `EmergencyResume {}` (admin only)
 - `ProposeAdmin { new_admin }` (initiates 7-day timelock)
