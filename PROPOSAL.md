@@ -329,9 +329,11 @@ PendingGovernance {
 | Message | Authority | Description |
 |---------|-----------|-------------|
 | `ProposeGovernanceTransfer { new_governance }` | Current governance | Initiates 7-day timelock for governance transfer; multiple proposals can exist simultaneously |
-| `AcceptGovernanceTransfer {}` | Pending governance | Completes governance transfer after timelock; clears all other pending proposals |
+| `AcceptGovernanceTransfer {}` | Pending governance | Completes governance transfer after timelock; only clears the accepted proposal |
 | `CancelGovernanceTransfer { proposed_governance }` | Current governance | Cancels a specific pending governance proposal |
-| `Withdraw { destination, asset, amount }` | Governance | Transfers assets from treasury |
+| `ProposeWithdraw { destination, asset, amount }` | Governance | Proposes a withdrawal with 7-day timelock |
+| `ExecuteWithdraw { withdrawal_id }` | Governance | Executes a pending withdrawal after timelock expires |
+| `CancelWithdraw { withdrawal_id }` | Governance | Cancels a specific pending withdrawal |
 | `AddCw20 { contract_addr }` | Governance | Adds a CW20 token to the balance tracking whitelist |
 | `RemoveCw20 { contract_addr }` | Governance | Removes a CW20 token from the whitelist |
 | `Receive(Cw20ReceiveMsg)` | CW20 contract | CW20 receive hook; accepts direct CW20 token transfers |
@@ -342,6 +344,7 @@ PendingGovernance {
 |-------|----------|-------------|
 | `Config {}` | `ConfigResponse` | Returns current governance and timelock settings |
 | `PendingGovernance {}` | `PendingGovernanceResponse` | Returns all pending governance proposals (empty list if none) |
+| `PendingWithdrawals {}` | `PendingWithdrawalsResponse` | Returns all pending withdrawal proposals (empty list if none) |
 | `Balance { asset }` | `BalanceResponse` | Returns treasury balance for specified asset |
 | `AllBalances {}` | `AllBalancesResponse` | Returns all treasury holdings (native + whitelisted CW20s) |
 | `Cw20Whitelist {}` | `Cw20WhitelistResponse` | Returns list of whitelisted CW20 contract addresses |

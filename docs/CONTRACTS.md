@@ -62,7 +62,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 **Execute Messages**:
 - `ProposeGovernanceTransfer { new_governance }` - Initiates 7-day timelock for governance transfer; multiple proposals can exist simultaneously
-- `AcceptGovernanceTransfer {}` - Completes governance transfer for sender's address after timelock expires; clears all other pending proposals
+- `AcceptGovernanceTransfer {}` - Completes governance transfer for sender's address after timelock expires; only clears the accepted proposal (other pending proposals remain and can be cancelled by new governance)
 - `CancelGovernanceTransfer { proposed_governance }` - Cancels a specific pending governance proposal
 - `ProposeWithdraw { destination, asset, amount }` - Proposes a withdrawal with 7-day timelock (governance only)
 - `ExecuteWithdraw { withdrawal_id }` - Executes a pending withdrawal after timelock expires (governance only)

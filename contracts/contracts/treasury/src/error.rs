@@ -28,5 +28,8 @@ pub enum ContractError {
 
     #[error("No pending withdrawal found for ID: {withdrawal_id}")]
     NoPendingWithdrawal { withdrawal_id: String },
+
+    #[error("Invalid amount: withdrawal amount must be greater than zero")]
+    ZeroWithdrawAmount,
 }
 

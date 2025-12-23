@@ -150,8 +150,10 @@ The USTR CMM system consists of four primary smart contracts that work together 
 | Key | Type | Description |
 |-----|------|-------------|
 | `governance` | `Addr` | Current governance address |
-| `pending_governance` | `Option<PendingGovernance>` | Pending governance change |
+| `pending_governance` | `Map<Addr, PendingGovernance>` | Pending governance proposals (multiple can exist) |
 | `timelock_duration` | `u64` | Governance change delay (seconds) |
+| `pending_withdrawals` | `Map<String, PendingWithdrawal>` | Pending withdrawal proposals |
+| `cw20_whitelist` | `Map<Addr, bool>` | CW20 tokens included in balance tracking |
 
 ### USTC-Swap State
 

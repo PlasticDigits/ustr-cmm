@@ -231,6 +231,11 @@ fn execute_propose_withdraw(
         return Err(ContractError::Unauthorized);
     }
 
+    // Reject zero-amount withdrawals
+    if amount.is_zero() {
+        return Err(ContractError::ZeroWithdrawAmount);
+    }
+
     let destination_addr = deps.api.addr_validate(&destination)?;
 
     // Generate unique withdrawal ID
@@ -435,18 +440,21 @@ fn execute_remove_cw20(
 
 fn execute_receive_cw20(
     deps: DepsMut,
-    _info: MessageInfo,
+    info: MessageInfo,
     cw20_msg: Cw20ReceiveMsg,
 ) -> Result<Response, ContractError> {
     // The CW20 contract has already transferred tokens to this contract
     // We just need to acknowledge receipt - no action needed
     // The msg field can be used for future extensions, but for now we ignore it
     
-    let sender = deps.api.addr_validate(&cw20_msg.sender)?;
+    // info.sender is the CW20 contract that sent the tokens
+    // cw20_msg.sender is the user who initiated the transfer
+    let user_sender = deps.api.addr_validate(&cw20_msg.sender)?;
     
     Ok(Response::new()
         .add_attribute("action", "receive_cw20")
-        .add_attribute("sender", sender)
+        .add_attribute("cw20_contract", info.sender)
+        .add_attribute("from", user_sender)
         .add_attribute("amount", cw20_msg.amount))
 }
 
@@ -1528,7 +1536,7 @@ mod tests {
         deps.querier
             .update_balance(env.contract.address.clone(), coins(1000, DENOM_USTC));
 
-        // Propose withdrawal with zero amount (should succeed - amount validation happens on execute)
+        // Propose withdrawal with zero amount (should fail)
         let info = mock_info(GOVERNANCE, &[]);
         let msg = ExecuteMsg::ProposeWithdraw {
             destination: USER.to_string(),
@@ -1537,8 +1545,8 @@ mod tests {
             },
             amount,
         };
-        let res = execute(deps.as_mut(), env, info, msg).unwrap();
-        assert_eq!(res.attributes[0].value, "propose_withdraw");
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::ZeroWithdrawAmount);
     }
 
     #[test]
@@ -1815,49 +1823,25 @@ mod tests {
     }
 
     #[test]
-    fn test_execute_withdraw_zero_amount() {
+    fn test_propose_withdraw_zero_amount_cw20() {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
-        let mut env = mock_env();
+        let env = mock_env();
+        let cw20_addr = Addr::unchecked(CW20_TOKEN);
         let amount = Uint128::zero();
 
-        // Fund treasury
-        deps.querier
-            .update_balance(env.contract.address.clone(), coins(1000, DENOM_USTC));
-
-        // Propose zero amount withdrawal
+        // Propose withdrawal with zero amount for CW20 (should fail)
         let info = mock_info(GOVERNANCE, &[]);
         let msg = ExecuteMsg::ProposeWithdraw {
             destination: USER.to_string(),
-            asset: AssetInfo::Native {
-                denom: DENOM_USTC.to_string(),
+            asset: AssetInfo::Cw20 {
+                contract_addr: cw20_addr,
             },
             amount,
         };
-        let res = execute(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
-        let withdrawal_id = res.attributes[1].value.clone();
-
-        // Advance time past timelock
-        env.block.time = Timestamp::from_seconds(
-            env.block.time.seconds() + DEFAULT_TIMELOCK_DURATION + 1,
-        );
-
-        // Execute zero amount withdrawal (should succeed - sends zero tokens)
-        let msg = ExecuteMsg::ExecuteWithdraw {
-            withdrawal_id: withdrawal_id.clone(),
-        };
-        let res = execute(deps.as_mut(), env, info, msg).unwrap();
-        assert_eq!(res.messages.len(), 1);
-        assert_eq!(res.attributes[0].value, "execute_withdraw");
-        
-        // Verify message sends zero amount
-        match &res.messages[0].msg {
-            CosmosMsg::Bank(BankMsg::Send { amount: coins, .. }) => {
-                assert_eq!(coins[0].amount, Uint128::zero());
-            }
-            _ => panic!("Expected BankMsg::Send"),
-        }
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::ZeroWithdrawAmount);
     }
 
     #[test]
@@ -2081,11 +2065,11 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
-        let sender = "sender_addr";
+        let user_sender = "sender_addr";
         let amount = Uint128::from(1000u128);
 
         let cw20_msg = Cw20ReceiveMsg {
-            sender: sender.to_string(),
+            sender: user_sender.to_string(),
             amount,
             msg: cosmwasm_std::Binary::default(),
         };
@@ -2094,13 +2078,66 @@ mod tests {
         let msg = ExecuteMsg::Receive(cw20_msg.clone());
 
         let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-        assert_eq!(res.attributes.len(), 3);
+        assert_eq!(res.attributes.len(), 4);
         assert_eq!(res.attributes[0].key, "action");
         assert_eq!(res.attributes[0].value, "receive_cw20");
-        assert_eq!(res.attributes[1].key, "sender");
-        assert_eq!(res.attributes[1].value, sender);
-        assert_eq!(res.attributes[2].key, "amount");
-        assert_eq!(res.attributes[2].value, amount.to_string());
+        assert_eq!(res.attributes[1].key, "cw20_contract");
+        assert_eq!(res.attributes[1].value, CW20_TOKEN);
+        assert_eq!(res.attributes[2].key, "from");
+        assert_eq!(res.attributes[2].value, user_sender);
+        assert_eq!(res.attributes[3].key, "amount");
+        assert_eq!(res.attributes[3].value, amount.to_string());
+    }
+
+    #[test]
+    fn test_receive_cw20_from_different_contracts() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let user_sender = "sender_addr";
+        let amount = Uint128::from(500u128);
+        let another_cw20 = "another_cw20_token";
+
+        let cw20_msg = Cw20ReceiveMsg {
+            sender: user_sender.to_string(),
+            amount,
+            msg: cosmwasm_std::Binary::default(),
+        };
+
+        // Receive from a different CW20 contract
+        let info = mock_info(another_cw20, &[]);
+        let msg = ExecuteMsg::Receive(cw20_msg);
+
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+        assert_eq!(res.attributes.len(), 4);
+        assert_eq!(res.attributes[1].key, "cw20_contract");
+        assert_eq!(res.attributes[1].value, another_cw20);
+        assert_eq!(res.attributes[2].key, "from");
+        assert_eq!(res.attributes[2].value, user_sender);
+    }
+
+    #[test]
+    fn test_receive_cw20_with_msg_payload() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let user_sender = "sender_addr";
+        let amount = Uint128::from(1000u128);
+        // Include a non-empty msg payload (future extensions might use this)
+        let payload = cosmwasm_std::Binary::from(b"some_payload");
+
+        let cw20_msg = Cw20ReceiveMsg {
+            sender: user_sender.to_string(),
+            amount,
+            msg: payload,
+        };
+
+        let info = mock_info(CW20_TOKEN, &[]);
+        let msg = ExecuteMsg::Receive(cw20_msg);
+
+        // Should still succeed - msg payload is currently ignored
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+        assert_eq!(res.attributes[0].value, "receive_cw20");
     }
 
     // Note: Address validation is handled by CosmWasm's addr_validate.
