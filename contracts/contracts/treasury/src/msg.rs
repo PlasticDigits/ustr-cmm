@@ -3,6 +3,7 @@
 use common::AssetInfo;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Timestamp, Uint128};
+use cw20::Cw20ReceiveMsg;
 
 /// Instantiate message
 #[cw_serde]
@@ -16,15 +17,15 @@ pub struct InstantiateMsg {
 pub enum ExecuteMsg {
     /// Initiates 7-day timelock for governance transfer
     /// Only callable by current governance
-    ProposeGovernance { new_governance: String },
+    ProposeGovernanceTransfer { new_governance: String },
 
     /// Completes governance transfer after timelock expires
     /// Only callable by pending governance address
-    AcceptGovernance {},
+    AcceptGovernanceTransfer {},
 
-    /// Cancels pending governance change
+    /// Cancels a specific pending governance transfer
     /// Only callable by current governance
-    CancelGovernanceProposal {},
+    CancelGovernanceTransfer { proposed_governance: String },
 
     /// Transfers assets from treasury
     /// Only callable by governance
@@ -41,6 +42,10 @@ pub enum ExecuteMsg {
     /// Removes a CW20 token from the whitelist
     /// Only callable by governance
     RemoveCw20 { contract_addr: String },
+
+    /// CW20 receive hook - accepts direct CW20 token transfers
+    /// Called automatically when CW20 tokens are sent to this contract
+    Receive(Cw20ReceiveMsg),
 }
 
 /// Query messages
@@ -51,8 +56,8 @@ pub enum QueryMsg {
     #[returns(ConfigResponse)]
     Config {},
 
-    /// Returns pending governance proposal details
-    #[returns(Option<PendingGovernanceResponse>)]
+    /// Returns all pending governance proposals
+    #[returns(PendingGovernanceResponse)]
     PendingGovernance {},
 
     /// Returns treasury balance for specified asset
@@ -75,11 +80,17 @@ pub struct ConfigResponse {
     pub timelock_duration: u64,
 }
 
-/// Response for PendingGovernance query
+/// A single pending governance proposal entry
 #[cw_serde]
-pub struct PendingGovernanceResponse {
+pub struct PendingGovernanceEntry {
     pub new_address: Addr,
     pub execute_after: Timestamp,
+}
+
+/// Response for PendingGovernance query - returns all pending proposals
+#[cw_serde]
+pub struct PendingGovernanceResponse {
+    pub proposals: Vec<PendingGovernanceEntry>,
 }
 
 /// Response for Balance query

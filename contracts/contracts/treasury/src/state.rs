@@ -33,8 +33,11 @@ pub const DEFAULT_TIMELOCK_DURATION: u64 = 604_800;
 /// Primary config storage
 pub const CONFIG: Item<Config> = Item::new("config");
 
-/// Pending governance proposal (if any)
-pub const PENDING_GOVERNANCE: Item<PendingGovernance> = Item::new("pending_governance");
+/// Pending governance proposals mapping
+/// Key: Proposed new governance address as string
+/// Value: PendingGovernance with execute_after timestamp
+/// Multiple proposals can exist simultaneously, each with their own timelock.
+pub const PENDING_GOVERNANCE: Map<&str, PendingGovernance> = Map::new("pending_governance");
 
 /// CW20 token whitelist for balance tracking
 /// Key: CW20 contract address as string

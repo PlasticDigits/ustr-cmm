@@ -11,17 +11,11 @@ pub enum ContractError {
     #[error("Unauthorized: only governance can perform this action")]
     Unauthorized,
 
-    #[error("Unauthorized: only pending governance can accept")]
-    UnauthorizedPendingGovernance,
-
-    #[error("No pending governance change")]
-    NoPendingGovernance,
+    #[error("No pending governance proposal for address: {address}")]
+    NoPendingGovernanceForAddress { address: String },
 
     #[error("Timelock not expired: {remaining_seconds} seconds remaining")]
     TimelockNotExpired { remaining_seconds: u64 },
-
-    #[error("Invalid address: {reason}")]
-    InvalidAddress { reason: String },
 
     #[error("Insufficient balance: requested {requested}, available {available}")]
     InsufficientBalance { requested: String, available: String },
@@ -31,8 +25,5 @@ pub enum ContractError {
 
     #[error("CW20 token not in whitelist: {contract_addr}")]
     Cw20NotWhitelisted { contract_addr: String },
-
-    #[error("Invalid asset: {reason}")]
-    InvalidAsset { reason: String },
 }
 

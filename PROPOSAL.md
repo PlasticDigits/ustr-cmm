@@ -306,9 +306,9 @@ The Treasury Contract serves as the secure custodian for all protocol assets. It
 | Field | Type | Description |
 |-------|------|-------------|
 | `governance` | `Addr` | Current governance address (admin/DAO) |
-| `pending_governance` | `Option<PendingGovernance>` | Proposed new governance with timestamp |
+| `pending_governance` | `Map<Addr, PendingGovernance>` | Mapping of proposed governance addresses to their proposals; multiple proposals can exist simultaneously |
 | `timelock_duration` | `u64` | Duration of governance change delay (7 days = 604,800 seconds) |
-| `cw20_whitelist` | `Vec<Addr>` | List of CW20 addresses for balance tracking |
+| `cw20_whitelist` | `Map<Addr, bool>` | Map of CW20 addresses for balance tracking |
 
 ```
 PendingGovernance {
@@ -316,6 +316,8 @@ PendingGovernance {
     execute_after: Timestamp,  // block time when change can be executed
 }
 ```
+
+**Note**: Multiple governance proposals can be pending simultaneously. When a proposal is accepted, all other pending proposals are automatically cleared since governance has changed.
 
 #### Messages
 
@@ -326,19 +328,20 @@ PendingGovernance {
 
 | Message | Authority | Description |
 |---------|-----------|-------------|
-| `ProposeGovernance { new_governance }` | Current governance | Initiates 7-day timelock for governance transfer |
-| `AcceptGovernance {}` | Pending governance | Completes governance transfer after timelock |
-| `CancelGovernanceProposal {}` | Current governance | Cancels pending governance change |
+| `ProposeGovernanceTransfer { new_governance }` | Current governance | Initiates 7-day timelock for governance transfer; multiple proposals can exist simultaneously |
+| `AcceptGovernanceTransfer {}` | Pending governance | Completes governance transfer after timelock; clears all other pending proposals |
+| `CancelGovernanceTransfer { proposed_governance }` | Current governance | Cancels a specific pending governance proposal |
 | `Withdraw { destination, asset, amount }` | Governance | Transfers assets from treasury |
 | `AddCw20 { contract_addr }` | Governance | Adds a CW20 token to the balance tracking whitelist |
 | `RemoveCw20 { contract_addr }` | Governance | Removes a CW20 token from the whitelist |
+| `Receive(Cw20ReceiveMsg)` | CW20 contract | CW20 receive hook; accepts direct CW20 token transfers |
 
 **QueryMsg**
 
 | Query | Response | Description |
 |-------|----------|-------------|
 | `Config {}` | `ConfigResponse` | Returns current governance and timelock settings |
-| `PendingGovernance {}` | `Option<PendingGovernanceResponse>` | Returns pending governance proposal details |
+| `PendingGovernance {}` | `PendingGovernanceResponse` | Returns all pending governance proposals (empty list if none) |
 | `Balance { asset }` | `BalanceResponse` | Returns treasury balance for specified asset |
 | `AllBalances {}` | `AllBalancesResponse` | Returns all treasury holdings (native + whitelisted CW20s) |
 | `Cw20Whitelist {}` | `Cw20WhitelistResponse` | Returns list of whitelisted CW20 contract addresses |
@@ -1187,16 +1190,17 @@ Standard CW20 interface plus:
 ### Treasury Contract
 
 **Execute**:
-- `ProposeGovernance { new_governance }`
-- `AcceptGovernance {}`
-- `CancelGovernanceProposal {}`
+- `ProposeGovernanceTransfer { new_governance }` - Add governance proposal (multiple can exist)
+- `AcceptGovernanceTransfer {}` - Accept proposal for sender's address after timelock
+- `CancelGovernanceTransfer { proposed_governance }` - Cancel specific proposal
 - `Withdraw { destination, asset, amount }`
 - `AddCw20 { contract_addr }` - Add CW20 to balance tracking whitelist
 - `RemoveCw20 { contract_addr }` - Remove CW20 from whitelist
+- `Receive(Cw20ReceiveMsg)` - CW20 receive hook for accepting token transfers
 
 **Query**:
 - `Config {}`
-- `PendingGovernance {}`
+- `PendingGovernance {}` - Returns all pending governance proposals
 - `Balance { asset }`
 - `AllBalances {}` - Returns native + whitelisted CW20 balances
 - `Cw20Whitelist {}` - Returns list of whitelisted CW20 addresses
