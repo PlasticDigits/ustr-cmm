@@ -63,7 +63,7 @@ The USTR CMM system consists of four primary smart contracts that work together 
 **Key Functions**:
 - Accept and hold native tokens (USTC, LUNC)
 - Accept and hold CW20 tokens
-- Governance-controlled withdrawals
+- Governance-controlled withdrawals with 7-day timelock
 - 7-day timelock on governance changes
 
 **Dependencies**: None (base contract)
@@ -124,10 +124,14 @@ The USTR CMM system consists of four primary smart contracts that work together 
 ### Withdrawal Flow
 
 ```
-1. Governance → Treasury: Withdraw(destination, asset, amount)
+1. Governance → Treasury: ProposeWithdraw(destination, asset, amount)
 2. Treasury: Verify sender == governance
-3a. If native: Treasury → Destination: BankMsg::Send
-3b. If CW20: Treasury → CW20 Contract: Transfer to destination
+3. Treasury: Store pending_withdrawal with execute_after = now + 7 days
+4. [7 days pass]
+5. Governance → Treasury: ExecuteWithdraw(withdrawal_id)
+6. Treasury: Verify block_time >= execute_after
+7a. If native: Treasury → Destination: BankMsg::Send
+7b. If CW20: Treasury → CW20 Contract: Transfer to destination
 ```
 
 ## State Management
@@ -172,10 +176,11 @@ The USTR CMM system consists of four primary smart contracts that work together 
 
 ### Timelock Protection
 
-The 7-day timelock on treasury governance changes provides:
+The 7-day timelock on treasury governance changes and withdrawals provides:
 - Time for community to detect malicious proposals
 - Opportunity to raise concerns before changes execute
 - Protection against compromised keys taking immediate action
+- Prevents rushed withdrawals that could drain treasury assets
 
 ### Emergency Controls
 

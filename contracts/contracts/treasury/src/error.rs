@@ -25,5 +25,8 @@ pub enum ContractError {
 
     #[error("CW20 token not in whitelist: {contract_addr}")]
     Cw20NotWhitelisted { contract_addr: String },
+
+    #[error("No pending withdrawal found for ID: {withdrawal_id}")]
+    NoPendingWithdrawal { withdrawal_id: String },
 }
 

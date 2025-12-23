@@ -27,13 +27,21 @@ pub enum ExecuteMsg {
     /// Only callable by current governance
     CancelGovernanceTransfer { proposed_governance: String },
 
-    /// Transfers assets from treasury
+    /// Proposes a withdrawal with 7-day timelock
     /// Only callable by governance
-    Withdraw {
+    ProposeWithdraw {
         destination: String,
         asset: AssetInfo,
         amount: Uint128,
     },
+
+    /// Executes a pending withdrawal after timelock expires
+    /// Only callable by governance
+    ExecuteWithdraw { withdrawal_id: String },
+
+    /// Cancels a specific pending withdrawal
+    /// Only callable by governance
+    CancelWithdraw { withdrawal_id: String },
 
     /// Adds a CW20 token to the balance tracking whitelist
     /// Only callable by governance
@@ -71,6 +79,10 @@ pub enum QueryMsg {
     /// Returns list of whitelisted CW20 contract addresses
     #[returns(Cw20WhitelistResponse)]
     Cw20Whitelist {},
+
+    /// Returns all pending withdrawal proposals
+    #[returns(PendingWithdrawalsResponse)]
+    PendingWithdrawals {},
 }
 
 /// Response for Config query
@@ -117,5 +129,21 @@ pub struct AllBalancesResponse {
 #[cw_serde]
 pub struct Cw20WhitelistResponse {
     pub addresses: Vec<Addr>,
+}
+
+/// A single pending withdrawal entry
+#[cw_serde]
+pub struct PendingWithdrawalEntry {
+    pub withdrawal_id: String,
+    pub destination: Addr,
+    pub asset: AssetInfo,
+    pub amount: Uint128,
+    pub execute_after: Timestamp,
+}
+
+/// Response for PendingWithdrawals query - returns all pending withdrawals
+#[cw_serde]
+pub struct PendingWithdrawalsResponse {
+    pub withdrawals: Vec<PendingWithdrawalEntry>,
 }
 

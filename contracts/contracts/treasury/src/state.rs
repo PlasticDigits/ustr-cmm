@@ -39,6 +39,25 @@ pub const CONFIG: Item<Config> = Item::new("config");
 /// Multiple proposals can exist simultaneously, each with their own timelock.
 pub const PENDING_GOVERNANCE: Map<&str, PendingGovernance> = Map::new("pending_governance");
 
+/// Pending withdrawal proposal
+#[cw_serde]
+pub struct PendingWithdrawal {
+    /// Destination address for the withdrawal
+    pub destination: Addr,
+    /// Asset to withdraw
+    pub asset: common::AssetInfo,
+    /// Amount to withdraw
+    pub amount: cosmwasm_std::Uint128,
+    /// Block time when the withdrawal can be executed
+    pub execute_after: Timestamp,
+}
+
+/// Pending withdrawals mapping
+/// Key: Unique withdrawal ID (hash of destination + asset + amount + timestamp)
+/// Value: PendingWithdrawal with execute_after timestamp
+/// Multiple withdrawals can exist simultaneously, each with their own timelock.
+pub const PENDING_WITHDRAWALS: Map<&str, PendingWithdrawal> = Map::new("pending_withdrawals");
+
 /// CW20 token whitelist for balance tracking
 /// Key: CW20 contract address as string
 pub const CW20_WHITELIST: Map<&str, bool> = Map::new("cw20_whitelist");

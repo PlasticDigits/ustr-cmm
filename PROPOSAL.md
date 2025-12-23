@@ -151,9 +151,9 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 ```
 
 **Timelock Notes**:
-- Treasury Contract: 7-day timelock applies to **governance address changes only**
+- Treasury Contract: 7-day timelock applies to **governance address changes and withdrawals**
 - Swap Contract: 7-day timelock applies to **admin address changes only**
-- Withdrawals and other operations execute immediately (governance timelocks deferred to Phase 4)
+- All treasury withdrawals require a 7-day waiting period before execution
 
 ### Contract Relationships
 
@@ -366,24 +366,42 @@ By requiring governance whitelisting before a token affects CR calculations, the
 
 #### Withdrawal Mechanism
 
-The `Withdraw` message supports:
+Withdrawals use a two-step process with a 7-day timelock:
+
+1. **ProposeWithdraw**: Governance proposes a withdrawal
 ```
-Withdraw {
+ProposeWithdraw {
     destination: String,           // Recipient address
     asset: AssetInfo,             // Either Native { denom } or Cw20 { contract_addr }
     amount: Uint128,              // Amount to withdraw
 }
 ```
 
-This unified interface allows governance to manage all asset types through a single message pattern.
+2. **ExecuteWithdraw**: After 7 days, governance executes the withdrawal
+```
+ExecuteWithdraw {
+    withdrawal_id: String,        // Unique ID returned from ProposeWithdraw
+}
+```
+
+3. **CancelWithdraw**: Governance can cancel a pending withdrawal
+```
+CancelWithdraw {
+    withdrawal_id: String,        // Unique ID of withdrawal to cancel
+}
+```
+
+This unified interface allows governance to manage all asset types through a single message pattern, with the timelock providing security against rushed or malicious withdrawals.
 
 #### Security Features
 
-1. **7-Day Timelock**: Any governance address change requires a 7-day waiting period
-2. **Two-Step Transfer**: New governance must explicitly accept the role
-3. **Cancellation**: Current governance can cancel pending transfers
-4. **No Direct Access**: Treasury assets can only be moved via explicit `Withdraw` calls
-5. **Event Emission**: All governance and withdrawal actions emit events for transparency
+1. **7-Day Timelock**: Both governance address changes and withdrawals require a 7-day waiting period
+2. **Two-Step Transfer**: New governance must explicitly accept the role after timelock expires
+3. **Two-Step Withdrawal**: Withdrawals must be proposed, then executed after timelock expires
+4. **Cancellation**: Current governance can cancel pending transfers and withdrawals
+5. **No Direct Access**: Treasury assets can only be moved via explicit withdrawal proposals
+6. **Event Emission**: All governance and withdrawal actions emit events for transparency
+7. **Multiple Pending Withdrawals**: Multiple withdrawal proposals can exist simultaneously, each with its own timelock
 
 ---
 
@@ -683,9 +701,8 @@ This thorough approach ensures that immutability is a security feature rather th
 
 For Phase 1, the following trade-offs are accepted:
 
-- **Immediate withdrawals**: Treasury withdrawals execute immediately without timelocks (deferred to Phase 4)
-- **Compromised admin risk**: No safeguards exist against a compromised admin draining the treasury until governance transition
-- **Centralized control**: Single admin has full control; this is acceptable during bootstrap phase
+- **7-day withdrawal timelock**: All treasury withdrawals require a 7-day waiting period before execution, providing protection against compromised admin draining the treasury
+- **Centralized control**: Single admin has full control; this is acceptable during bootstrap phase. The 7-day timelock provides a safety buffer for community response
 
 ### Audit Requirements
 
@@ -1193,7 +1210,9 @@ Standard CW20 interface plus:
 - `ProposeGovernanceTransfer { new_governance }` - Add governance proposal (multiple can exist)
 - `AcceptGovernanceTransfer {}` - Accept proposal for sender's address after timelock
 - `CancelGovernanceTransfer { proposed_governance }` - Cancel specific proposal
-- `Withdraw { destination, asset, amount }`
+- `ProposeWithdraw { destination, asset, amount }` - Propose withdrawal with 7-day timelock
+- `ExecuteWithdraw { withdrawal_id }` - Execute pending withdrawal after timelock expires
+- `CancelWithdraw { withdrawal_id }` - Cancel specific pending withdrawal
 - `AddCw20 { contract_addr }` - Add CW20 to balance tracking whitelist
 - `RemoveCw20 { contract_addr }` - Remove CW20 from whitelist
 - `Receive(Cw20ReceiveMsg)` - CW20 receive hook for accepting token transfers
@@ -1201,6 +1220,7 @@ Standard CW20 interface plus:
 **Query**:
 - `Config {}`
 - `PendingGovernance {}` - Returns all pending governance proposals
+- `PendingWithdrawals {}` - Returns all pending withdrawal proposals
 - `Balance { asset }`
 - `AllBalances {}` - Returns native + whitelisted CW20 balances
 - `Cw20Whitelist {}` - Returns list of whitelisted CW20 addresses

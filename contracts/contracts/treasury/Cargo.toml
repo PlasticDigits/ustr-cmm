@@ -23,6 +23,8 @@ cw20.workspace = true
 thiserror.workspace = true
 schemars.workspace = true
 serde.workspace = true
+sha2 = "0.10"
+hex = "0.4"
 common = { path = "../../packages/common" }
 
 [dev-dependencies]

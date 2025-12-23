@@ -57,14 +57,16 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Governance address with 7-day timelock on changes
 - Two-step governance transfer (propose → accept)
 - Multiple governance proposals can exist simultaneously
-- Unified withdrawal interface for all asset types
+- Unified withdrawal interface for all asset types with 7-day timelock
 - CW20 whitelist for balance tracking and CR calculations
 
 **Execute Messages**:
 - `ProposeGovernanceTransfer { new_governance }` - Initiates 7-day timelock for governance transfer; multiple proposals can exist simultaneously
 - `AcceptGovernanceTransfer {}` - Completes governance transfer for sender's address after timelock expires; clears all other pending proposals
 - `CancelGovernanceTransfer { proposed_governance }` - Cancels a specific pending governance proposal
-- `Withdraw { destination, asset, amount }` - Transfers assets from treasury (governance only)
+- `ProposeWithdraw { destination, asset, amount }` - Proposes a withdrawal with 7-day timelock (governance only)
+- `ExecuteWithdraw { withdrawal_id }` - Executes a pending withdrawal after timelock expires (governance only)
+- `CancelWithdraw { withdrawal_id }` - Cancels a specific pending withdrawal (governance only)
 - `AddCw20 { contract_addr }` - Adds CW20 token to balance tracking whitelist
 - `RemoveCw20 { contract_addr }` - Removes CW20 token from whitelist
 - `Receive(Cw20ReceiveMsg)` - CW20 receive hook for accepting direct token transfers
@@ -72,6 +74,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 **Query Messages**:
 - `Config {}` - Returns current governance and timelock settings
 - `PendingGovernance {}` - Returns all pending governance proposals (empty list if none)
+- `PendingWithdrawals {}` - Returns all pending withdrawal proposals (empty list if none)
 - `Balance { asset }` - Returns treasury balance for specified asset
 - `AllBalances {}` - Returns all treasury holdings (native + whitelisted CW20s)
 - `Cw20Whitelist {}` - Returns list of whitelisted CW20 contract addresses
@@ -84,7 +87,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 3. **Unified Asset Interface**: Single `Withdraw` message handles both native tokens and CW20 tokens through the `AssetInfo` enum, simplifying governance operations.
 
-4. **7-Day Timelock**: Governance changes require a 7-day waiting period (604,800 seconds) to prevent rushed malicious actions. The timelock applies only to governance address changes, not withdrawals.
+4. **7-Day Timelock**: Both governance changes and withdrawals require a 7-day waiting period (604,800 seconds) to prevent rushed malicious actions. This provides time for the community to detect and respond to potentially harmful proposals.
 
 5. **Two-Step Governance Transfer**: New governance must explicitly accept the role after timelock expires, preventing accidental transfers.
 
@@ -92,13 +95,14 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 7. **Decimal Handling**: System uses each token's on-chain decimal count when calculating CR ratios, ensuring oracle prices match regardless of decimal configuration (6 for native `uusd`, 18 for most CW20s, etc.).
 
-8. **Governance Transition Plan**: In Phase 1, governance is a single admin EOA. Phase 2 will transfer governance to a multi-sig with additional security measures. Phase 3+ will implement full DAO governance with on-chain voting. Withdrawal timelocks will be implemented in the multi-sig/DAO contracts rather than in the treasury itself, keeping the treasury simple and allowing governance mechanisms to evolve.
+8. **Governance Transition Plan**: In Phase 1, governance is a single admin EOA. Phase 2 will transfer governance to a multi-sig with additional security measures. Phase 3+ will implement full DAO governance with on-chain voting. The treasury contract implements withdrawal timelocks directly, providing security at the contract level regardless of the governance mechanism.
 
 **Security Features**:
 - Governance changes require 7-day waiting period
-- Current governance can cancel pending transfers
+- Withdrawals require 7-day waiting period
+- Current governance can cancel pending transfers and withdrawals
 - All actions emit events for transparency
-- No direct access to assets except via explicit `Withdraw` calls
+- No direct access to assets except via explicit withdrawal proposals
 
 **Full Specification**: See [PROPOSAL.md](../PROPOSAL.md#treasury-contract) for complete interface details.
 
