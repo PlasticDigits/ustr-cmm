@@ -4,7 +4,13 @@
 
 ## System Overview
 
-The USTR CMM system consists of four primary smart contracts that work together to implement a collateralized unstablecoin system on TerraClassic.
+The USTR CMM system consists of smart contracts that work together to implement a collateralized unstablecoin system on TerraClassic:
+
+- **USTR Token** — CW20 utility/governance token (cw20-mintable)
+- **Treasury** — Secure asset custody with 7-day governance timelock
+- **USTC-Swap** — Time-limited USTC→USTR exchange with linear rate decay
+- **Airdrop** — Batch CW20 distribution for preregistration rewards
+- **UST1 Token** — (Phase 2) Collateralized stablecoin
 
 ## Contract Diagram
 
@@ -99,6 +105,20 @@ This architecture avoids the intermediate `BankMsg::Send` that would incur the 0
 **Dependencies**: 
 - USTR Token (minter)
 - Treasury (deposit source, must be authorized caller)
+
+### Airdrop Contract
+
+**Purpose**: Batch distribution of CW20 tokens to multiple recipients
+
+**Implementation**: Code ID `10700`, Address `terra1m758wqc6grg7ttg8cmrp72hf6a5cej5zq0w59d9d6wr5r22tulwqk3ga5r`
+
+**Key Functions**:
+- Distribute any CW20 token to multiple recipients atomically
+- Uses CW20 allowance mechanism (TransferFrom)
+- No maximum recipients (limited only by block gas)
+
+**Dependencies**:
+- CW20 token contract (for TransferFrom)
 
 ### UST1 Token Contract (Phase 2)
 
@@ -224,6 +244,7 @@ All submessages execute in the same transaction context. If any fails, everythin
 | Treasury | Any User | Deposit USTC for swap (via SwapDeposit) |
 | USTC-Swap | Admin | Pause/resume, update admin |
 | USTC-Swap | Treasury | Notify deposits (triggers USTR mint) |
+| Airdrop | Any User | Execute airdrop (must have CW20 allowance) |
 
 ### Timelock Protection
 
