@@ -15,7 +15,7 @@ pub struct Recipient {
 /// Instantiate message
 #[cw_serde]
 pub struct InstantiateMsg {
-    /// Admin address
+    /// Admin address (stored for future extensions)
     pub admin: String,
 }
 
