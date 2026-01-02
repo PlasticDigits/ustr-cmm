@@ -365,11 +365,12 @@ After deployment, update this section with actual addresses:
 
 ### Mainnet (columbus-5)
 
-| Contract | Address |
-|----------|---------|
-| USTR Token | `terra1...` |
-| Treasury | `terra1...` |
-| USTC-Swap | `terra1...` |
+| Contract | Code ID | Address |
+|----------|---------|---------|
+| USTR Token | `10184` | `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv` |
+| Treasury | `10673` | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
+| USTC-Swap | - | `terra1...` |
+| Airdrop | `10700` | `terra1m758wqc6grg7ttg8cmrp72hf6a5cej5zq0w59d9d6wr5r22tulwqk3ga5r` |
 
 ## Troubleshooting
 

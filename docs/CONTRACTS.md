@@ -23,6 +23,9 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Mainnet: `10184`
 - Testnet: `1641`
 
+**Deployed Contract Addresses**:
+- Mainnet (columbus-5): `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv`
+
 **Key Features**:
 - Standard CW20 operations (transfer, burn, allowance)
 - Mintable extension for authorized minters
@@ -188,6 +191,10 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - [`src/msg.rs`](../../contracts/contracts/airdrop/src/msg.rs) - Message definitions
 - [`src/state.rs`](../../contracts/contracts/airdrop/src/state.rs) - State management
 - [`src/error.rs`](../../contracts/contracts/airdrop/src/error.rs) - Error types
+
+**Deployed Contract Addresses**:
+- Mainnet (columbus-5): `terra1m758wqc6grg7ttg8cmrp72hf6a5cej5zq0w59d9d6wr5r22tulwqk3ga5r`
+- Code ID: `10700`
 
 **Description**: Batch distribution of CW20 tokens to multiple recipients in a single transaction, similar to [disperse.app](https://disperse.app). Used primarily for preregistration USTR distribution but can be used for any CW20 token distribution.
 

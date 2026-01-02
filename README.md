@@ -10,6 +10,13 @@ USTR CMM creates a pathway for USTC holders to participate in a new collateraliz
 - **UST1**: Future collateralized stablecoin backed by USTC and diversified crypto assets
 - **Treasury**: Secure, governance-controlled asset custody with 7-day timelock
 
+## Deployments
+
+### Columbus-5 (TerraClassic Mainnet)
+
+- **USTR Token**: `10184` `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv`
+- **Treasury**: `10673` `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2`
+
 ## Project Structure
 
 ```
