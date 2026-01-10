@@ -613,30 +613,30 @@ All public swap backing ratios exceed the 1.0 preregistration ratio, ensuring pr
 │                    SINGLE ATOMIC TRANSACTION                            │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  User calls: Swap.Swap { referral_code } with USTC funds attached      │
+│  User calls: Swap.Swap { referral_code } with USTC funds attached       │
 │       │                                                                 │
 │       ▼                                                                 │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ SWAP CONTRACT                                                   │   │
-│  │ 1. Validate USTC funds attached (minimum 1 USTC)                │   │
-│  │ 2. Verify swap period is active and not paused                  │   │
-│  │ 3. Calculate base_ustr = ustc_amount / current_rate             │   │
-│  │ 4. If referral_code is Some and non-empty:                      │   │
-│  │    a. Query Referral.ValidateCode { code }                      │   │
-│  │    b. If NOT valid/registered → ERROR (revert transaction)      │   │
-│  │    c. If valid: bonus = base_ustr * 10%                         │   │
-│  │    d. user_ustr = base_ustr + bonus                             │   │
-│  │    e. referrer_ustr = bonus                                     │   │
-│  │ 5. Else (None or empty): user_ustr = base_ustr, no referrer     │   │
-│  │ 6. Forward USTC to Treasury (BankMsg::Send)                     │   │
-│  │    → USER PAYS 0.5% BURN TAX (deducted by network)              │   │
-│  │    → Treasury receives 99.5% of USTC                            │   │
-│  │ 7. Mint user_ustr to sender (via submessage)                    │   │
-│  │ 8. If referrer_ustr > 0: Mint referrer_ustr to code owner       │   │
-│  │ 9. Update statistics, emit events                               │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │ SWAP CONTRACT                                                   │    │
+│  │ 1. Validate USTC funds attached (minimum 1 USTC)                │    │
+│  │ 2. Verify swap period is active and not paused                  │    │
+│  │ 3. Calculate base_ustr = ustc_amount / current_rate             │    │
+│  │ 4. If referral_code is Some and non-empty:                      │    │
+│  │    a. Query Referral.ValidateCode { code }                      │    │
+│  │    b. If NOT valid/registered → ERROR (revert transaction)      │    │
+│  │    c. If valid: bonus = base_ustr * 10%                         │    │
+│  │    d. user_ustr = base_ustr + bonus                             │    │
+│  │    e. referrer_ustr = bonus                                     │    │
+│  │ 5. Else (None or empty): user_ustr = base_ustr, no referrer     │    │
+│  │ 6. Forward USTC to Treasury (BankMsg::Send)                     │    │
+│  │    → USER PAYS 0.5% BURN TAX (deducted by network)              │    │
+│  │    → Treasury receives 99.5% of USTC                            │    │
+│  │ 7. Mint user_ustr to sender (via submessage)                    │    │
+│  │ 8. If referrer_ustr > 0: Mint referrer_ustr to code owner       │    │
+│  │ 9. Update statistics, emit events                               │    │
+│  └─────────────────────────────────────────────────────────────────┘    │
 │                                                                         │
-│  If ANY step fails → ENTIRE transaction rolls back (USTC returned)     │
+│  If ANY step fails → ENTIRE transaction rolls back (USTC returned)      │
 │                                                                         │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
