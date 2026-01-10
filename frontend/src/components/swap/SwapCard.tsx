@@ -25,7 +25,6 @@ export function SwapCard() {
     simulation,
     currentRate,
     swapStatus,
-    isLoading,
     isSwapping,
     executeSwap,
     canSwap,

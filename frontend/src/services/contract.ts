@@ -22,7 +22,7 @@ type NetworkKey = keyof typeof NETWORKS;
 
 class ContractService {
   private network: NetworkKey = DEFAULT_NETWORK;
-  private lcdClient: unknown = null; // Will be LCDClient from terra.js
+  // TODO: Add LCDClient from terra.js when implementing contract queries
 
   constructor() {
     // Initialize LCD client

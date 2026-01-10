@@ -5,7 +5,7 @@
  * Uses React Query for data fetching and caching.
  */
 
-import { useQuery, useMutation, useQueryClient, UseQueryOptions } from '@tanstack/react-query';
+import { useQuery, useQueryClient, UseQueryOptions } from '@tanstack/react-query';
 import { contractService } from '../services/contract';
 import { POLLING_INTERVAL } from '../utils/constants';
 

@@ -8,7 +8,6 @@
  * - Glass morphism styling
  */
 
-import { useMemo } from 'react';
 import { Card, CardHeader, CardContent } from '../common/Card';
 import { SWAP_CONFIG } from '../../utils/constants';
 
@@ -17,17 +16,6 @@ interface RateChartProps {
 }
 
 export function RateChart({ currentDay = 0 }: RateChartProps) {
-  // Generate rate data points
-  const dataPoints = useMemo(() => {
-    const points = [];
-    for (let day = 0; day <= 100; day += 10) {
-      const rate = SWAP_CONFIG.startRate + 
-        ((SWAP_CONFIG.endRate - SWAP_CONFIG.startRate) * day / SWAP_CONFIG.durationDays);
-      points.push({ day, rate });
-    }
-    return points;
-  }, []);
-
   // Calculate current rate position
   const currentRate = SWAP_CONFIG.startRate + 
     ((SWAP_CONFIG.endRate - SWAP_CONFIG.startRate) * Math.min(currentDay, 100) / SWAP_CONFIG.durationDays);
