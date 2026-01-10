@@ -7,40 +7,38 @@ export default {
   theme: {
     extend: {
       colors: {
-        // USTR CMM brand colors
-        primary: {
-          50: '#fef7ee',
-          100: '#fcecd6',
-          200: '#f8d5ac',
-          300: '#f3b978',
-          400: '#ed9242',
-          500: '#e8751d',
-          600: '#d95c13',
-          700: '#b44512',
-          800: '#903716',
-          900: '#742f15',
-          950: '#3f1509',
+        // USTR CMM brand colors - warmer, richer palette
+        brand: {
+          orange: '#f59e0b',
+          amber: '#d97706',
+          gold: '#fbbf24',
+          bronze: '#92400e',
         },
-        secondary: {
-          50: '#f0fdf5',
-          100: '#dcfce8',
-          200: '#bbf7d1',
-          300: '#86efad',
-          400: '#4ade80',
-          500: '#22c55e',
-          600: '#16a34a',
-          700: '#15803c',
-          800: '#166533',
-          900: '#14532b',
-          950: '#052e14',
+        // Custom grays with warm undertones
+        surface: {
+          900: '#0a0a0f',
+          800: '#12121a',
+          700: '#1a1a24',
+          600: '#24242e',
+          500: '#2e2e3a',
         },
       },
       fontFamily: {
-        sans: ['Inter var', 'Inter', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+        sans: ['Outfit', 'system-ui', 'sans-serif'],
+        display: ['Outfit', 'system-ui', 'sans-serif'],
+        mono: ['Space Mono', 'JetBrains Mono', 'monospace'],
+      },
+      animation: {
+        'fade-in-up': 'fade-in-up 0.6s ease-out forwards',
+        'scale-in': 'scale-in 0.5s ease-out forwards',
+        'pulse-glow': 'pulse-glow 2s ease-in-out infinite',
+        'gradient-shift': 'gradient-shift 20s ease infinite',
+      },
+      backgroundImage: {
+        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
+        'gradient-conic': 'conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))',
       },
     },
   },
   plugins: [],
 };
-

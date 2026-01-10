@@ -5,6 +5,7 @@ members = [
     "contracts/treasury",
     "contracts/ustc-swap",
     "contracts/airdrop",
+    "contracts/referral",
     "packages/common",
     # External contracts (for testing - in production use deployed code IDs)
     "external/cw20-mintable",

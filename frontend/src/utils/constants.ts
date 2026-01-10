@@ -29,13 +29,13 @@ export const CONTRACTS = {
     ustrToken: '',
     treasury: '',
     ustcSwap: '',
-    airdrop: '',
+    referral: '',
   },
   mainnet: {
     ustrToken: '',
     treasury: '',
     ustcSwap: '',
-    airdrop: '',
+    referral: '',
   },
 } as const;
 

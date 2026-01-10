@@ -9,8 +9,10 @@ use common::AssetInfo;
 pub struct InstantiateMsg {
     /// USTR contract address
     pub ustr_token: String,
-    /// Treasury contract address
+    /// Treasury contract address (destination for USTC)
     pub treasury: String,
+    /// Referral contract address (for code validation)
+    pub referral: String,
     /// Unix epoch timestamp when swap period begins
     pub start_time: u64,
     /// Starting exchange rate (1.5)
@@ -26,14 +28,14 @@ pub struct InstantiateMsg {
 /// Execute messages
 #[cw_serde]
 pub enum ExecuteMsg {
-    /// Called by Treasury when user deposits USTC for swap
-    /// Treasury holds the USTC, this contract mints USTR to depositor
-    /// Only callable by the authorized treasury contract
-    NotifyDeposit {
-        /// Address of the user who deposited USTC
-        depositor: String,
-        /// Amount of USTC deposited (in uusd micro units)
-        amount: Uint128,
+    /// User sends USTC to swap for USTR
+    /// Contract forwards USTC to Treasury (0.5% burn tax applies)
+    /// Mints USTR to user based on pre-tax amount
+    /// If valid referral code: +10% bonus to user, +10% to referrer
+    Swap {
+        /// Optional referral code. If None or empty, no referral bonus.
+        /// If Some but invalid/not registered, transaction fails.
+        referral_code: Option<String>,
     },
 
     /// Pauses swap functionality (admin only)
@@ -71,15 +73,19 @@ pub enum QueryMsg {
     #[returns(RateResponse)]
     CurrentRate {},
 
-    /// Returns USTR amount for given USTC
+    /// Returns USTR amount for given USTC, including referral bonus if applicable
     #[returns(SimulationResponse)]
-    SwapSimulation { ustc_amount: Uint128 },
+    SwapSimulation {
+        ustc_amount: Uint128,
+        /// Optional referral code to simulate bonus
+        referral_code: Option<String>,
+    },
 
     /// Returns active/ended status, time remaining
     #[returns(StatusResponse)]
     Status {},
 
-    /// Returns total USTC received, total USTR minted
+    /// Returns total USTC received, total USTR minted, referral stats
     #[returns(StatsResponse)]
     Stats {},
 
@@ -93,6 +99,7 @@ pub enum QueryMsg {
 pub struct ConfigResponse {
     pub ustr_token: Addr,
     pub treasury: Addr,
+    pub referral: Addr,
     pub start_time: Timestamp,
     pub end_time: Timestamp,
     pub start_rate: Decimal,
@@ -115,12 +122,20 @@ pub struct RateResponse {
 /// Response for SwapSimulation query
 #[cw_serde]
 pub struct SimulationResponse {
-    /// USTC amount being swapped
+    /// USTC amount being swapped (pre-tax)
     pub ustc_amount: Uint128,
-    /// USTR amount to receive
-    pub ustr_amount: Uint128,
+    /// Base USTR amount (without referral bonus)
+    pub base_ustr_amount: Uint128,
+    /// User bonus USTR (10% if referral code valid)
+    pub user_bonus: Uint128,
+    /// Referrer bonus USTR (10% if referral code valid)
+    pub referrer_bonus: Uint128,
+    /// Total USTR to user (base + user_bonus)
+    pub total_ustr_to_user: Uint128,
     /// Rate used for calculation
     pub rate: Decimal,
+    /// Whether referral code is valid
+    pub referral_valid: bool,
 }
 
 /// Response for Status query
@@ -143,8 +158,14 @@ pub struct StatusResponse {
 /// Response for Stats query
 #[cw_serde]
 pub struct StatsResponse {
+    /// Total USTC deposited (pre-tax amounts)
     pub total_ustc_received: Uint128,
+    /// Total USTR minted (including referral bonuses)
     pub total_ustr_minted: Uint128,
+    /// Total USTR minted as referral bonuses (user + referrer combined)
+    pub total_referral_bonus_minted: Uint128,
+    /// Count of swaps that used valid referral codes
+    pub total_referral_swaps: u64,
 }
 
 /// Response for PendingAdmin query

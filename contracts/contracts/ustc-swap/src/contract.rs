@@ -4,9 +4,8 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo,
-    Response, StdResult, Timestamp, Uint128, WasmMsg,
+    QueryRequest, Response, StdResult, Timestamp, Uint128, WasmMsg, WasmQuery,
 };
-// Note: BankMsg and Coin are still used by execute_recover_asset
 use cw2::set_contract_version;
 use cw20::Cw20ExecuteMsg;
 
@@ -17,9 +16,24 @@ use crate::msg::{
 };
 use crate::state::{
     Config, PendingAdmin, Stats, ADMIN_TIMELOCK_DURATION, CONFIG, CONTRACT_NAME, CONTRACT_VERSION,
-    MIN_SWAP_AMOUNT, PENDING_ADMIN, STATS,
+    MIN_SWAP_AMOUNT, PENDING_ADMIN, REFERRAL_BONUS_DENOMINATOR, REFERRAL_BONUS_NUMERATOR, STATS,
+    USTC_DENOM,
 };
 use common::AssetInfo;
+
+/// Query message for the referral contract
+#[cosmwasm_schema::cw_serde]
+pub enum ReferralQueryMsg {
+    ValidateCode { code: String },
+}
+
+/// Response from referral contract ValidateCode query
+#[cosmwasm_schema::cw_serde]
+pub struct ReferralValidateResponse {
+    pub is_valid_format: bool,
+    pub is_registered: bool,
+    pub owner: Option<cosmwasm_std::Addr>,
+}
 
 // ============ INSTANTIATE ============
 
@@ -34,6 +48,7 @@ pub fn instantiate(
 
     let ustr_token = deps.api.addr_validate(&msg.ustr_token)?;
     let treasury = deps.api.addr_validate(&msg.treasury)?;
+    let referral = deps.api.addr_validate(&msg.referral)?;
     let admin = deps.api.addr_validate(&msg.admin)?;
 
     let start_time = Timestamp::from_seconds(msg.start_time);
@@ -42,6 +57,7 @@ pub fn instantiate(
     let config = Config {
         ustr_token: ustr_token.clone(),
         treasury: treasury.clone(),
+        referral: referral.clone(),
         start_time,
         end_time,
         start_rate: msg.start_rate,
@@ -53,6 +69,8 @@ pub fn instantiate(
     let stats = Stats {
         total_ustc_received: Uint128::zero(),
         total_ustr_minted: Uint128::zero(),
+        total_referral_bonus_minted: Uint128::zero(),
+        total_referral_swaps: 0,
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -62,6 +80,7 @@ pub fn instantiate(
         .add_attribute("action", "instantiate")
         .add_attribute("ustr_token", ustr_token)
         .add_attribute("treasury", treasury)
+        .add_attribute("referral", referral)
         .add_attribute("admin", admin)
         .add_attribute("start_time", start_time.to_string())
         .add_attribute("end_time", end_time.to_string()))
@@ -77,9 +96,7 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::NotifyDeposit { depositor, amount } => {
-            execute_notify_deposit(deps, env, info, depositor, amount)
-        }
+        ExecuteMsg::Swap { referral_code } => execute_swap(deps, env, info, referral_code),
         ExecuteMsg::EmergencyPause {} => execute_emergency_pause(deps, info),
         ExecuteMsg::EmergencyResume {} => execute_emergency_resume(deps, info),
         ExecuteMsg::ProposeAdmin { new_admin } => execute_propose_admin(deps, env, info, new_admin),
@@ -93,21 +110,15 @@ pub fn execute(
     }
 }
 
-/// Handle deposit notification from Treasury contract
-/// Treasury holds the USTC; this contract calculates and mints USTR to the depositor
-fn execute_notify_deposit(
+/// Handle swap: user sends USTC, contract forwards to Treasury and mints USTR
+/// Optional referral code grants +10% to user and +10% to referrer
+fn execute_swap(
     deps: DepsMut,
     env: Env,
     info: MessageInfo,
-    depositor: String,
-    ustc_amount: Uint128,
+    referral_code: Option<String>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
-
-    // Only treasury can call this
-    if info.sender != config.treasury {
-        return Err(ContractError::UnauthorizedTreasury);
-    }
 
     // Check if paused
     if config.paused {
@@ -124,46 +135,134 @@ fn execute_notify_deposit(
         return Err(ContractError::SwapEnded);
     }
 
-    // Validate amount (Treasury already validates minimum, but double-check)
+    // Validate funds sent
+    if info.funds.is_empty() {
+        return Err(ContractError::NoFundsSent);
+    }
+    if info.funds.len() > 1 {
+        return Err(ContractError::MultipleDenoms);
+    }
+
+    let ustc_coin = &info.funds[0];
+    if ustc_coin.denom != USTC_DENOM {
+        return Err(ContractError::WrongDenom);
+    }
+
+    let ustc_amount = ustc_coin.amount;
     if ustc_amount < Uint128::from(MIN_SWAP_AMOUNT) {
         return Err(ContractError::BelowMinimumSwap);
     }
 
-    // Validate depositor address
-    let depositor_addr = deps.api.addr_validate(&depositor)?;
-
     // Calculate current rate
     let rate = calculate_current_rate(&config, env.block.time);
 
-    // Calculate USTR amount: ustr_amount = floor(ustc_amount / current_rate)
-    // Using Decimal for precision
+    // Calculate base USTR amount: base_ustr = floor(ustc_amount / current_rate)
     let ustc_decimal = Decimal::from_ratio(ustc_amount, 1u128);
     let ustr_decimal = ustc_decimal / rate;
-    let ustr_amount = ustr_decimal * Uint128::one();
+    let base_ustr = ustr_decimal * Uint128::one();
+
+    // Process referral code if provided
+    let (user_bonus, referrer_bonus, referrer_addr) = if let Some(ref code) = referral_code {
+        if code.is_empty() {
+            // Empty code = no referral
+            (Uint128::zero(), Uint128::zero(), None)
+        } else {
+            // Query referral contract to validate code
+            let validate_response: ReferralValidateResponse = deps.querier.query(
+                &QueryRequest::Wasm(WasmQuery::Smart {
+                    contract_addr: config.referral.to_string(),
+                    msg: to_json_binary(&ReferralQueryMsg::ValidateCode {
+                        code: code.clone(),
+                    })?,
+                }),
+            )?;
+
+            if !validate_response.is_valid_format {
+                return Err(ContractError::InvalidReferralCode { code: code.clone() });
+            }
+            if !validate_response.is_registered {
+                return Err(ContractError::ReferralCodeNotRegistered { code: code.clone() });
+            }
+
+            // Calculate 10% bonus (numerator / denominator = 10 / 100 = 10%)
+            // Use safe arithmetic - these constants are fixed and won't overflow
+            let bonus = base_ustr
+                .multiply_ratio(REFERRAL_BONUS_NUMERATOR, REFERRAL_BONUS_DENOMINATOR);
+
+            (bonus, bonus, validate_response.owner)
+        }
+    } else {
+        (Uint128::zero(), Uint128::zero(), None)
+    };
+
+    let total_ustr_to_user = base_ustr + user_bonus;
+    let total_ustr_minted = total_ustr_to_user + referrer_bonus;
 
     // Update stats
     let mut stats = STATS.load(deps.storage)?;
     stats.total_ustc_received += ustc_amount;
-    stats.total_ustr_minted += ustr_amount;
+    stats.total_ustr_minted += total_ustr_minted;
+    if referrer_addr.is_some() {
+        stats.total_referral_bonus_minted += user_bonus + referrer_bonus;
+        stats.total_referral_swaps += 1;
+    }
     STATS.save(deps.storage, &stats)?;
 
-    // Mint USTR to depositor (Treasury already holds the USTC)
-    let mint_ustr = WasmMsg::Execute {
+    // Build response with messages
+    let mut response = Response::new();
+
+    // Forward USTC to Treasury (user pays 0.5% burn tax)
+    let forward_ustc = BankMsg::Send {
+        to_address: config.treasury.to_string(),
+        amount: vec![Coin {
+            denom: USTC_DENOM.to_string(),
+            amount: ustc_amount,
+        }],
+    };
+    response = response.add_message(forward_ustc);
+
+    // Mint USTR to user
+    let mint_to_user = WasmMsg::Execute {
         contract_addr: config.ustr_token.to_string(),
         msg: to_json_binary(&Cw20ExecuteMsg::Mint {
-            recipient: depositor_addr.to_string(),
-            amount: ustr_amount,
+            recipient: info.sender.to_string(),
+            amount: total_ustr_to_user,
         })?,
         funds: vec![],
     };
+    response = response.add_message(mint_to_user);
 
-    Ok(Response::new()
-        .add_message(mint_ustr)
-        .add_attribute("action", "notify_deposit")
-        .add_attribute("depositor", depositor_addr)
+    // Mint referrer bonus if applicable
+    if let Some(ref referrer) = referrer_addr {
+        if referrer_bonus > Uint128::zero() {
+            let mint_to_referrer = WasmMsg::Execute {
+                contract_addr: config.ustr_token.to_string(),
+                msg: to_json_binary(&Cw20ExecuteMsg::Mint {
+                    recipient: referrer.to_string(),
+                    amount: referrer_bonus,
+                })?,
+                funds: vec![],
+            };
+            response = response.add_message(mint_to_referrer);
+        }
+    }
+
+    response = response
+        .add_attribute("action", "swap")
+        .add_attribute("user", &info.sender)
         .add_attribute("ustc_amount", ustc_amount)
-        .add_attribute("ustr_amount", ustr_amount)
-        .add_attribute("rate", rate.to_string()))
+        .add_attribute("rate", rate.to_string())
+        .add_attribute("base_ustr", base_ustr)
+        .add_attribute("user_bonus", user_bonus)
+        .add_attribute("total_ustr_to_user", total_ustr_to_user);
+
+    if let Some(ref referrer) = referrer_addr {
+        response = response
+            .add_attribute("referrer", referrer)
+            .add_attribute("referrer_bonus", referrer_bonus);
+    }
+
+    Ok(response)
 }
 
 fn execute_emergency_pause(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
@@ -349,9 +448,10 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => to_json_binary(&query_config(deps)?),
         QueryMsg::CurrentRate {} => to_json_binary(&query_current_rate(deps, env)?),
-        QueryMsg::SwapSimulation { ustc_amount } => {
-            to_json_binary(&query_swap_simulation(deps, env, ustc_amount)?)
-        }
+        QueryMsg::SwapSimulation {
+            ustc_amount,
+            referral_code,
+        } => to_json_binary(&query_swap_simulation(deps, env, ustc_amount, referral_code)?),
         QueryMsg::Status {} => to_json_binary(&query_status(deps, env)?),
         QueryMsg::Stats {} => to_json_binary(&query_stats(deps)?),
         QueryMsg::PendingAdmin {} => to_json_binary(&query_pending_admin(deps)?),
@@ -363,6 +463,7 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
     Ok(ConfigResponse {
         ustr_token: config.ustr_token,
         treasury: config.treasury,
+        referral: config.referral,
         start_time: config.start_time,
         end_time: config.end_time,
         start_rate: config.start_rate,
@@ -391,18 +492,60 @@ fn query_current_rate(deps: Deps, env: Env) -> StdResult<RateResponse> {
     })
 }
 
-fn query_swap_simulation(deps: Deps, env: Env, ustc_amount: Uint128) -> StdResult<SimulationResponse> {
+fn query_swap_simulation(
+    deps: Deps,
+    env: Env,
+    ustc_amount: Uint128,
+    referral_code: Option<String>,
+) -> StdResult<SimulationResponse> {
     let config = CONFIG.load(deps.storage)?;
     let rate = calculate_current_rate(&config, env.block.time);
 
     let ustc_decimal = Decimal::from_ratio(ustc_amount, 1u128);
     let ustr_decimal = ustc_decimal / rate;
-    let ustr_amount = ustr_decimal * Uint128::one();
+    let base_ustr_amount = ustr_decimal * Uint128::one();
+
+    // Check if referral code is valid
+    let (referral_valid, user_bonus, referrer_bonus) = if let Some(ref code) = referral_code {
+        if code.is_empty() {
+            (false, Uint128::zero(), Uint128::zero())
+        } else {
+            // Query referral contract
+            let validate_response: Result<ReferralValidateResponse, _> = deps.querier.query(
+                &QueryRequest::Wasm(WasmQuery::Smart {
+                    contract_addr: config.referral.to_string(),
+                    msg: to_json_binary(&ReferralQueryMsg::ValidateCode {
+                        code: code.clone(),
+                    })?,
+                }),
+            );
+
+            match validate_response {
+                Ok(resp) if resp.is_valid_format && resp.is_registered => {
+                    let bonus = base_ustr_amount
+                        .checked_mul(Uint128::from(REFERRAL_BONUS_NUMERATOR))
+                        .unwrap_or(Uint128::zero())
+                        .checked_div(Uint128::from(REFERRAL_BONUS_DENOMINATOR))
+                        .unwrap_or(Uint128::zero());
+                    (true, bonus, bonus)
+                }
+                _ => (false, Uint128::zero(), Uint128::zero()),
+            }
+        }
+    } else {
+        (false, Uint128::zero(), Uint128::zero())
+    };
+
+    let total_ustr_to_user = base_ustr_amount + user_bonus;
 
     Ok(SimulationResponse {
         ustc_amount,
-        ustr_amount,
+        base_ustr_amount,
+        user_bonus,
+        referrer_bonus,
+        total_ustr_to_user,
         rate,
+        referral_valid,
     })
 }
 
@@ -440,6 +583,8 @@ fn query_stats(deps: Deps) -> StdResult<StatsResponse> {
     Ok(StatsResponse {
         total_ustc_received: stats.total_ustc_received,
         total_ustr_minted: stats.total_ustr_minted,
+        total_referral_bonus_minted: stats.total_referral_bonus_minted,
+        total_referral_swaps: stats.total_referral_swaps,
     })
 }
 
@@ -457,16 +602,18 @@ fn query_pending_admin(deps: Deps) -> StdResult<Option<PendingAdminResponse>> {
 mod tests {
     use super::*;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{from_json, Addr, Decimal};
+    use cosmwasm_std::{from_json, Addr, Coin, Decimal};
 
     const ADMIN: &str = "admin_addr";
     const USTR_TOKEN: &str = "ustr_token_addr";
     const TREASURY: &str = "treasury_addr";
+    const REFERRAL: &str = "referral_addr";
 
     fn setup_contract(deps: DepsMut, start_time: u64) {
         let msg = InstantiateMsg {
             ustr_token: USTR_TOKEN.to_string(),
             treasury: TREASURY.to_string(),
+            referral: REFERRAL.to_string(),
             start_time,
             start_rate: Decimal::from_ratio(15u128, 10u128), // 1.5
             end_rate: Decimal::from_ratio(25u128, 10u128),   // 2.5
@@ -475,6 +622,13 @@ mod tests {
         };
         let info = mock_info("creator", &[]);
         instantiate(deps, mock_env(), info, msg).unwrap();
+    }
+
+    fn ustc_coins(amount: u128) -> Vec<Coin> {
+        vec![Coin {
+            denom: USTC_DENOM.to_string(),
+            amount: Uint128::from(amount),
+        }]
     }
 
     #[test]
@@ -486,46 +640,67 @@ mod tests {
         let config = CONFIG.load(&deps.storage).unwrap();
         assert_eq!(config.ustr_token.as_str(), USTR_TOKEN);
         assert_eq!(config.treasury.as_str(), TREASURY);
+        assert_eq!(config.referral.as_str(), REFERRAL);
         assert_eq!(config.admin.as_str(), ADMIN);
         assert!(!config.paused);
+
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.total_ustc_received, Uint128::zero());
+        assert_eq!(stats.total_ustr_minted, Uint128::zero());
+        assert_eq!(stats.total_referral_bonus_minted, Uint128::zero());
+        assert_eq!(stats.total_referral_swaps, 0);
     }
 
     #[test]
-    fn test_notify_deposit_unauthorized() {
+    fn test_swap_no_funds() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
 
-        // Non-treasury caller should fail
-        let info = mock_info("random_user", &[]);
-        let msg = ExecuteMsg::NotifyDeposit {
-            depositor: "user".to_string(),
-            amount: Uint128::from(1_000_000u128),
-        };
+        // No funds sent
+        let info = mock_info("user", &[]);
+        let msg = ExecuteMsg::Swap { referral_code: None };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
-        assert_eq!(err, ContractError::UnauthorizedTreasury);
+        assert_eq!(err, ContractError::NoFundsSent);
     }
 
     #[test]
-    fn test_notify_deposit_before_start() {
+    fn test_swap_wrong_denom() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Wrong denom
+        let info = mock_info(
+            "user",
+            &[Coin {
+                denom: "uluna".to_string(),
+                amount: Uint128::from(1_000_000u128),
+            }],
+        );
+        let msg = ExecuteMsg::Swap { referral_code: None };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::WrongDenom);
+    }
+
+    #[test]
+    fn test_swap_before_start() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         // Set start time in the future
         setup_contract(deps.as_mut(), env.block.time.seconds() + 1000);
 
-        let info = mock_info(TREASURY, &[]);
-        let msg = ExecuteMsg::NotifyDeposit {
-            depositor: "user".to_string(),
-            amount: Uint128::from(1_000_000u128),
-        };
+        let info = mock_info("user", &ustc_coins(1_000_000));
+        let msg = ExecuteMsg::Swap { referral_code: None };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapNotStarted);
     }
 
     #[test]
-    fn test_notify_deposit_after_end() {
+    fn test_swap_after_end() {
         let mut deps = mock_dependencies();
         let mut env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
@@ -533,62 +708,75 @@ mod tests {
         // Advance time past end
         env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 8_640_001);
 
-        let info = mock_info(TREASURY, &[]);
-        let msg = ExecuteMsg::NotifyDeposit {
-            depositor: "user".to_string(),
-            amount: Uint128::from(1_000_000u128),
-        };
+        let info = mock_info("user", &ustc_coins(1_000_000));
+        let msg = ExecuteMsg::Swap { referral_code: None };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapEnded);
     }
 
     #[test]
-    fn test_notify_deposit_below_minimum() {
+    fn test_swap_below_minimum() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
 
-        let info = mock_info(TREASURY, &[]);
-        let msg = ExecuteMsg::NotifyDeposit {
-            depositor: "user".to_string(),
-            amount: Uint128::from(999_999u128), // Below 1 USTC
-        };
+        let info = mock_info("user", &ustc_coins(999_999)); // Below 1 USTC
+        let msg = ExecuteMsg::Swap { referral_code: None };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::BelowMinimumSwap);
     }
 
     #[test]
-    fn test_notify_deposit_success() {
+    fn test_swap_success_no_referral() {
         let mut deps = mock_dependencies();
         let env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
 
-        let info = mock_info(TREASURY, &[]);
-        let ustc_amount = Uint128::from(15_000_000u128); // 15 USTC
-        let msg = ExecuteMsg::NotifyDeposit {
-            depositor: "user".to_string(),
-            amount: ustc_amount,
-        };
+        let ustc_amount = 15_000_000u128; // 15 USTC
+        let info = mock_info("user", &ustc_coins(ustc_amount));
+        let msg = ExecuteMsg::Swap { referral_code: None };
 
         let res = execute(deps.as_mut(), env, info, msg).unwrap();
 
-        // Should have 1 message: mint USTR
-        assert_eq!(res.messages.len(), 1);
+        // Should have 2 messages: forward USTC to treasury, mint USTR to user
+        assert_eq!(res.messages.len(), 2);
 
         // Check attributes
-        assert_eq!(res.attributes[0].value, "notify_deposit");
+        assert_eq!(res.attributes[0].value, "swap");
         assert_eq!(res.attributes[1].value, "user");
         assert_eq!(res.attributes[2].value, ustc_amount.to_string());
 
         // At day 0, rate = 1.5, so 15 USTC / 1.5 = 10 USTR
-        assert_eq!(res.attributes[3].value, "10000000"); // 10 USTR in micro units
+        // base_ustr = 10_000_000, user_bonus = 0 (no referral)
+        assert_eq!(res.attributes[4].value, "10000000"); // base_ustr
+        assert_eq!(res.attributes[5].value, "0"); // user_bonus
+        assert_eq!(res.attributes[6].value, "10000000"); // total_ustr_to_user
 
         // Verify stats updated
         let stats = STATS.load(&deps.storage).unwrap();
-        assert_eq!(stats.total_ustc_received, ustc_amount);
+        assert_eq!(stats.total_ustc_received, Uint128::from(ustc_amount));
         assert_eq!(stats.total_ustr_minted, Uint128::from(10_000_000u128));
+        assert_eq!(stats.total_referral_bonus_minted, Uint128::zero());
+        assert_eq!(stats.total_referral_swaps, 0);
+    }
+
+    #[test]
+    fn test_swap_with_empty_referral_code() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let ustc_amount = 15_000_000u128;
+        let info = mock_info("user", &ustc_coins(ustc_amount));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("".to_string()),
+        };
+
+        // Empty code should be treated as no referral
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+        assert_eq!(res.messages.len(), 2); // forward + mint to user only
     }
 
     #[test]
@@ -605,12 +793,9 @@ mod tests {
         let config = CONFIG.load(&deps.storage).unwrap();
         assert!(config.paused);
 
-        // Try to notify deposit while paused
-        let info = mock_info(TREASURY, &[]);
-        let msg = ExecuteMsg::NotifyDeposit {
-            depositor: "user".to_string(),
-            amount: Uint128::from(1_000_000u128),
-        };
+        // Try to swap while paused
+        let info = mock_info("user", &ustc_coins(1_000_000));
+        let msg = ExecuteMsg::Swap { referral_code: None };
         let err = execute(deps.as_mut(), env.clone(), info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapPaused);
 
@@ -1023,15 +1208,22 @@ mod tests {
         let res = query(
             deps.as_ref(),
             env,
-            QueryMsg::SwapSimulation { ustc_amount },
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
         )
         .unwrap();
         let sim: SimulationResponse = from_json(res).unwrap();
 
         assert_eq!(sim.ustc_amount, ustc_amount);
         // At rate 1.5: 15 USTC / 1.5 = 10 USTR
-        assert_eq!(sim.ustr_amount, Uint128::from(10_000_000u128));
+        assert_eq!(sim.base_ustr_amount, Uint128::from(10_000_000u128));
+        assert_eq!(sim.user_bonus, Uint128::zero());
+        assert_eq!(sim.referrer_bonus, Uint128::zero());
+        assert_eq!(sim.total_ustr_to_user, Uint128::from(10_000_000u128));
         assert_eq!(sim.rate, Decimal::from_ratio(15u128, 10u128));
+        assert!(!sim.referral_valid);
     }
 
     #[test]
@@ -1116,13 +1308,12 @@ mod tests {
         let stats: StatsResponse = from_json(res).unwrap();
         assert_eq!(stats.total_ustc_received, Uint128::zero());
         assert_eq!(stats.total_ustr_minted, Uint128::zero());
+        assert_eq!(stats.total_referral_bonus_minted, Uint128::zero());
+        assert_eq!(stats.total_referral_swaps, 0);
 
-        // Do a deposit
-        let info = mock_info(TREASURY, &[]);
-        let msg = ExecuteMsg::NotifyDeposit {
-            depositor: "user".to_string(),
-            amount: Uint128::from(15_000_000u128),
-        };
+        // Do a swap (without referral - can't mock the referral contract query easily)
+        let info = mock_info("user", &ustc_coins(15_000_000));
+        let msg = ExecuteMsg::Swap { referral_code: None };
         execute(deps.as_mut(), env.clone(), info, msg).unwrap();
 
         // Check updated stats
@@ -1130,6 +1321,8 @@ mod tests {
         let stats: StatsResponse = from_json(res).unwrap();
         assert_eq!(stats.total_ustc_received, Uint128::from(15_000_000u128));
         assert_eq!(stats.total_ustr_minted, Uint128::from(10_000_000u128));
+        assert_eq!(stats.total_referral_bonus_minted, Uint128::zero()); // No referral used
+        assert_eq!(stats.total_referral_swaps, 0);
     }
 
     #[test]

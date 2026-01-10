@@ -16,6 +16,8 @@
 5. [Smart Contract Specifications](#smart-contract-specifications)
    - [Treasury Contract](#treasury-contract)
    - [USTC-to-USTR Swap Contract](#ustc-to-ustr-swap-contract)
+   - [Airdrop Contract](#airdrop-contract)
+   - [Referral Contract](#referral-contract)
 6. [Economic Model](#economic-model)
 7. [Security Considerations](#security-considerations)
 8. [Governance & Upgrade Path](#governance--upgrade-path)
@@ -125,23 +127,24 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 │   │               │                                     │   (Admin EOA)   │ │
 │   └───────┬───────┘                                     └────────┬────────┘ │
 │           │                                                      │          │
-│           │ USTC (MsgExecuteContract)                            │          │
-│           │ [NO TAX - direct to contract]                        │          │
+│           │ USTC + referral_code                                 │          │
+│           │ (MsgExecuteContract - NO TAX)                        │          │
 │           ▼                                                      ▼          │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │                        TREASURY CONTRACT                            │   │
-│   │  - Accepts USTC via SwapDeposit (tax-free)                          │   │
-│   │  - Notifies Swap contract of deposits                               │   │
-│   │  - 7-day timelock on governance changes + withdrawals               │   │
-│   └────────────────────────────┬────────────────────────────────────────┘   │
-│                                │ NotifyDeposit                              │
-│                                ▼                                            │
-│   ┌───────────────┐     ┌───────────────┐                                   │
-│   │  USTR Token   │◄────│  Swap         │  Tracks deposits, calculates     │
-│   │  (CW20)       │Mint │  Contract     │  rate, mints USTR to users       │
-│   └───────────────┘     │  [7-day       │                                   │
-│                         │   timelock]   │                                   │
-│                         └───────────────┘                                   │
+│   ┌───────────────┐     ┌───────────────────────────────────────────────┐   │
+│   │  Swap         │────►│              TREASURY CONTRACT                │   │
+│   │  Contract     │USTC │  - Holds all protocol USTC                    │   │
+│   │               │0.5% │  - 7-day timelock on governance + withdrawals │   │
+│   │  - Validates  │tax  └───────────────────────────────────────────────┘   │
+│   │  - Forwards   │                                                         │
+│   │  - Mints USTR │     ┌───────────────┐                                   │
+│   └───────┬───────┘     │  Referral     │  Validates referral codes         │
+│           │             │  Contract     │  (queried by Swap)                │
+│           │ Mint        └───────────────┘                                   │
+│           ▼                                                                 │
+│   ┌───────────────┐                                                         │
+│   │  USTR Token   │     + bonus to user (10%) and referrer (10%)            │
+│   │  (CW20)       │                                                         │
+│   └───────────────┘                                                         │
 │                                                                             │
 │   ┌───────────────┐     [PHASE 2+]                                          │
 │   │  UST1 Token   │     Collateralized unstablecoin                         │
@@ -151,7 +154,7 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Tax Optimization**: Users send USTC to Treasury via `MsgExecuteContract` (SwapDeposit), which avoids TerraClassic's 0.5% burn tax. Treasury notifies Swap contract to mint USTR.
+**Swap Flow**: Users send USTC to the Swap contract via `MsgExecuteContract` (no tax). The Swap contract forwards USTC to Treasury via `BankMsg::Send` (user pays 0.5% burn tax). USTR is calculated on the pre-tax amount and minted to the user, with optional referral bonuses.
 
 **Timelock Notes**:
 - Treasury Contract: 7-day timelock applies to **governance address changes and withdrawals**
@@ -161,13 +164,14 @@ Unlike USTC's original algorithmic design (which attempted to maintain a rigid p
 ### Contract Relationships
 
 1. **USTR Token Contract**: Standard CW20 with mintable extension; the Swap Contract and admin are authorized as minters
-2. **Treasury Contract**: Holds all protocol assets (USTC, future basket tokens); accepts swap deposits (tax-free) and notifies Swap contract; controlled by governance with 7-day timelock on governance changes
-3. **Swap Contract**: Receives deposit notifications from Treasury, calculates exchange rate, mints USTR to users; includes 7-day timelock on admin changes
-4. **Airdrop Contract**: Enables batch distribution of CW20 tokens to multiple recipients in a single transaction (similar to [disperse.app](https://disperse.app))
-5. **Preregistration Migration**: Admin airdrops 16.7M USTR to preregistration participants at 1:1 ratio for their deposited USTC
-6. **UST1 Token Contract** (Phase 2): CW20 with mintable extension; will be minted based on collateralization ratio tiers
+2. **Treasury Contract**: Holds all protocol assets (USTC, future basket tokens); receives USTC forwarded from Swap contract; controlled by governance with 7-day timelock on governance changes
+3. **Swap Contract**: Accepts USTC from users, forwards to Treasury, calculates exchange rate, queries Referral contract, mints USTR to users (with optional referral bonus); includes 7-day timelock on admin changes
+4. **Referral Contract**: Manages referral code registration (10 USTR burned to register); queried by Swap contract to validate codes and get owner addresses; no admin
+5. **Airdrop Contract**: Enables batch distribution of CW20 tokens to multiple recipients in a single transaction (similar to [disperse.app](https://disperse.app))
+6. **Preregistration Migration**: Admin airdrops USTR to preregistration participants at 1:1 ratio for their deposited USTC
+7. **UST1 Token Contract** (Phase 2): CW20 with mintable extension; will be minted based on collateralization ratio tiers
 
-**Tax-Optimized Swap Flow**: Users send USTC to Treasury (not Swap contract) via `SwapDeposit {}` message. This uses `MsgExecuteContract` which avoids TerraClassic's 0.5% burn tax. Treasury notifies Swap contract, which mints USTR to the user.
+**Swap Flow**: Users call `Swap { referral_code }` on the Swap contract with USTC attached. The Swap contract forwards USTC to Treasury (user pays 0.5% burn tax) and mints USTR based on the pre-tax amount, with optional 10% bonuses for user and referrer.
 
 **USTR Minter Ownership**: The admin initially has authority to add/remove minters on the USTR token. This permission can be transferred to governance in a future phase. The minter list is not frozen and can be modified by the admin until governance transition.
 
@@ -343,8 +347,10 @@ PendingGovernance {
 | `AddCw20 { contract_addr }` | Governance | Adds a CW20 token to the balance tracking whitelist |
 | `RemoveCw20 { contract_addr }` | Governance | Removes a CW20 token from the whitelist |
 | `SetSwapContract { contract_addr }` | Governance | Sets the authorized swap contract address for deposit notifications |
-| `SwapDeposit {}` | Any user | Accepts USTC for swap (minimum 1 USTC); notifies swap contract to mint USTR to sender |
+| `SwapDeposit {}` | Any user | **(Legacy)** Accepts USTC for swap; notifies swap contract. Not used in current architecture. |
 | `Receive(Cw20ReceiveMsg)` | CW20 contract | CW20 receive hook; accepts direct CW20 token transfers |
+
+**Note**: The `SwapDeposit` message exists on the deployed Treasury contract but is not used in the current swap architecture. Users should call `Swap {}` on the Swap contract directly, which forwards USTC to Treasury and mints USTR with optional referral bonuses.
 
 **QueryMsg**
 
@@ -469,7 +475,7 @@ Where:
 | Field | Type | Description |
 |-------|------|-------------|
 | `ustr_token` | `Addr` | Address of the USTR CW20 contract |
-| `treasury` | `Addr` | Address of the treasury contract (authorized caller for NotifyDeposit) |
+| `treasury` | `Addr` | Address of the treasury contract (destination for forwarded USTC) |
 | `start_time` | `Timestamp` | Unix timestamp when swap period begins (set at instantiation) |
 | `end_time` | `Timestamp` | Unix timestamp when swap period ends (calculated from start_time + duration) |
 | `start_rate` | `Decimal` | Initial USTC/USTR rate (1.5) |
@@ -487,13 +493,14 @@ PendingAdmin {
 }
 ```
 
-**Note**: The Swap contract does not hold USTC. Users send USTC to Treasury via `SwapDeposit`, and Treasury notifies this contract via `NotifyDeposit`. Only the Treasury contract is authorized to call `NotifyDeposit`.
+**Note**: The Swap contract does not hold custody of USTC. Users send USTC to this contract, which immediately forwards it to Treasury in the same atomic transaction. The user pays the 0.5% TerraClassic burn tax on this forward, but USTR is calculated on the pre-tax amount.
 
 #### Messages
 
 **InstantiateMsg**
 - `ustr_token`: USTR contract address
 - `treasury`: Treasury contract address
+- `referral`: Referral contract address (for code validation)
 - `start_time`: Unix epoch timestamp when swap period begins (required)
 - `start_rate`: Starting exchange rate (1.5)
 - `end_rate`: Ending exchange rate (2.5)
@@ -504,7 +511,7 @@ PendingAdmin {
 
 | Message | Authority | Description |
 |---------|-----------|-------------|
-| `NotifyDeposit { depositor, amount }` | Treasury only | Called by Treasury when user deposits USTC for swap; mints USTR to depositor |
+| `Swap { referral_code }` | Any user | User sends USTC; contract forwards to Treasury (0.5% tax); mints USTR with optional referral bonus |
 | `EmergencyPause {}` | Admin | Pauses swap functionality |
 | `EmergencyResume {}` | Admin | Resumes swap functionality |
 | `ProposeAdmin { new_admin }` | Admin | Initiates 7-day timelock for admin transfer |
@@ -512,7 +519,17 @@ PendingAdmin {
 | `CancelAdminProposal {}` | Admin | Cancels pending admin change |
 | `RecoverAsset { asset, amount, recipient }` | Admin | Recovers stuck assets sent without using proper methods (available after swap period ends) |
 
-**Note on Tax Optimization**: Users do not call this contract directly. Instead, they send USTC to the Treasury contract via `SwapDeposit {}`, which notifies this contract to mint USTR. This avoids TerraClassic's 0.5% burn tax on `BankMsg::Send`.
+**Swap Method & Tax:**
+
+Users call `Swap { referral_code }` with USTC attached. The contract:
+1. Receives USTC from user (via `MsgExecuteContract` - **no tax** on this step)
+2. Forwards USTC to Treasury (via `BankMsg::Send` - **0.5% burn tax** applies)
+3. Mints USTR to user based on **pre-tax USTC amount**
+4. If valid referral code: mints bonus USTR to user (+10%) and referrer (+10%)
+
+**The user pays the 0.5% USTC burn tax.** This tax is burned by the TerraClassic network and does not go to the protocol. The USTR minting calculation uses the original (pre-tax) USTC amount, so users receive full USTR value despite the tax.
+
+**Tax Trade-off**: The 0.5% tax is offset by up to 20% USTR bonus when using a valid referral code. Even without a referral code, the tax is a minor cost (~$0.01 per 100 USTC at current prices).
 
 **QueryMsg**
 
@@ -525,41 +542,98 @@ PendingAdmin {
 | `Stats {}` | `StatsResponse` | Returns total USTC received, total USTR minted |
 | `PendingAdmin {}` | `Option<PendingAdminResponse>` | Returns pending admin proposal details |
 
-#### Swap Flow (Tax-Optimized, Atomic)
+#### On-Chain Tax Handling
 
-The swap uses a two-contract pattern to avoid TerraClassic's 0.5% burn tax. **All steps execute atomically within a single transaction** via CosmWasm submessages:
+TerraClassic applies a **0.5% Burn Tax** on certain native token transfers. The tax behavior:
+
+| Transaction Type | Tax Applied |
+|------------------|-------------|
+| `MsgSend` (wallet → wallet) | ✅ 0.5% tax |
+| `MsgExecuteContract` with funds (user → contract) | ❌ No tax |
+| `BankMsg::Send` from contract (contract → anywhere) | ✅ 0.5% tax |
+
+**Swap Tax Implications**:
+
+When a user calls `Swap {}` with USTC:
+1. User → Swap Contract: **No tax** (MsgExecuteContract)
+2. Swap Contract → Treasury: **0.5% tax** (BankMsg::Send)
+
+The user pays the 0.5% burn tax, but USTR is calculated on the **pre-tax USTC amount**. This ensures users receive full USTR value. The burned USTC is permanently removed from circulation, benefiting the ecosystem.
+
+**Preregistration Transfer Note**: When transferring USTC from the preregistration contract to the treasury via `BankMsg::Send`, the 0.5% burn tax also applies. The treasury receives the post-tax amount, which is accounted for in CR calculations.
+
+#### Referral Integration
+
+When a user includes a valid referral code with their swap, both parties receive bonus USTR:
+
+| Recipient | Bonus |
+|-----------|-------|
+| **Swapper** | +10% of base USTR amount |
+| **Code owner** | +10% of base USTR amount |
+
+**Example Calculation (Day 0, Rate = 1.5 USTC per USTR):**
+
+Without referral code:
+- User sends: 1.5 USTC
+- 0.5% burn tax: 0.0075 USTC (burned by network)
+- Treasury receives: 1.4925 USTC
+- Base USTR: 1.5 / 1.5 = 1.0 USTR (calculated on **pre-tax** amount)
+- User receives: **1.0 USTR**
+- Total minted: **1.0 USTR**
+
+With referral code:
+- User sends: 1.5 USTC
+- 0.5% burn tax: 0.0075 USTC (burned by network)
+- Treasury receives: 1.4925 USTC
+- Base USTR: 1.5 / 1.5 = 1.0 USTR (calculated on **pre-tax** amount)
+- User bonus (10%): 0.1 USTR → User receives: **1.1 USTR**
+- Referrer bonus (10%): **0.1 USTR**
+- Total minted: **1.2 USTR**
+
+**User Pays 0.5% Tax**: The TerraClassic burn tax is paid by the user when the swap contract forwards USTC to Treasury. However, USTR is calculated on the pre-tax amount, so users receive full USTR value. The 0.5% tax cost is massively offset by the 20% referral bonus.
+
+**Economic Soundness:**
+
+The referral system maintains favorable economics for preregistration participants:
+
+| Swap Type | USTC Sent | USTC to Treasury | USTR Minted | Effective Backing |
+|-----------|-----------|------------------|-------------|-------------------|
+| Preregistration | 1 USTC | 1 USTC | 1 USTR | 1.00 |
+| Day 0 (no referral) | 1.5 USTC | 1.4925 USTC | 1 USTR | 1.49 |
+| Day 0 (with referral) | 1.5 USTC | 1.4925 USTC | 1.2 USTR | 1.24 |
+| Day 50 (no referral) | 2.0 USTC | 1.99 USTC | 1 USTR | 1.99 |
+| Day 50 (with referral) | 2.0 USTC | 1.99 USTC | 1.2 USTR | 1.66 |
+
+All public swap backing ratios exceed the 1.0 preregistration ratio, ensuring preregistration participants maintain their advantaged position. The 0.5% burn tax slightly reduces collateral but also permanently removes USTC from circulation (ecosystem benefit).
+
+**Swap Flow (Atomic):**
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                    SINGLE ATOMIC TRANSACTION                            │
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
-│  User calls: Treasury.SwapDeposit {} with USTC funds                   │
+│  User calls: Swap.Swap { referral_code } with USTC funds attached      │
 │       │                                                                 │
 │       ▼                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ TREASURY CONTRACT                                               │   │
-│  │ 1. Validate funds are exactly uusd                              │   │
-│  │ 2. Reject if < 1 USTC minimum                                   │   │
-│  │ 3. Hold USTC (no tax - MsgExecuteContract)                      │   │
-│  │ 4. Call Swap.NotifyDeposit via WasmMsg::Execute (submessage)    │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│       │                                                                 │
-│       ▼ (submessage - same transaction)                                │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
 │  │ SWAP CONTRACT                                                   │   │
-│  │ 5. Verify caller is authorized Treasury                         │   │
-│  │ 6. Verify swap period is active                                 │   │
-│  │ 7. Calculate rate based on elapsed time                         │   │
-│  │ 8. Calculate ustr_amount = floor(ustc_amount / rate)            │   │
-│  │ 9. Mint USTR via WasmMsg::Execute (submessage)                  │   │
-│  │ 10. Update statistics, emit event                               │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│       │                                                                 │
-│       ▼ (submessage - same transaction)                                │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │ USTR TOKEN CONTRACT                                             │   │
-│  │ 11. Mint USTR to original depositor                             │   │
+│  │ 1. Validate USTC funds attached (minimum 1 USTC)                │   │
+│  │ 2. Verify swap period is active and not paused                  │   │
+│  │ 3. Calculate base_ustr = ustc_amount / current_rate             │   │
+│  │ 4. If referral_code is Some and non-empty:                      │   │
+│  │    a. Query Referral.ValidateCode { code }                      │   │
+│  │    b. If NOT valid/registered → ERROR (revert transaction)      │   │
+│  │    c. If valid: bonus = base_ustr * 10%                         │   │
+│  │    d. user_ustr = base_ustr + bonus                             │   │
+│  │    e. referrer_ustr = bonus                                     │   │
+│  │ 5. Else (None or empty): user_ustr = base_ustr, no referrer     │   │
+│  │ 6. Forward USTC to Treasury (BankMsg::Send)                     │   │
+│  │    → USER PAYS 0.5% BURN TAX (deducted by network)              │   │
+│  │    → Treasury receives 99.5% of USTC                            │   │
+│  │ 7. Mint user_ustr to sender (via submessage)                    │   │
+│  │ 8. If referrer_ustr > 0: Mint referrer_ustr to code owner       │   │
+│  │ 9. Update statistics, emit events                               │   │
 │  └─────────────────────────────────────────────────────────────────┘   │
 │                                                                         │
 │  If ANY step fails → ENTIRE transaction rolls back (USTC returned)     │
@@ -567,26 +641,34 @@ The swap uses a two-contract pattern to avoid TerraClassic's 0.5% burn tax. **Al
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Atomic Guarantees**: CosmWasm submessages execute within the same transaction context. The Treasury calls Swap via `WasmMsg::Execute`, and Swap calls USTR Token via `WasmMsg::Execute`. If any submessage fails (e.g., swap is paused, period ended, or mint fails), the entire transaction reverts and the user's USTC is returned.
+**Note**: The swap contract does NOT hold custody of USTC. Funds are forwarded to Treasury in the same atomic transaction. The 0.5% burn tax is paid by the user but USTR is calculated on the pre-tax amount.
 
-**Why This Flow?** TerraClassic applies a **0.5% Burn Tax** on native token transfers via `BankMsg::Send`. By having users send USTC directly to Treasury via `MsgExecuteContract` (which is NOT taxed), and having Treasury notify the Swap contract (instead of the Swap contract forwarding USTC to Treasury), we ensure 100% of user USTC reaches the treasury.
+**Referral Edge Cases:**
 
-**On-Chain Tax Handling**: The 0.5% tax is queried via `/terra/tx/v1beta1/compute_tax`. Tax applies to:
-- `MsgSend` (wallet → wallet): Taxed
-- `MsgExecuteContract` with funds (user → contract): NOT taxed
-- `BankMsg::Send` from contract (contract → anywhere): Taxed
+- **Invalid code format**: Transaction reverts with error (USTC returned)
+- **Non-existent code**: Transaction reverts with error (USTC returned)
+- **Empty or None referral_code**: Swap proceeds without referral bonus (no error)
+- **Self-referral**: Allowed—user receives both 10% user bonus AND 10% referrer bonus (total 20%)
+- **Minimum bonus threshold**: If base_ustr is too small for meaningful bonus (e.g., <10 micro units), bonus may round to 0
 
-**Preregistration Transfer Note**: When transferring USTC from the preregistration contract to the treasury via `BankMsg::Send`, the 0.5% burn tax applies. The treasury receives the post-tax amount, which is accounted for in CR calculations.
+**Stats Tracking (Extended):**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_ustc_received` | `Uint128` | Total USTC deposited (pre-tax for direct swaps) |
+| `total_ustr_minted` | `Uint128` | Total USTR minted (including bonuses) |
+| `total_referral_bonus_minted` | `Uint128` | USTR minted as referral bonuses (user + referrer combined) |
+| `total_referral_swaps` | `u64` | Count of swaps that used valid referral codes |
 
 #### Edge Cases
 
-- **Minimum amount**: Swaps of less than 1 USTC are rejected by Treasury to prevent dust/rounding attacks (at ~$0.02 per USTC, the cost to execute 1M spam transactions would exceed $20,000, far exceeding any potential exploit profit)
+- **Minimum amount**: Swaps of less than 1 USTC are rejected to prevent dust/rounding attacks (at ~$0.02 per USTC, the cost to execute 1M spam transactions would exceed $20,000, far exceeding any potential exploit profit)
 - **Precision handling**: Uses CosmWasm's `Decimal` type (10^18 precision) for intermediate calculations; floor rounding for final amounts
 - **Time boundaries**: Precise handling of start/end timestamp boundaries
 - **Partial seconds**: Rate calculation uses block timestamp, not simulated continuous time
-- **Wrong denomination**: Treasury rejects SwapDeposit with non-USTC native tokens
-- **Unauthorized caller**: Swap contract rejects `NotifyDeposit` calls from any address other than Treasury
+- **Wrong denomination**: Rejects swap with non-USTC native tokens
 - **Post-100-day**: Contract is effectively dead after the swap period ends; no reactivation possible
+- **Burn tax**: User pays 0.5% TerraClassic burn tax when swap contract forwards USTC to Treasury; USTR calculated on pre-tax amount
 
 #### Emergency Pause Behavior
 
@@ -594,12 +676,12 @@ When the swap is paused via `EmergencyPause`:
 - **Queries remain available**: Users can still query rates, simulate swaps, and check status
 - **No maximum duration**: The pause remains until admin calls `EmergencyResume`
 - **Admin authority**: Only the admin can resume operations
-- **Treasury behavior**: Treasury will reject `SwapDeposit` calls when swap contract is paused (swap contract returns error on `NotifyDeposit`)
+- **Swap behavior**: Calls to `Swap {}` will fail when paused
 
 #### Post-Swap Period
 
 After day 100, the swap contract is permanently disabled:
-- No further swaps can be executed (Treasury's `SwapDeposit` will fail when notifying Swap contract)
+- No further swaps can be executed (calls to `Swap {}` return error)
 - Admin can recover any stuck assets via `RecoverAsset` (for tokens accidentally sent without using the swap method)
 - Contract cannot be reactivated
 
@@ -655,6 +737,102 @@ Recipient {
 - **Atomic execution**: If any individual transfer fails, the entire airdrop fails and is rolled back
 - **Caller pays gas**: The user initiating the airdrop pays all gas fees
 - **Allowance required**: Sender must have approved sufficient allowance for the total airdrop amount
+
+---
+
+### Referral Contract
+
+#### Purpose
+
+The Referral Contract enables a viral growth mechanism for the USTR ecosystem by allowing users to register unique referral codes. When users include a valid referral code during USTC→USTR swaps, both the swapper and the code owner receive bonus USTR (10% each).
+
+#### Code Registration
+
+Users register a referral code by burning 10 USTR:
+
+| Constraint | Value |
+|------------|-------|
+| **Minimum length** | 1 character |
+| **Maximum length** | 20 characters |
+| **Allowed characters** | `a-z0-9_-` (lowercase alphanumeric, underscore, hyphen) |
+| **Forbidden** | Uppercase (normalized), special characters, unicode, spaces |
+| **Registration cost** | 10 USTR (burned, non-adjustable) |
+| **Code uniqueness** | Case-insensitive (e.g., "ABC" and "abc" are the same) |
+
+#### State
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `codes` | `Map<String, Addr>` | Mapping of normalized (lowercase) codes to owner addresses |
+| `owner_codes` | `Map<Addr, Vec<String>>` | Mapping of addresses to their registered codes |
+| `ustr_token` | `Addr` | Address of the USTR CW20 contract |
+
+**Note**: This contract has no admin, no configurable parameters, and no dependencies on other contracts. The 10 USTR registration fee is permanently fixed and burned.
+
+#### Messages
+
+**InstantiateMsg**
+- `ustr_token`: USTR contract address
+
+**ExecuteMsg**
+
+| Message | Authority | Description |
+|---------|-----------|-------------|
+| `Receive(Cw20ReceiveMsg)` | USTR token only | CW20 receive hook for processing USTR burns during code registration |
+
+The registration flow uses CW20's Send mechanism:
+1. User calls `Send { contract: referral_addr, amount: 10_000_000_000_000_000_000, msg: to_binary(&RegisterCode { code: "my-code_1" }) }` on the USTR token
+2. Referral contract receives the USTR and validates the code format
+3. If code is valid and not taken: burns the USTR and registers the code
+4. If code is invalid or taken: returns an error (transaction reverts, USTR returned)
+
+**Receive Hook Message**:
+```
+RegisterCode {
+    code: String,  // 1-20 chars, a-z0-9_- only
+}
+```
+
+**QueryMsg**
+
+| Query | Response | Description |
+|-------|----------|-------------|
+| `Config {}` | `ConfigResponse` | Returns USTR token address |
+| `CodeInfo { code }` | `Option<CodeInfoResponse>` | Returns owner address if code exists (case-insensitive lookup) |
+| `CodesByOwner { owner }` | `CodesResponse` | Returns all codes owned by an address |
+| `ValidateCode { code }` | `ValidateResponse` | Returns whether code format is valid and if it's registered |
+
+#### Code Validation Rules
+
+1. **Length**: 1-20 characters
+2. **Characters**: Only ASCII lowercase letters (a-z), digits (0-9), underscore (_), and hyphen (-)
+3. **Normalization**: Input codes are converted to lowercase before storage and lookup
+4. **Uniqueness**: Each code can only be registered once (first-come, first-served)
+
+#### Economic Rationale
+
+**Why 10 USTR?**
+
+The 10 USTR registration cost:
+- Prevents code squatting and spam registrations
+- Burns USTR supply (permanent deflationary pressure)
+- Ensures only committed participants create codes
+- At launch rates (1.5 USTC per USTR), costs ~15 USTC worth
+- Pays for itself after referring ~1 swap (10% of 100+ USTR = 10+ USTR)
+
+**Why these character restrictions?**
+
+- `a-z0-9_-` is URL-safe for referral links (e.g., `swap.ust1.cl8y.com/my-code_1`)
+- Prevents unicode homograph attacks (е vs e, 0 vs О)
+- No special characters minimizes XSS attack vectors
+- Case-insensitive prevents confusion between "MyCode" and "mycode"
+
+**Self-Referral Allowed**
+
+Users may use their own referral codes. This rewards:
+- Users who take time to understand the system
+- Active community members who educate others
+- Technical competency in navigating the ecosystem
 
 ---
 
@@ -936,7 +1114,16 @@ ustr-cmm/
 │   │   │       ├── state.rs
 │   │   │       └── error.rs
 │   │   │
-│   │   └── ustc-swap/           # USTC→USTR swap contract
+│   │   ├── ustc-swap/           # USTC→USTR swap contract
+│   │   │   ├── Cargo.toml
+│   │   │   └── src/
+│   │   │       ├── lib.rs
+│   │   │       ├── contract.rs
+│   │   │       ├── msg.rs
+│   │   │       ├── state.rs
+│   │   │       └── error.rs
+│   │   │
+│   │   └── referral/            # Referral code registration contract
 │   │       ├── Cargo.toml
 │   │       └── src/
 │   │           ├── lib.rs
@@ -1295,7 +1482,7 @@ Batch CW20 token distribution contract (similar to [disperse.app](https://disper
 ### USTC Swap Contract
 
 **Execute**:
-- `NotifyDeposit { depositor, amount }` (treasury only; called when user deposits USTC via Treasury's SwapDeposit)
+- `Swap { referral_code }` (any user with USTC; user pays 0.5% burn tax; mints USTR with optional referral bonus)
 - `EmergencyPause {}` (admin only)
 - `EmergencyResume {}` (admin only)
 - `ProposeAdmin { new_admin }` (initiates 7-day timelock)
@@ -1306,10 +1493,25 @@ Batch CW20 token distribution contract (similar to [disperse.app](https://disper
 **Query**:
 - `Config {}`
 - `CurrentRate {}`
-- `SwapSimulation { ustc_amount }`
+- `SwapSimulation { ustc_amount, referral_code }` (simulates USTR output including referral bonus if applicable)
 - `Status {}`
 - `Stats {}`
 - `PendingAdmin {}`
+
+---
+
+### Referral Contract
+
+Enables referral code registration for viral growth incentives. No admin, no configurable parameters.
+
+**Execute**:
+- `Receive(Cw20ReceiveMsg)` - CW20 receive hook; processes `RegisterCode { code }` by burning 10 USTR
+
+**Query**:
+- `Config {}` - Returns USTR token address
+- `CodeInfo { code }` - Returns owner address if code exists (case-insensitive)
+- `CodesByOwner { owner }` - Returns all codes owned by an address
+- `ValidateCode { code }` - Returns format validity and registration status
 
 ---
 

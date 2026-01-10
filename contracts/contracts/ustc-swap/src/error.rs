@@ -11,9 +11,6 @@ pub enum ContractError {
     #[error("Unauthorized: only admin can perform this action")]
     Unauthorized,
 
-    #[error("Unauthorized: only treasury contract can notify deposits")]
-    UnauthorizedTreasury,
-
     #[error("Unauthorized: only pending admin can accept")]
     UnauthorizedPendingAdmin,
 
@@ -40,5 +37,20 @@ pub enum ContractError {
 
     #[error("Invalid address: {reason}")]
     InvalidAddress { reason: String },
+
+    #[error("No USTC funds sent")]
+    NoFundsSent,
+
+    #[error("Only USTC (uusd) is accepted")]
+    WrongDenom,
+
+    #[error("Multiple denominations sent, only USTC (uusd) is accepted")]
+    MultipleDenoms,
+
+    #[error("Invalid referral code: {code}")]
+    InvalidReferralCode { code: String },
+
+    #[error("Referral code not registered: {code}")]
+    ReferralCodeNotRegistered { code: String },
 }
 

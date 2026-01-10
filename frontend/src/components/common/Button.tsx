@@ -1,7 +1,11 @@
 /**
  * Button Component
  * 
- * Reusable button with multiple variants.
+ * Reusable button with:
+ * - Multiple variants (primary, secondary, outline, ghost)
+ * - Gradient backgrounds
+ * - Loading state with spinner
+ * - Hover animations
  */
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -20,25 +24,46 @@ export function Button({
   className = '',
   ...props
 }: ButtonProps) {
+  const baseStyles = `
+    relative font-semibold rounded-xl transition-all duration-200
+    disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none
+    active:scale-[0.98]
+  `;
+
   const variants = {
-    primary: 'bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white',
-    secondary: 'bg-gray-700 hover:bg-gray-600 text-white',
-    outline: 'bg-transparent border-2 border-amber-500 text-amber-500 hover:bg-amber-500/10',
-    ghost: 'bg-transparent hover:bg-gray-700/50 text-gray-300',
+    primary: `
+      bg-gradient-to-r from-amber-500 to-orange-600 
+      hover:from-amber-400 hover:to-orange-500 
+      text-white shadow-lg shadow-amber-500/20
+      hover:shadow-amber-500/30 hover:shadow-xl
+    `,
+    secondary: `
+      bg-surface-700 hover:bg-surface-600 
+      text-white border border-white/5
+      hover:border-white/10
+    `,
+    outline: `
+      bg-transparent border-2 border-amber-500/50 
+      text-amber-400 
+      hover:bg-amber-500/10 hover:border-amber-500
+    `,
+    ghost: `
+      bg-transparent hover:bg-white/5 
+      text-gray-300 hover:text-white
+    `,
   };
 
   const sizes = {
     sm: 'px-3 py-1.5 text-sm',
     md: 'px-5 py-2.5 text-base',
-    lg: 'px-8 py-3.5 text-lg',
+    lg: 'px-8 py-4 text-lg',
   };
 
   return (
     <button
       disabled={disabled || loading}
       className={`
-        font-medium rounded-xl transition-all
-        disabled:opacity-50 disabled:cursor-not-allowed
+        ${baseStyles}
         ${variants[variant]}
         ${sizes[size]}
         ${className}
@@ -46,9 +71,9 @@ export function Button({
       {...props}
     >
       {loading ? (
-        <span className="flex items-center gap-2">
+        <span className="flex items-center justify-center gap-2">
           <LoadingSpinner />
-          {children}
+          <span>{children}</span>
         </span>
       ) : (
         children
@@ -60,7 +85,7 @@ export function Button({
 function LoadingSpinner() {
   return (
     <svg 
-      className="animate-spin h-4 w-4" 
+      className="animate-spin h-5 w-5" 
       xmlns="http://www.w3.org/2000/svg" 
       fill="none" 
       viewBox="0 0 24 24"
@@ -81,4 +106,3 @@ function LoadingSpinner() {
     </svg>
   );
 }
-
