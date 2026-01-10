@@ -48,7 +48,7 @@ export function RateChart({ currentDay = 0 }: RateChartProps) {
           </div>
 
           {/* Chart visualization */}
-          <div className="ml-12 h-full relative rounded-lg overflow-hidden">
+          <div className="ml-12 h-full relative rounded-lg">
             {/* Background grid */}
             <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
               {[0, 1, 2].map((i) => (
@@ -56,21 +56,20 @@ export function RateChart({ currentDay = 0 }: RateChartProps) {
               ))}
             </div>
             
-            {/* Gradient area fill */}
+            {/* Gradient area fill - under the line */}
             <div className="absolute inset-0">
-              <svg className="w-full h-full" preserveAspectRatio="none">
+              <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
                 <defs>
                   <linearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
                     <stop offset="0%" stopColor="rgb(245, 158, 11)" stopOpacity="0.3" />
                     <stop offset="100%" stopColor="rgb(245, 158, 11)" stopOpacity="0" />
                   </linearGradient>
                 </defs>
-                {/* Area fill */}
+                {/* Area fill - triangle under the line from bottom-left to top-right */}
                 <polygon
-                  points="0,100 0,100 100,0 100,100"
+                  points="0,100 100,0 100,100"
                   fill="url(#areaGradient)"
                   className="opacity-50"
-                  style={{ transform: 'scaleX(1)' }}
                 />
               </svg>
             </div>
@@ -103,9 +102,9 @@ export function RateChart({ currentDay = 0 }: RateChartProps) {
               />
             </svg>
 
-            {/* Progress indicator */}
+            {/* Progress indicator - positioned with z-index to stay in front */}
             <div 
-              className="absolute w-4 h-4 transform -translate-x-1/2 -translate-y-1/2 transition-all duration-500"
+              className="absolute w-4 h-4 transform -translate-x-1/2 -translate-y-1/2 transition-all duration-500 z-10"
               style={{ 
                 left: `${progressPercent}%`,
                 top: `${100 - progressPercent}%`
