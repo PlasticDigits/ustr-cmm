@@ -2,6 +2,10 @@
  * RateChart Component
  * 
  * Visualizes the rate progression over the 100-day swap period.
+ * Features:
+ * - Gradient area fill
+ * - Animated progress indicator
+ * - Glass morphism styling
  */
 
 import { useMemo } from 'react';
@@ -31,58 +35,104 @@ export function RateChart({ currentDay = 0 }: RateChartProps) {
   const progressPercent = Math.min((currentDay / SWAP_CONFIG.durationDays) * 100, 100);
 
   return (
-    <Card>
+    <Card className="h-full">
       <CardHeader>
-        <h3 className="text-lg font-semibold text-white">Rate Progression</h3>
-        <p className="text-sm text-gray-400">USTC per USTR over 100 days</p>
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
+            <svg className="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-white">Rate Progression</h3>
+            <p className="text-sm text-gray-400">USTC per USTR over 100 days</p>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
-        {/* Simple visualization */}
-        <div className="relative h-40 mb-4">
+        {/* Chart area */}
+        <div className="relative h-44 mb-4">
           {/* Y-axis labels */}
-          <div className="absolute left-0 top-0 bottom-0 w-12 flex flex-col justify-between text-xs text-gray-500">
-            <span>2.5</span>
-            <span>2.0</span>
-            <span>1.5</span>
+          <div className="absolute left-0 top-0 bottom-0 w-10 flex flex-col justify-between text-xs font-mono-numbers text-gray-500">
+            <span>2.50</span>
+            <span>2.00</span>
+            <span>1.50</span>
           </div>
 
-          {/* Chart area */}
-          <div className="ml-14 h-full relative">
-            {/* Background gradient */}
-            <div className="absolute inset-0 bg-gradient-to-t from-amber-500/10 to-transparent rounded-lg" />
+          {/* Chart visualization */}
+          <div className="ml-12 h-full relative rounded-lg overflow-hidden">
+            {/* Background grid */}
+            <div className="absolute inset-0 flex flex-col justify-between pointer-events-none">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="border-t border-white/5" />
+              ))}
+            </div>
             
-            {/* Progress line */}
-            <div 
-              className="absolute bottom-0 left-0 h-0.5 bg-amber-500 transition-all duration-500"
-              style={{ width: `${progressPercent}%` }}
-            />
-
-            {/* Current position marker */}
-            <div 
-              className="absolute w-3 h-3 bg-amber-500 rounded-full transform -translate-x-1/2 transition-all duration-500"
-              style={{ 
-                left: `${progressPercent}%`,
-                bottom: `${((currentRate - 1.5) / 1) * 100}%`
-              }}
-            />
-
-            {/* Rate line (simplified) */}
+            {/* Gradient area fill */}
+            <div className="absolute inset-0">
+              <svg className="w-full h-full" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="areaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                    <stop offset="0%" stopColor="rgb(245, 158, 11)" stopOpacity="0.3" />
+                    <stop offset="100%" stopColor="rgb(245, 158, 11)" stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                {/* Area fill */}
+                <polygon
+                  points="0,100 0,100 100,0 100,100"
+                  fill="url(#areaGradient)"
+                  className="opacity-50"
+                  style={{ transform: 'scaleX(1)' }}
+                />
+              </svg>
+            </div>
+            
+            {/* Rate line */}
             <svg className="absolute inset-0 w-full h-full">
+              <defs>
+                <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor="#f59e0b" />
+                  <stop offset="100%" stopColor="#ea580c" />
+                </linearGradient>
+              </defs>
               <line
                 x1="0%"
                 y1="100%"
                 x2="100%"
                 y2="0%"
-                stroke="#6b7280"
+                stroke="url(#lineGradient)"
                 strokeWidth="2"
+              />
+              {/* Dashed future line */}
+              <line
+                x1={`${progressPercent}%`}
+                y1={`${100 - progressPercent}%`}
+                x2="100%"
+                y2="0%"
+                stroke="#6b7280"
+                strokeWidth="1"
                 strokeDasharray="4 4"
               />
             </svg>
+
+            {/* Progress indicator */}
+            <div 
+              className="absolute w-4 h-4 transform -translate-x-1/2 -translate-y-1/2 transition-all duration-500"
+              style={{ 
+                left: `${progressPercent}%`,
+                top: `${100 - progressPercent}%`
+              }}
+            >
+              {/* Pulse ring */}
+              <div className="absolute inset-0 bg-amber-500 rounded-full animate-ping opacity-50" />
+              {/* Core dot */}
+              <div className="absolute inset-0 bg-gradient-to-br from-amber-400 to-orange-500 rounded-full shadow-lg shadow-amber-500/50" />
+            </div>
           </div>
         </div>
 
         {/* X-axis labels */}
-        <div className="ml-14 flex justify-between text-xs text-gray-500">
+        <div className="ml-12 flex justify-between text-xs font-mono-numbers text-gray-500">
           <span>Day 0</span>
           <span>Day 25</span>
           <span>Day 50</span>
@@ -91,22 +141,29 @@ export function RateChart({ currentDay = 0 }: RateChartProps) {
         </div>
 
         {/* Current stats */}
-        <div className="grid grid-cols-3 gap-4 mt-6 pt-4 border-t border-gray-700">
-          <div className="text-center">
-            <p className="text-xs text-gray-500">Current Day</p>
-            <p className="text-lg font-semibold text-white">{Math.floor(currentDay)}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-gray-500">Current Rate</p>
-            <p className="text-lg font-semibold text-amber-500">{currentRate.toFixed(4)}</p>
-          </div>
-          <div className="text-center">
-            <p className="text-xs text-gray-500">End Rate</p>
-            <p className="text-lg font-semibold text-gray-400">{SWAP_CONFIG.endRate}</p>
-          </div>
+        <div className="grid grid-cols-3 gap-3 mt-6 pt-5 border-t border-white/5">
+          <StatBox label="Current Day" value={Math.floor(currentDay).toString()} />
+          <StatBox label="Current Rate" value={currentRate.toFixed(4)} highlight />
+          <StatBox label="End Rate" value={SWAP_CONFIG.endRate.toString()} />
         </div>
       </CardContent>
     </Card>
   );
 }
 
+interface StatBoxProps {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}
+
+function StatBox({ label, value, highlight }: StatBoxProps) {
+  return (
+    <div className="text-center">
+      <p className="text-xs text-gray-500 mb-1">{label}</p>
+      <p className={`text-lg font-mono-numbers font-semibold ${highlight ? 'text-amber-400' : 'text-white'}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
