@@ -35,8 +35,19 @@ export const CONTRACTS = {
     ustrToken: '',
     treasury: '',
     ustcSwap: '',
-    referral: '',
+    referral: 'terra1lxv5m2n72l4zujf0rrgek9k6m8kfky62yvm8qvlnjqgjmmlmywzqt4j0z2',
   },
+} as const;
+
+// Referral code validation rules
+export const REFERRAL_CODE = {
+  minLength: 1,
+  maxLength: 20,
+  // Only lowercase letters, numbers, underscore, and hyphen allowed
+  validPattern: /^[a-z0-9_-]+$/,
+  registrationFee: '10000000000000000000', // 10 USTR (18 decimals)
+  registrationFeeDisplay: '10', // Human readable
+  maxCodesPerOwner: 10,
 } as const;
 
 // Token decimals

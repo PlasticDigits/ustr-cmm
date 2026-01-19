@@ -16,6 +16,10 @@ import type {
   TreasuryAllBalances,
   Cw20Balance,
   Cw20TokenInfo,
+  ReferralConfig,
+  CodeInfo,
+  CodesResponse,
+  ValidateResponse,
 } from '../types/contracts';
 
 type NetworkKey = keyof typeof NETWORKS;

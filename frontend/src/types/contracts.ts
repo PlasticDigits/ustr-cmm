@@ -137,3 +137,38 @@ export type SwapExecuteMsg =
   | { emergency_resume: Record<string, never> }
   | { update_admin: { new_admin: string } };
 
+// ============================================
+// Referral Contract Types
+// ============================================
+
+export interface ReferralConfig {
+  ustr_token: string;
+}
+
+export interface CodeInfo {
+  code: string;
+  owner: string;
+}
+
+export interface CodesResponse {
+  codes: string[];
+}
+
+export interface ValidateResponse {
+  is_valid_format: boolean;
+  is_registered: boolean;
+  owner: string | null;
+}
+
+// Query messages
+export type ReferralQueryMsg =
+  | { config: Record<string, never> }
+  | { code_info: { code: string } }
+  | { codes_by_owner: { owner: string } }
+  | { validate_code: { code: string } };
+
+// Execute message (embedded in CW20 Send)
+export interface RegisterCodeMsg {
+  code: string;
+}
+
