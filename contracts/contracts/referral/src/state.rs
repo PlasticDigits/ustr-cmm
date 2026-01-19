@@ -23,6 +23,8 @@ pub const REGISTRATION_FEE: u128 = 10_000_000_000_000_000_000;
 pub const MIN_CODE_LENGTH: usize = 1;
 /// Maximum code length
 pub const MAX_CODE_LENGTH: usize = 20;
+/// Maximum codes per owner
+pub const MAX_CODES_PER_OWNER: usize = 10;
 
 /// Primary config storage
 pub const CONFIG: Item<Config> = Item::new("config");

@@ -15,8 +15,8 @@ use crate::msg::{
     RegisterCodeMsg, ValidateResponse,
 };
 use crate::state::{
-    Config, CODES, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, MAX_CODE_LENGTH, MIN_CODE_LENGTH,
-    OWNER_CODES, REGISTRATION_FEE,
+    Config, CODES, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, MAX_CODES_PER_OWNER, MAX_CODE_LENGTH,
+    MIN_CODE_LENGTH, OWNER_CODES, REGISTRATION_FEE,
 };
 
 // ============ INSTANTIATE ============
@@ -91,10 +91,15 @@ fn execute_receive(
     // Store the code
     CODES.save(deps.storage, &normalized_code, &owner)?;
 
-    // Update owner's code list
+    // Update owner's code list (with max limit check)
     let mut owner_codes = OWNER_CODES
         .may_load(deps.storage, &owner)?
         .unwrap_or_default();
+
+    if owner_codes.len() >= MAX_CODES_PER_OWNER {
+        return Err(ContractError::MaxCodesPerOwnerReached);
+    }
+
     owner_codes.push(normalized_code.clone());
     OWNER_CODES.save(deps.storage, &owner, &owner_codes)?;
 
@@ -562,5 +567,58 @@ mod tests {
         assert!(!validate.is_valid_format);
         assert!(!validate.is_registered);
         assert!(validate.owner.is_none());
+    }
+
+    #[test]
+    fn test_max_codes_per_owner() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USTR_TOKEN, &[]);
+
+        // Register 10 codes (the maximum)
+        for i in 0..10 {
+            let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
+                sender: "user".to_string(),
+                amount: Uint128::from(REGISTRATION_FEE),
+                msg: to_json_binary(&RegisterCodeMsg {
+                    code: format!("code{}", i),
+                })
+                .unwrap(),
+            });
+            execute(deps.as_mut(), env.clone(), info.clone(), msg).unwrap();
+        }
+
+        // Verify 10 codes registered
+        let codes = OWNER_CODES.load(&deps.storage, &Addr::unchecked("user")).unwrap();
+        assert_eq!(codes.len(), 10);
+
+        // Try to register 11th code - should fail
+        let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
+            sender: "user".to_string(),
+            amount: Uint128::from(REGISTRATION_FEE),
+            msg: to_json_binary(&RegisterCodeMsg {
+                code: "code10".to_string(),
+            })
+            .unwrap(),
+        });
+
+        let err = execute(deps.as_mut(), env.clone(), info.clone(), msg).unwrap_err();
+        assert_eq!(err, ContractError::MaxCodesPerOwnerReached);
+
+        // Different user should still be able to register
+        let msg = ExecuteMsg::Receive(Cw20ReceiveMsg {
+            sender: "user2".to_string(),
+            amount: Uint128::from(REGISTRATION_FEE),
+            msg: to_json_binary(&RegisterCodeMsg {
+                code: "user2code".to_string(),
+            })
+            .unwrap(),
+        });
+        execute(deps.as_mut(), env, info, msg).unwrap();
+
+        let codes = OWNER_CODES.load(&deps.storage, &Addr::unchecked("user2")).unwrap();
+        assert_eq!(codes.len(), 1);
     }
 }

@@ -25,4 +25,7 @@ pub enum ContractError {
 
     #[error("Code cannot be empty")]
     EmptyCode,
+
+    #[error("Maximum codes per owner reached (limit: 10)")]
+    MaxCodesPerOwnerReached,
 }
