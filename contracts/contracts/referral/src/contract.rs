@@ -271,10 +271,27 @@ mod tests {
             "my-code_1"
         );
 
-        // Invalid
-        assert!(validate_and_normalize_code("").is_err());
-        assert!(validate_and_normalize_code("my code").is_err());
-        assert!(validate_and_normalize_code("my@code").is_err());
+        // Invalid - empty
+        assert!(matches!(
+            validate_and_normalize_code(""),
+            Err(ContractError::EmptyCode)
+        ));
+
+        // Invalid - too long (21 characters)
+        assert!(matches!(
+            validate_and_normalize_code("123456789012345678901"),
+            Err(ContractError::InvalidCodeLength)
+        ));
+
+        // Invalid - invalid characters
+        assert!(matches!(
+            validate_and_normalize_code("my code"),
+            Err(ContractError::InvalidCodeCharacters)
+        ));
+        assert!(matches!(
+            validate_and_normalize_code("my@code"),
+            Err(ContractError::InvalidCodeCharacters)
+        ));
     }
 
     #[test]
