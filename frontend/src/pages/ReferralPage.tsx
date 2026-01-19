@@ -12,6 +12,7 @@ import { useWallet } from '../hooks/useWallet';
 import { contractService } from '../services/contract';
 import { Card, CardContent, CardHeader } from '../components/common/Card';
 import { Button } from '../components/common/Button';
+import { CharacterParticles } from '../components/common/CharacterParticles';
 import { formatAddress, getAddressScannerUrl, getTxScannerUrl } from '../utils/format';
 import { REFERRAL_CODE, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
 import type { CodeInfo, CodesResponse, ValidateResponse } from '../types/contracts';
@@ -643,8 +644,9 @@ function ContractInfoSection() {
 
 export function ReferralPage() {
   return (
-    <div className="min-h-screen py-8 px-4">
-      <div className="max-w-4xl mx-auto">
+    <div className="min-h-screen py-8 px-4 relative">
+      <CharacterParticles />
+      <div className="max-w-4xl mx-auto relative z-10">
         {/* Page Header */}
         <div className="text-center mb-10 animate-fade-in-up">
           <h1 className="text-3xl md:text-4xl font-bold text-white mb-3">
