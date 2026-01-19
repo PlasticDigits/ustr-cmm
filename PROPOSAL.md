@@ -485,6 +485,15 @@ Where:
 | `admin` | `Addr` | Admin address for emergency operations |
 | `pending_admin` | `Option<PendingAdmin>` | Proposed new admin with timestamp |
 | `paused` | `bool` | Whether swap is currently paused |
+| `referral_code_stats` | `Map<String, ReferralCodeStats>` | Mapping of normalized codes to their cumulative reward statistics |
+
+```
+ReferralCodeStats {
+    total_rewards_earned: Uint128,  // Total USTR earned by referrer from this code
+    total_user_bonuses: Uint128,    // Total USTR bonuses earned by users using this code
+    total_swaps: u64,               // Number of swaps using this code
+}
+```
 
 ```
 PendingAdmin {
@@ -541,6 +550,40 @@ Users call `Swap { referral_code }` with USTC attached. The contract:
 | `Status {}` | `StatusResponse` | Returns active/ended status, time remaining |
 | `Stats {}` | `StatsResponse` | Returns total USTC received, total USTR minted |
 | `PendingAdmin {}` | `Option<PendingAdminResponse>` | Returns pending admin proposal details |
+| `ReferralCodeStats { code }` | `ReferralCodeStatsResponse` | Returns reward statistics for a specific referral code |
+| `ReferralLeaderboard { start_after, limit }` | `ReferralLeaderboardResponse` | Returns paginated leaderboard of referral codes ranked by total rewards earned |
+
+**Referral Tracking Queries:**
+
+The swap contract tracks per-code statistics for analytics and leaderboard functionality:
+
+```
+ReferralCodeStatsResponse {
+    code: String,                   // The referral code (normalized)
+    owner: Addr,                    // Code owner address (queried from Referral contract)
+    total_rewards_earned: Uint128,  // Total USTR earned by referrer from this code
+    total_user_bonuses: Uint128,    // Total USTR bonuses earned by users using this code
+    total_swaps: u64,               // Number of swaps using this code
+}
+
+ReferralLeaderboardResponse {
+    entries: Vec<LeaderboardEntry>,  // Leaderboard entries sorted by total_rewards_earned (desc)
+    has_more: bool,                  // Whether more entries exist after this page
+}
+
+LeaderboardEntry {
+    code: String,
+    owner: Addr,
+    total_rewards_earned: Uint128,
+    total_user_bonuses: Uint128,
+    total_swaps: u64,
+    rank: u32,                       // Position on the leaderboard (1-indexed)
+}
+```
+
+**Pagination Parameters:**
+- `start_after`: Optional code to start after (for cursor-based pagination)
+- `limit`: Maximum number of entries to return (default: 10, max: 50)
 
 #### On-Chain Tax Handling
 
@@ -659,6 +702,27 @@ All public swap backing ratios exceed the 1.0 preregistration ratio, ensuring pr
 | `total_ustr_minted` | `Uint128` | Total USTR minted (including bonuses) |
 | `total_referral_bonus_minted` | `Uint128` | USTR minted as referral bonuses (user + referrer combined) |
 | `total_referral_swaps` | `u64` | Count of swaps that used valid referral codes |
+| `unique_referral_codes_used` | `u64` | Count of unique referral codes that have been used in at least one swap |
+
+**Per-Code Stats Tracking:**
+
+Each referral code has its own statistics tracked on-chain for leaderboard and analytics purposes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_rewards_earned` | `Uint128` | Cumulative USTR earned by the code owner from referrals |
+| `total_user_bonuses` | `Uint128` | Cumulative USTR bonuses given to users who used this code |
+| `total_swaps` | `u64` | Number of swaps that used this referral code |
+
+**On Swap with Referral Code:**
+
+When a swap uses a valid referral code, the contract:
+1. Calculates and mints referrer bonus (10% of base USTR) to code owner
+2. Calculates and mints user bonus (10% of base USTR) to swapper
+3. Increments `total_rewards_earned` for the code by the referrer bonus amount
+4. Increments `total_user_bonuses` for the code by the user bonus amount
+5. Increments `total_swaps` for the code by 1
+6. Updates global stats (`total_referral_bonus_minted`, `total_referral_swaps`, `unique_referral_codes_used`)
 
 #### Edge Cases
 
@@ -1495,8 +1559,10 @@ Batch CW20 token distribution contract (similar to [disperse.app](https://disper
 - `CurrentRate {}`
 - `SwapSimulation { ustc_amount, referral_code }` (simulates USTR output including referral bonus if applicable)
 - `Status {}`
-- `Stats {}`
+- `Stats {}` (includes `unique_referral_codes_used` count)
 - `PendingAdmin {}`
+- `ReferralCodeStats { code }` (returns per-code reward statistics: total_rewards_earned, total_user_bonuses, total_swaps)
+- `ReferralLeaderboard { start_after, limit }` (paginated leaderboard of codes ranked by rewards earned; default limit: 10, max: 50)
 
 ---
 

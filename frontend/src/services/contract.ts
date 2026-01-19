@@ -188,6 +188,73 @@ class ContractService {
     
     return 'placeholder_tx_hash';
   }
+
+  // ============================================
+  // Referral Contract Queries
+  // ============================================
+
+  async getReferralConfig(): Promise<ReferralConfig> {
+    const contracts = this.getContracts();
+    // TODO: Implement actual query
+    console.log('Querying referral config from:', contracts.referral);
+    return {
+      ustr_token: contracts.ustrToken,
+    };
+  }
+
+  async getCodeInfo(code: string): Promise<CodeInfo | null> {
+    const contracts = this.getContracts();
+    // TODO: Implement actual query
+    console.log('Querying code info:', code, 'from:', contracts.referral);
+    // Returns null if code not found
+    return null;
+  }
+
+  async getCodesByOwner(owner: string): Promise<CodesResponse> {
+    const contracts = this.getContracts();
+    // TODO: Implement actual query
+    console.log('Querying codes by owner:', owner, 'from:', contracts.referral);
+    return { codes: [] };
+  }
+
+  async validateCode(code: string): Promise<ValidateResponse> {
+    const contracts = this.getContracts();
+    // TODO: Implement actual query
+    console.log('Validating code:', code, 'from:', contracts.referral);
+    
+    // Client-side validation (mirrors contract logic)
+    const normalizedCode = code.toLowerCase();
+    const isValidFormat = 
+      normalizedCode.length >= 1 && 
+      normalizedCode.length <= 20 &&
+      /^[a-z0-9_-]+$/.test(normalizedCode);
+    
+    return {
+      is_valid_format: isValidFormat,
+      is_registered: false,
+      owner: null,
+    };
+  }
+
+  // ============================================
+  // Referral Contract Execute
+  // ============================================
+
+  async registerReferralCode(
+    senderAddress: string,
+    code: string
+  ): Promise<string> {
+    const contracts = this.getContracts();
+    // TODO: Implement actual execution
+    // This requires calling USTR.Send with embedded RegisterCodeMsg
+    console.log('Registering referral code:', { 
+      sender: senderAddress, 
+      code,
+      referralContract: contracts.referral,
+    });
+    
+    return 'placeholder_tx_hash';
+  }
 }
 
 // Export singleton instance

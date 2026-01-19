@@ -155,8 +155,25 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - `CurrentRate` - Returns current USTC/USTR exchange rate
 - `SwapSimulation { ustc_amount, referral_code }` - Returns USTR amount including referral bonus if applicable
 - `Status` - Returns active/ended status, time remaining
-- `Stats` - Returns total USTC received, total USTR minted, referral stats
+- `Stats` - Returns total USTC received, total USTR minted, referral stats (including `unique_referral_codes_used`)
 - `PendingAdmin` - Returns pending admin proposal details
+- `ReferralCodeStats { code }` - Returns per-code reward statistics (total_rewards_earned, total_user_bonuses, total_swaps)
+- `ReferralLeaderboard { start_after, limit }` - Paginated leaderboard of referral codes ranked by total rewards earned
+
+**Referral Leaderboard & Stats:**
+
+The swap contract tracks per-code statistics for analytics and leaderboard functionality:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_rewards_earned` | `Uint128` | Cumulative USTR earned by referrer from this code |
+| `total_user_bonuses` | `Uint128` | Cumulative USTR bonuses given to users using this code |
+| `total_swaps` | `u64` | Number of swaps that used this referral code |
+
+The leaderboard query returns entries sorted by `total_rewards_earned` (descending) with pagination support:
+- `start_after`: Optional code for cursor-based pagination
+- `limit`: Max entries per page (default: 10, max: 50)
+- Response includes `has_more` boolean indicating additional pages
 
 **Key Development Decisions**:
 
