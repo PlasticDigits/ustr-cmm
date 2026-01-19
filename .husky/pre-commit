@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+
+# Run type-check and lint in frontend before committing
+cd frontend
+
+# Run TypeScript check
+echo "Running TypeScript check..."
+npm run type-check
+if [ $? -ne 0 ]; then
+  echo "TypeScript check failed. Please fix errors before committing."
+  exit 1
+fi
+
+# Run lint-staged for staged files
+echo "Running lint-staged..."
+npx lint-staged

@@ -97,7 +97,7 @@ export function CharacterParticles({ className = '' }: CharacterParticlesProps) 
     const animate = () => {
       ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
-      particlesRef.current.forEach((particle, index) => {
+      particlesRef.current.forEach((particle) => {
         // Update position
         particle.x += particle.speedX;
         particle.y += particle.speedY;
