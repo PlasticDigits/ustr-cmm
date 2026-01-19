@@ -10,6 +10,7 @@ export const NETWORKS = {
     rpc: 'https://terra-classic-testnet-rpc.publicnode.com:443',
     lcd: 'https://terra-classic-testnet-lcd.publicnode.com',
     cw20CodeId: 1641,
+    scanner: 'https://finder.terraclassic.community/testnet',
   },
   mainnet: {
     chainId: 'columbus-5',
@@ -17,6 +18,7 @@ export const NETWORKS = {
     rpc: 'https://terra-classic-rpc.publicnode.com:443',
     lcd: 'https://terra-classic-lcd.publicnode.com',
     cw20CodeId: 10184,
+    scanner: 'https://finder.terraclassic.community/mainnet',
   },
 } as const;
 

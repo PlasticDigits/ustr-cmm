@@ -12,7 +12,7 @@ import { useWallet } from '../hooks/useWallet';
 import { contractService } from '../services/contract';
 import { Card, CardContent, CardHeader } from '../components/common/Card';
 import { Button } from '../components/common/Button';
-import { formatAddress } from '../utils/format';
+import { formatAddress, getAddressScannerUrl, getTxScannerUrl } from '../utils/format';
 import { REFERRAL_CODE, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
 import type { CodeInfo, CodesResponse, ValidateResponse } from '../types/contracts';
 
@@ -61,7 +61,7 @@ function RegisterCodeSection() {
   const [validationState, setValidationState] = useState<ValidateResponse | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [success, setSuccess] = useState<{ message: string; txHash?: string } | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   
   // Client-side validation
@@ -121,7 +121,10 @@ function RegisterCodeSection() {
     
     try {
       const txHash = await contractService.registerReferralCode(address, clientValidation.normalizedCode);
-      setSuccess(`Code "${clientValidation.normalizedCode}" registered successfully! Tx: ${formatAddress(txHash, 8)}`);
+      setSuccess({
+        message: `Code "${clientValidation.normalizedCode}" registered successfully!`,
+        txHash,
+      });
       setCode('');
       setValidationState(null);
       setShowConfirmation(false);
@@ -225,10 +228,25 @@ function RegisterCodeSection() {
         {/* Success display */}
         {success && (
           <div className="flex items-center gap-2 text-green-400 text-sm mb-4 p-3 bg-green-500/10 rounded-lg">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
-            {success}
+            <span>
+              {success.message}
+              {success.txHash && (
+                <>
+                  {' '}Tx:{' '}
+                  <a
+                    href={getTxScannerUrl(success.txHash)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono hover:text-green-300 underline underline-offset-2"
+                  >
+                    {formatAddress(success.txHash, 8)}
+                  </a>
+                </>
+              )}
+            </span>
           </div>
         )}
         
@@ -422,7 +440,14 @@ function LookupCodeSection() {
               </div>
               <div className="text-right">
                 <p className="text-xs text-gray-500 mb-1">Owner</p>
-                <p className="text-sm font-mono text-amber-400">{formatAddress(result.owner, 10)}</p>
+                <a
+                  href={getAddressScannerUrl(result.owner)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm font-mono text-amber-400 hover:text-amber-300 underline underline-offset-2"
+                >
+                  {formatAddress(result.owner, 10)}
+                </a>
               </div>
             </div>
           </div>
@@ -600,7 +625,7 @@ function ContractInfoSection() {
       <p className="text-xs text-gray-500">
         Contract:{' '}
         <a
-          href={`https://finder.terra.money/classic/address/${contractAddress}`}
+          href={getAddressScannerUrl(contractAddress)}
           target="_blank"
           rel="noopener noreferrer"
           className="font-mono text-amber-400/70 hover:text-amber-400 transition-colors"

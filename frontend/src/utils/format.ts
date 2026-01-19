@@ -2,7 +2,7 @@
  * Formatting utilities for USTR CMM
  */
 
-import { DECIMALS } from './constants';
+import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
 
 /**
  * Format a micro-denominated amount to human-readable
@@ -87,5 +87,26 @@ export function formatTimestamp(timestamp: number | string): string {
   // Convert nanoseconds to milliseconds if needed
   const ms = ts > 1e15 ? ts / 1e6 : ts * 1000;
   return new Date(ms).toLocaleString();
+}
+
+/**
+ * Get the scanner base URL for the current network
+ */
+export function getScannerUrl(): string {
+  return NETWORKS[DEFAULT_NETWORK].scanner;
+}
+
+/**
+ * Get the scanner URL for a wallet address
+ */
+export function getAddressScannerUrl(address: string): string {
+  return `${getScannerUrl()}/address/${address}`;
+}
+
+/**
+ * Get the scanner URL for a transaction hash
+ */
+export function getTxScannerUrl(txHash: string): string {
+  return `${getScannerUrl()}/tx/${txHash}`;
 }
 
