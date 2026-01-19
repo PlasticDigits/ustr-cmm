@@ -7,7 +7,7 @@
  * - Animated hover states
  */
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useWallet, WalletName, WalletType } from '../../hooks/useWallet';
 import { formatAddress, formatAmount } from '../../utils/format';
@@ -25,12 +25,36 @@ export function WalletButton() {
     isLeapAvailable,
     isCosmostationAvailable,
     connect,
-    disconnect 
+    disconnect,
+    cancelConnection,
   } = useWallet();
   
   const [showDropdown, setShowDropdown] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Close modal and cancel any pending connection
+  const closeModal = useCallback(() => {
+    setShowModal(false);
+    setError(null);
+    if (connecting) {
+      cancelConnection();
+    }
+  }, [connecting, cancelConnection]);
+
+  // Handle Escape key to close modal
+  useEffect(() => {
+    if (!showModal) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        closeModal();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showModal, closeModal]);
 
   const handleConnect = async (walletName: WalletName, walletType: WalletType = WalletType.EXTENSION) => {
     setError(null);
@@ -127,7 +151,7 @@ export function WalletButton() {
           {/* Backdrop - subtle dark blur with amber tint */}
           <div 
             className="absolute inset-0 bg-gradient-to-br from-black/75 via-black/70 to-amber-950/30 backdrop-blur-md"
-            onClick={() => !connecting && setShowModal(false)}
+            onClick={closeModal}
           />
           
           {/* Modal - glass morphism with amber accent */}
@@ -139,9 +163,8 @@ export function WalletButton() {
             <div className="relative flex items-center justify-between px-6 py-4 border-b border-white/5">
               <h3 className="text-lg font-bold text-white">Connect Wallet</h3>
               <button
-                onClick={() => setShowModal(false)}
-                disabled={connecting}
-                className="p-1 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                onClick={closeModal}
+                className="p-1 text-gray-400 hover:text-white transition-colors"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

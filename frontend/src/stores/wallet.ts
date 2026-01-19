@@ -47,6 +47,7 @@ export interface WalletState {
   disconnect: () => Promise<void>;
   setBalances: (balances: { ustc?: string; ustr?: string; lunc?: string }) => void;
   setConnecting: (connecting: boolean) => void;
+  cancelConnection: () => void;
 }
 
 // Wallet availability checks
@@ -141,6 +142,11 @@ export const useWalletStore = create<WalletState>()(
       // Set connecting state
       setConnecting: (connecting) => {
         set({ connecting });
+      },
+
+      // Cancel pending connection
+      cancelConnection: () => {
+        set({ connecting: false, connectingWallet: null });
       },
     }),
     {

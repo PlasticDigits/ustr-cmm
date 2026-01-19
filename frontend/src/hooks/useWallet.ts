@@ -27,6 +27,7 @@ export function useWallet() {
     disconnect: storeDisconnect,
     setBalances,
     setConnecting,
+    cancelConnection,
   } = useWalletStore();
 
   // Track wallet availability
@@ -121,5 +122,6 @@ export function useWallet() {
     disconnect,
     refreshBalances,
     setConnecting,
+    cancelConnection,
   };
 }
