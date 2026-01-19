@@ -273,6 +273,7 @@ The leaderboard query returns entries sorted by `total_rewards_earned` (descendi
 | Case sensitivity | Case-insensitive (input normalized to lowercase) |
 | Registration cost | 10 USTR (burned) |
 | Uniqueness | First-come, first-served |
+| Max codes per account | 10 codes (prevents spam registration from a single wallet) |
 
 **Execute Messages**:
 - `Receive(Cw20ReceiveMsg)` - CW20 receive hook; processes `RegisterCode { code }` by burning 10 USTR

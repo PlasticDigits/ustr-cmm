@@ -7,7 +7,7 @@
  * - Look up codes by owner address
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useWallet } from '../hooks/useWallet';
 import { contractService } from '../services/contract';
 import { Card, CardContent, CardHeader } from '../components/common/Card';
@@ -134,7 +134,6 @@ function RegisterCodeSection() {
   }, [address, clientValidation]);
   
   const canValidate = clientValidation.isValid && !isValidating;
-  const canRegister = connected && clientValidation.isValid && validationState?.is_valid_format && !validationState?.is_registered && hasEnoughUstr;
   
   return (
     <Card variant="highlight" className="w-full">
@@ -161,7 +160,8 @@ function RegisterCodeSection() {
             <p className="text-sm font-semibold text-amber-400">Registration is Permanent</p>
             <p className="text-sm text-amber-400/80 mt-1">
               Once registered, referral codes <strong>cannot be deleted or transferred</strong>. 
-              The {REFERRAL_CODE.registrationFeeDisplay} USTR fee is burned. Choose your code carefully!
+              The {REFERRAL_CODE.registrationFeeDisplay} USTR fee is burned. 
+              Each wallet can register up to {REFERRAL_CODE.maxCodesPerOwner} codes. Choose carefully!
             </p>
           </div>
         </div>
@@ -300,8 +300,23 @@ function RegisterCodeSection() {
               variant="primary"
               size="lg"
               className="flex-1"
-              disabled={!canRegister}
-              onClick={() => setShowConfirmation(true)}
+              onClick={() => {
+                // Show helpful message if conditions aren't met
+                if (!connected) {
+                  setError('Please connect your wallet first.');
+                } else if (!clientValidation.isValid) {
+                  setError('Please enter a valid referral code.');
+                } else if (!validationState) {
+                  setError('Please check availability first before registering.');
+                } else if (validationState.is_registered) {
+                  setError('This code is already registered. Please choose a different code.');
+                } else if (!hasEnoughUstr) {
+                  setError(`Insufficient USTR. You need ${REFERRAL_CODE.registrationFeeDisplay} USTR to register a code.`);
+                } else {
+                  setError(null);
+                  setShowConfirmation(true);
+                }
+              }}
             >
               Register ({REFERRAL_CODE.registrationFeeDisplay} USTR)
             </Button>
@@ -447,6 +462,13 @@ function LookupByOwnerSection() {
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<CodesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  
+  // Auto-fill with connected wallet address
+  useEffect(() => {
+    if (connectedAddress && !owner) {
+      setOwner(connectedAddress);
+    }
+  }, [connectedAddress, owner]);
   
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setOwner(e.target.value);

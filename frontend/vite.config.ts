@@ -10,9 +10,13 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  define: {
+    // Polyfill for Node.js globals
+    global: 'globalThis',
+    'process.env': {},
+  },
   build: {
     outDir: 'dist',
     sourcemap: false,
   },
 });
-

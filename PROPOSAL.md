@@ -822,6 +822,7 @@ Users register a referral code by burning 10 USTR:
 | **Forbidden** | Uppercase (normalized), special characters, unicode, spaces |
 | **Registration cost** | 10 USTR (burned, non-adjustable) |
 | **Code uniqueness** | Case-insensitive (e.g., "ABC" and "abc" are the same) |
+| **Max codes per account** | 10 codes (prevents spam registration from a single wallet) |
 
 #### State
 

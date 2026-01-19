@@ -20,8 +20,8 @@ export const NETWORKS = {
   },
 } as const;
 
-// Default to testnet during development
-export const DEFAULT_NETWORK = 'testnet' as keyof typeof NETWORKS;
+// Default to mainnet for production (referral contract deployed on mainnet)
+export const DEFAULT_NETWORK = 'mainnet' as keyof typeof NETWORKS;
 
 // Contract addresses (to be updated after deployment)
 export const CONTRACTS = {
@@ -53,7 +53,8 @@ export const REFERRAL_CODE = {
 // Token decimals
 export const DECIMALS = {
   USTC: 6,
-  USTR: 6,
+  LUNC: 6,
+  USTR: 18, // USTR CW20 token has 18 decimals
   UST1: 6,
 } as const;
 
