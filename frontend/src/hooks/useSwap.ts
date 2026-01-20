@@ -5,6 +5,7 @@
  * - Rate queries and simulation
  * - Swap execution
  * - Status tracking
+ * - Referral code handling
  */
 
 import { useState, useCallback, useEffect } from 'react';
@@ -19,6 +20,7 @@ export function useSwap() {
   const queryClient = useQueryClient();
   
   const [inputAmount, setInputAmount] = useState<string>('');
+  const [referralCode, setReferralCode] = useState<string>('');
   const [simulation, setSimulation] = useState<SwapSimulation | null>(null);
 
   // Query current swap rate
@@ -45,7 +47,7 @@ export function useSwap() {
     staleTime: POLLING_INTERVAL,
   });
 
-  // Simulate swap when input changes
+  // Simulate swap when input or referral code changes
   useEffect(() => {
     const simulateSwap = async () => {
       if (!inputAmount || parseFloat(inputAmount) <= 0) {
@@ -56,7 +58,7 @@ export function useSwap() {
       try {
         // Convert to micro units (6 decimals)
         const microAmount = Math.floor(parseFloat(inputAmount) * 1_000_000).toString();
-        const result = await contractService.simulateSwap(microAmount);
+        const result = await contractService.simulateSwap(microAmount, referralCode || undefined);
         setSimulation(result);
       } catch (error) {
         console.error('Simulation failed:', error);
@@ -66,7 +68,7 @@ export function useSwap() {
 
     const debounce = setTimeout(simulateSwap, 300);
     return () => clearTimeout(debounce);
-  }, [inputAmount]);
+  }, [inputAmount, referralCode]);
 
   // Execute swap mutation
   const swapMutation = useMutation({
@@ -75,7 +77,7 @@ export function useSwap() {
       
       // Convert to micro units
       const microAmount = Math.floor(parseFloat(ustcAmount) * 1_000_000).toString();
-      return contractService.executeSwap(address, microAmount);
+      return contractService.executeSwap(address, microAmount, referralCode || undefined);
     },
     onSuccess: async () => {
       // Refresh all relevant data
@@ -84,7 +86,7 @@ export function useSwap() {
         refreshBalances(),
       ]);
       
-      // Clear input
+      // Clear input (but keep referral code)
       setInputAmount('');
       setSimulation(null);
     },
@@ -111,6 +113,8 @@ export function useSwap() {
     // Input state
     inputAmount,
     setInputAmount,
+    referralCode,
+    setReferralCode,
     simulation,
     
     // Query data

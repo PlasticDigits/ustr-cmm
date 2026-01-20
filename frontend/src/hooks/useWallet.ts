@@ -23,11 +23,13 @@ export function useWallet() {
     ustrBalance,
     luncBalance,
     connectingWallet,
+    showWalletModal,
     connect: storeConnect,
     disconnect: storeDisconnect,
     setBalances,
     setConnecting,
     cancelConnection,
+    setShowWalletModal,
   } = useWalletStore();
 
   // Track wallet availability
@@ -105,6 +107,7 @@ export function useWallet() {
     connectionType,
     chainId,
     connectingWallet,
+    showWalletModal,
     
     // Balances
     ustcBalance,
@@ -123,5 +126,6 @@ export function useWallet() {
     refreshBalances,
     setConnecting,
     cancelConnection,
+    setShowWalletModal,
   };
 }

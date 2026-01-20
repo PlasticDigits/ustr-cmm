@@ -42,12 +42,16 @@ export interface WalletState {
   // Connecting state for specific wallets
   connectingWallet: WalletName | null;
   
+  // Modal state (for triggering wallet modal from other components)
+  showWalletModal: boolean;
+  
   // Actions
   connect: (walletName: WalletName, walletType?: WalletType) => Promise<void>;
   disconnect: () => Promise<void>;
   setBalances: (balances: { ustc?: string; ustr?: string; lunc?: string }) => void;
   setConnecting: (connecting: boolean) => void;
   cancelConnection: () => void;
+  setShowWalletModal: (show: boolean) => void;
 }
 
 // Wallet availability checks
@@ -77,6 +81,7 @@ export const useWalletStore = create<WalletState>()(
       ustrBalance: '0',
       luncBalance: '0',
       connectingWallet: null,
+      showWalletModal: false,
 
       // Connect to wallet
       connect: async (walletName: WalletName, walletTypeParam: WalletType = WalletType.EXTENSION) => {
@@ -147,6 +152,11 @@ export const useWalletStore = create<WalletState>()(
       // Cancel pending connection
       cancelConnection: () => {
         set({ connecting: false, connectingWallet: null });
+      },
+
+      // Control wallet modal visibility
+      setShowWalletModal: (show: boolean) => {
+        set({ showWalletModal: show });
       },
     }),
     {

@@ -7,8 +7,11 @@
  * - Animated gradient border
  * - Token icons
  * - Pulsing arrow animation
+ * - Optional referral code input (can be locked for referral links)
+ * - Optional countdown timer in overlay
  */
 
+import { useEffect } from 'react';
 import { useSwap } from '../../hooks/useSwap';
 import { useWallet } from '../../hooks/useWallet';
 import { useLaunchStatus } from '../../hooks/useLaunchStatus';
@@ -16,12 +19,23 @@ import { Card, CardContent } from '../common/Card';
 import { Button } from '../common/Button';
 import { formatAmount, formatRate, formatDuration } from '../../utils/format';
 
-export function SwapCard() {
+interface SwapCardProps {
+  /** Pre-filled referral code (from URL parameter) */
+  referralCode?: string;
+  /** Whether the referral code field is locked (read-only) */
+  referralLocked?: boolean;
+  /** Whether to show countdown timer in the overlay */
+  showCountdown?: boolean;
+}
+
+export function SwapCard({ referralCode: initialReferralCode, referralLocked = false, showCountdown = false }: SwapCardProps) {
   const isLaunched = useLaunchStatus();
-  const { connected, ustcBalance } = useWallet();
+  const { connected, ustcBalance, setShowWalletModal } = useWallet();
   const {
     inputAmount,
     setInputAmount,
+    referralCode,
+    setReferralCode,
     simulation,
     currentRate,
     swapStatus,
@@ -31,6 +45,13 @@ export function SwapCard() {
     isActive,
     timeRemaining,
   } = useSwap();
+
+  // Set initial referral code from props
+  useEffect(() => {
+    if (initialReferralCode && !referralCode) {
+      setReferralCode(initialReferralCode);
+    }
+  }, [initialReferralCode, referralCode, setReferralCode]);
 
   const handleMaxClick = () => {
     if (ustcBalance) {
@@ -60,6 +81,11 @@ export function SwapCard() {
               <p className="text-sm text-gray-400">
                 Opens January 22, 2026 at 13:00 UTC
               </p>
+              {showCountdown && referralCode && (
+                <p className="text-xs text-emerald-400 mt-3">
+                  Referral code "{referralCode}" will be applied
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -143,7 +169,7 @@ export function SwapCard() {
           </div>
 
           {/* Output */}
-          <div className="mb-6">
+          <div className="mb-4">
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-medium text-gray-300">You Receive</label>
               <span className="text-xs text-gray-500">USTR Token</span>
@@ -160,6 +186,82 @@ export function SwapCard() {
                 <span className="font-medium text-sm">USTR</span>
               </div>
             </div>
+            {/* Referral bonus indicator */}
+            {referralCode && simulation && (
+              <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-400">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+                Includes 10% referral bonus
+              </div>
+            )}
+          </div>
+
+          {/* Referral Code Input */}
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-gray-300">Referral Code</label>
+              <span className="text-xs text-gray-500">
+                {referralLocked ? (
+                  <span className="flex items-center gap-1 text-emerald-400">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                    Locked
+                  </span>
+                ) : (
+                  'Optional'
+                )}
+              </span>
+            </div>
+            <div className="relative group">
+              {!referralLocked && (
+                <div className="absolute -inset-0.5 bg-gradient-to-r from-emerald-500/20 to-teal-500/20 rounded-xl blur opacity-0 group-focus-within:opacity-100 transition-opacity" />
+              )}
+              <div className={`relative bg-surface-800 border rounded-xl overflow-hidden transition-colors ${
+                referralLocked 
+                  ? 'border-emerald-500/30 bg-emerald-500/5' 
+                  : 'border-white/10 group-focus-within:border-emerald-500/50'
+              }`}>
+                <input
+                  type="text"
+                  value={referralCode}
+                  onChange={(e) => !referralLocked && setReferralCode(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
+                  placeholder="Enter referral code"
+                  readOnly={referralLocked}
+                  className={`w-full px-4 py-3 bg-transparent text-sm font-mono focus:outline-none placeholder:text-gray-600 ${
+                    referralLocked 
+                      ? 'text-emerald-400 cursor-not-allowed' 
+                      : 'text-white'
+                  }`}
+                />
+                {referralLocked && (
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                    <div className="flex items-center gap-1.5 text-emerald-400">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                    </div>
+                  </div>
+                )}
+                {!referralLocked && referralCode && (
+                  <button
+                    onClick={() => setReferralCode('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              {referralCode 
+                ? 'You and the referrer each earn +10% bonus USTR'
+                : 'Enter a code to earn 10% bonus on your swap'
+              }
+            </p>
           </div>
 
           {/* Status Messages */}
@@ -201,9 +303,15 @@ export function SwapCard() {
             variant="primary"
             size="lg"
             className="w-full"
-            disabled={!canSwap}
+            disabled={connected && !canSwap}
             loading={isSwapping}
-            onClick={executeSwap}
+            onClick={() => {
+              if (!connected) {
+                setShowWalletModal(true);
+              } else {
+                executeSwap();
+              }
+            }}
           >
             {!connected 
               ? 'Connect Wallet'

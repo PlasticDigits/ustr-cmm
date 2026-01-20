@@ -369,7 +369,8 @@ After deployment, update this section with actual addresses:
 |----------|---------|---------|
 | USTR Token | `10184` | `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv` |
 | Treasury | `10673` | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
-| USTC-Swap | - | `terra1...` |
+| USTC-Swap | `10809` | `terra1ywct7t5dyhkhvyx5wcx7um5td3dcp38dksfex046tcuypz8nd7yqy7v4us` |
+| Referral | `10700` | `terra1lxv5m2n72l4zujf0rrgek9k6m8kfky62yvm8qvlnjqgjmmlmywzqt4j0z2` |
 | Airdrop | `10700` | `terra1m758wqc6grg7ttg8cmrp72hf6a5cej5zq0w59d9d6wr5r22tulwqk3ga5r` |
 
 ## Troubleshooting

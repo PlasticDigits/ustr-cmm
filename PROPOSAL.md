@@ -1223,10 +1223,21 @@ This dashboard eliminates reliance on third-party data aggregators that may repo
 1. Connect wallet
 2. View current rate and time remaining
 3. Enter USTC amount
-4. See estimated USTR output
-5. Confirm transaction in wallet
-6. View success/pending state
-7. See updated balances
+4. Optionally enter a referral code for 10% bonus
+5. See estimated USTR output (including bonus if referral code entered)
+6. Confirm transaction in wallet
+7. View success/pending state
+8. See updated balances
+
+**Referral Swap Flow** (via `/swap/{code}` link)
+1. Click referral link (e.g., `https://ust1cmm.com/swap/friend-code`)
+2. See "+10% Referral Bonus Applied" banner with locked code
+3. Connect wallet
+4. View current rate with time remaining
+5. Enter USTC amount
+6. See estimated USTR output with 10% bonus automatically included
+7. Confirm transaction in wallet
+8. Both user and referrer receive bonus USTR
 
 **Rate Monitoring Flow**
 1. View current rate
@@ -1444,6 +1455,91 @@ ustr-cmm/
 - Complete user flows
 - Cross-browser compatibility
 - Mobile responsiveness
+
+### Frontend Dev Mode
+
+The frontend includes a **dev mode** for pre-launch UX testing that bypasses the countdown timer and simulates post-launch contract state. This allows testing the full swap UI flow before the actual launch date.
+
+**Activation**:
+- Set `VITE_DEV_MODE=true` in `frontend/.env.development`
+- Run `npm run dev` (Vite automatically loads `.env.development`)
+
+**What Dev Mode Does**:
+1. **Bypasses countdown timer**: The `useLaunchStatus` hook returns `true` immediately, unlocking the SwapCard UI
+2. **Simulates active swap status**: The contract service returns `started: true` for swap status queries
+3. **Shows visual indicator**: An amber banner appears at the top of the page: "DEV MODE - Swap UI testing active (countdown bypassed)"
+
+**Files Involved**:
+- `frontend/.env.development` - Contains `VITE_DEV_MODE=true`
+- `frontend/src/hooks/useLaunchStatus.ts` - Checks dev mode flag and returns `true`
+- `frontend/src/services/contract.ts` - Returns mock "swap is active" status
+- `frontend/src/components/layout/Header.tsx` - Displays dev mode banner
+
+**What This Tests**:
+- Countdown timer completion transition
+- SwapCard unlocking and input fields becoming interactive
+- Swap simulation display
+- Wallet connection flow with swap active
+- Button states and error messages
+- Rate display and time remaining
+
+**What This Does NOT Test**:
+- Actual contract transaction execution (requires testnet deployment)
+- Real blockchain interactions
+- Post-transaction balance updates
+
+**Security**:
+- Dev mode is **never active in production builds** (`.env.development` is not included in builds)
+- The visual banner prevents confusion during testing
+- To disable, set `VITE_DEV_MODE=false` or delete `.env.development`
+
+### Referral Swap Links
+
+The frontend supports direct referral links that pre-fill and lock the referral code in the swap interface. This enables viral marketing where referrers can share personalized URLs.
+
+**URL Format**:
+```
+https://ust1cmm.com/swap/{referral_code}
+```
+
+**Example**:
+```
+https://ust1cmm.com/swap/my-code-123
+```
+
+**Behavior**:
+1. **Referral code auto-filled**: The code from the URL is automatically entered in the referral code field
+2. **Referral code locked**: Users cannot edit or clear the referral code (read-only input with lock icon)
+3. **Bonus banner displayed**: A prominent banner shows "+10% Referral Bonus Applied" with the code
+4. **Countdown shown below**: When swap is not yet active, the countdown timer displays below the swap card
+5. **10% bonus calculated**: Swap simulations include the 10% referral bonus in the output amount
+
+**Files Involved**:
+- `frontend/src/pages/SwapPage.tsx` - Extracts URL parameter and renders swap with locked code
+- `frontend/src/components/swap/SwapCard.tsx` - Accepts `referralCode`, `referralLocked`, and `showCountdown` props
+- `frontend/src/hooks/useSwap.ts` - Manages referral code state and passes to contract calls
+- `frontend/src/services/contract.ts` - Includes referral code in swap simulation and execution
+- `frontend/src/App.tsx` - Defines `/swap/:code` route
+
+**Testing with Dev Mode**:
+1. Enable dev mode: Set `VITE_DEV_MODE=true` in `frontend/.env.development`
+2. Start dev server: `npm run dev` in `frontend/` directory
+3. Navigate to `http://localhost:5173/swap/test-code`
+4. Verify:
+   - Referral bonus banner appears with code "test-code"
+   - Referral code field shows "test-code" with lock icon and "Locked" label
+   - Enter USTC amount and verify 10% bonus is included in USTR output
+   - Field is read-only (cannot type or clear)
+
+**Comparison: Homepage vs Referral Link**:
+
+| Feature | Homepage (`/`) | Referral Link (`/swap/{code}`) |
+|---------|---------------|-------------------------------|
+| Referral code field | Editable, "Optional" label | Read-only, "Locked" label |
+| Referral code value | Empty (user enters) | Pre-filled from URL |
+| Clear button | Shown when code entered | Hidden |
+| Bonus banner | Not shown | Shown at top |
+| Countdown location | Above swap card | Below swap card |
 
 ### Testnet Validation
 

@@ -18,6 +18,71 @@ import { REFERRAL_CODE, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
 import type { CodeInfo, CodesResponse, ValidateResponse } from '../types/contracts';
 
 // ============================================
+// Referral URL Helper
+// ============================================
+
+function getReferralSwapUrl(code: string): string {
+  const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${baseUrl}/swap/${code}`;
+}
+
+// ============================================
+// Copy to Clipboard Component
+// ============================================
+
+interface CopyLinkProps {
+  code: string;
+  className?: string;
+}
+
+function CopyReferralLink({ code, className = '' }: CopyLinkProps) {
+  const [copied, setCopied] = useState(false);
+  const url = getReferralSwapUrl(code);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy:', err);
+    }
+  }, [url]);
+
+  return (
+    <div className={`flex items-center gap-2 ${className}`}>
+      <div className="flex-1 min-w-0 px-3 py-2 bg-surface-800/80 border border-white/10 rounded-lg overflow-hidden">
+        <p className="text-sm font-mono text-amber-400 truncate">{url}</p>
+      </div>
+      <button
+        onClick={handleCopy}
+        className={`flex-shrink-0 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+          copied 
+            ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+            : 'bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
+        }`}
+      >
+        {copied ? (
+          <span className="flex items-center gap-1.5">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            Copied!
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            Copy
+          </span>
+        )}
+      </button>
+    </div>
+  );
+}
+
+// ============================================
 // Code Validation Helper
 // ============================================
 
@@ -62,7 +127,7 @@ function RegisterCodeSection() {
   const [validationState, setValidationState] = useState<ValidateResponse | null>(null);
   const [isValidating, setIsValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<{ message: string; txHash?: string } | null>(null);
+  const [success, setSuccess] = useState<{ message: string; txHash?: string; registeredCode?: string } | null>(null);
   const [showConfirmation, setShowConfirmation] = useState(false);
   
   // Client-side validation
@@ -120,11 +185,14 @@ function RegisterCodeSection() {
     setError(null);
     setSuccess(null);
     
+    const codeToRegister = clientValidation.normalizedCode;
+    
     try {
-      const txHash = await contractService.registerReferralCode(address, clientValidation.normalizedCode);
+      const txHash = await contractService.registerReferralCode(address, codeToRegister);
       setSuccess({
-        message: `Code "${clientValidation.normalizedCode}" registered successfully!`,
+        message: `Code "${codeToRegister}" registered successfully!`,
         txHash,
+        registeredCode: codeToRegister,
       });
       setCode('');
       setValidationState(null);
@@ -228,26 +296,34 @@ function RegisterCodeSection() {
         
         {/* Success display */}
         {success && (
-          <div className="flex items-center gap-2 text-green-400 text-sm mb-4 p-3 bg-green-500/10 rounded-lg">
-            <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            <span>
-              {success.message}
-              {success.txHash && (
-                <>
-                  {' '}Tx:{' '}
-                  <a
-                    href={getTxScannerUrl(success.txHash)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="font-mono hover:text-green-300 underline underline-offset-2"
-                  >
-                    {formatAddress(success.txHash, 8)}
-                  </a>
-                </>
-              )}
-            </span>
+          <div className="mb-4 p-4 bg-green-500/10 border border-green-500/30 rounded-xl">
+            <div className="flex items-center gap-2 text-green-400 text-sm mb-3">
+              <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              <span>
+                {success.message}
+                {success.txHash && (
+                  <>
+                    {' '}Tx:{' '}
+                    <a
+                      href={getTxScannerUrl(success.txHash)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono hover:text-green-300 underline underline-offset-2"
+                    >
+                      {formatAddress(success.txHash, 8)}
+                    </a>
+                  </>
+                )}
+              </span>
+            </div>
+            {success.registeredCode && (
+              <div>
+                <p className="text-xs text-gray-400 mb-2">Share your referral link:</p>
+                <CopyReferralLink code={success.registeredCode} />
+              </div>
+            )}
           </div>
         )}
         
@@ -434,7 +510,7 @@ function LookupCodeSection() {
         {/* Result */}
         {result && (
           <div className="p-4 bg-surface-800/50 border border-white/5 rounded-xl">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between mb-3">
               <div>
                 <p className="text-xs text-gray-500 mb-1">Code</p>
                 <p className="text-lg font-mono font-semibold text-white">{result.code}</p>
@@ -450,6 +526,10 @@ function LookupCodeSection() {
                   {formatAddress(result.owner, 10)}
                 </a>
               </div>
+            </div>
+            <div className="pt-3 border-t border-white/5">
+              <p className="text-xs text-gray-500 mb-2">Referral Link</p>
+              <CopyReferralLink code={result.code} />
             </div>
           </div>
         )}
@@ -583,14 +663,19 @@ function LookupByOwnerSection() {
                 <p className="text-xs text-gray-500 mb-3">
                   {result.codes.length} code{result.codes.length !== 1 ? 's' : ''} registered
                 </p>
-                <div className="flex flex-wrap gap-2">
+                <div className="space-y-3">
                   {result.codes.map((code) => (
-                    <span
-                      key={code}
-                      className="px-3 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-lg text-sm font-mono text-amber-400"
-                    >
-                      {code}
-                    </span>
+                    <div key={code} className="p-3 bg-surface-700/50 border border-white/5 rounded-lg">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center">
+                          <svg className="w-3 h-3 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                          </svg>
+                        </span>
+                        <span className="text-sm font-semibold text-white font-mono">{code}</span>
+                      </div>
+                      <CopyReferralLink code={code} />
+                    </div>
                   ))}
                 </div>
               </>

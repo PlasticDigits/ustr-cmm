@@ -7,12 +7,14 @@
  * - Dashboard with balances and stats
  * - Treasury view
  * - Referral code registration and management
+ * - Direct referral swap links (/swap/:code)
  */
 
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/layout';
 import { HomePage } from './pages/HomePage';
+import { SwapPage } from './pages/SwapPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { TreasuryPage } from './pages/TreasuryPage';
 import { ReferralPage } from './pages/ReferralPage';
@@ -34,6 +36,7 @@ function App() {
         <Layout>
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/swap/:code" element={<SwapPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/treasury" element={<TreasuryPage />} />
             <Route path="/referral" element={<ReferralPage />} />

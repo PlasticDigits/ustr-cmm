@@ -34,9 +34,9 @@ export const CONTRACTS = {
     referral: '',
   },
   mainnet: {
-    ustrToken: '',
-    treasury: '',
-    ustcSwap: '',
+    ustrToken: 'terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv',
+    treasury: 'terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2',
+    ustcSwap: 'terra1ywct7t5dyhkhvyx5wcx7um5td3dcp38dksfex046tcuypz8nd7yqy7v4us',
     referral: 'terra1lxv5m2n72l4zujf0rrgek9k6m8kfky62yvm8qvlnjqgjmmlmywzqt4j0z2',
   },
 } as const;

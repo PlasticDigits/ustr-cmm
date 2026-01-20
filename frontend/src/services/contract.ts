@@ -3,10 +3,13 @@
  * 
  * Handles all smart contract interactions for the USTR CMM frontend.
  * Provides type-safe methods for querying and executing contract messages.
+ * 
+ * In dev mode (VITE_DEV_MODE=true), certain methods return mock data
+ * to simulate post-launch state for UX testing.
  */
 
 import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE } from '../utils/constants';
-import { executeCw20Send } from './wallet';
+import { executeCw20Send, executeContractWithCoins } from './wallet';
 import type {
   SwapConfig,
   SwapRate,
@@ -22,6 +25,9 @@ import type {
   CodesResponse,
   ValidateResponse,
 } from '../types/contracts';
+
+/** Dev mode flag - enables mock responses for UX testing */
+const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
 
 type NetworkKey = keyof typeof NETWORKS;
 
@@ -96,20 +102,38 @@ class ContractService {
     };
   }
 
-  async simulateSwap(ustcAmount: string): Promise<SwapSimulation> {
-    // TODO: Implement actual query
+  async simulateSwap(ustcAmount: string, referralCode?: string): Promise<SwapSimulation> {
+    // TODO: Implement actual contract query
     const rate = 1.5;
     const ustc = parseFloat(ustcAmount);
-    const ustr = ustc / rate;
+    const baseUstr = ustc / rate;
+    
+    // Apply 10% bonus if referral code is provided
+    const bonus = referralCode ? baseUstr * 0.1 : 0;
+    const totalUstr = baseUstr + bonus;
     
     return {
       ustc_amount: ustcAmount,
-      ustr_amount: Math.floor(ustr).toString(),
+      ustr_amount: Math.floor(totalUstr).toString(),
       rate: rate.toString(),
+      referral_code: referralCode,
+      bonus_amount: referralCode ? Math.floor(bonus).toString() : undefined,
     };
   }
 
   async getSwapStatus(): Promise<SwapStatus> {
+    // In dev mode, return active status for UX testing
+    if (DEV_MODE) {
+      return {
+        started: true,
+        ended: false,
+        paused: false,
+        seconds_until_start: 0,
+        seconds_until_end: 8640000, // 100 days
+        elapsed_seconds: 0,
+      };
+    }
+
     // TODO: Implement actual query
     return {
       started: false,
@@ -233,12 +257,66 @@ class ContractService {
   // Execute Messages
   // ============================================
 
-  async executeSwap(senderAddress: string, ustcAmount: string): Promise<string> {
-    // TODO: Implement actual execution
-    console.log('Executing swap:', { sender: senderAddress, amount: ustcAmount });
+  async executeSwap(senderAddress: string, ustcAmount: string, referralCode?: string): Promise<string> {
+    const contracts = this.getContracts();
     
-    // Return transaction hash
-    return 'placeholder_tx_hash';
+    if (!contracts.ustcSwap) {
+      throw new Error('Swap contract address not configured');
+    }
+
+    // Build the swap message matching the contract's ExecuteMsg::Swap
+    // Use Record<string, unknown> to match the working preregister pattern
+    // IMPORTANT: Don't include null values - omit the fields entirely for Option<T> = None
+    // The cosmes library's removeNull() strips nulls which can cause signature mismatches
+    const swapInner: Record<string, unknown> = {};
+    
+    // Only include referral_code if provided (Option<String> in Rust)
+    if (referralCode) {
+      swapInner.referral_code = referralCode;
+    }
+    // leaderboard_hint is omitted when None (TODO: implement hints for O(1) insertion)
+    
+    const swapMsg: Record<string, unknown> = {
+      swap: swapInner,
+    };
+
+    // USTC is the native uusd denom on Terra Classic
+    const ustcDenom = 'uusd';
+    
+    // Coins to send with the transaction (matching preregister pattern)
+    const coins = [
+      {
+        denom: ustcDenom,
+        amount: ustcAmount,
+      },
+    ];
+    
+    // Log full transaction details for verification
+    console.group('🔄 USTC Swap Transaction');
+    console.log('📋 Transaction Details:');
+    console.log('  Sender:', senderAddress);
+    console.log('  Contract:', contracts.ustcSwap);
+    console.log('  USTC Amount (micro):', ustcAmount);
+    console.log('  USTC Amount (display):', (parseFloat(ustcAmount) / 1_000_000).toFixed(6), 'USTC');
+    console.log('  Referral Code:', referralCode || '(none)');
+    console.log('');
+    console.log('📤 Execute Message:');
+    console.log(JSON.stringify(swapMsg, null, 2));
+    console.log('');
+    console.log('💰 Funds Attached:');
+    console.log(JSON.stringify(coins, null, 2));
+    console.groupEnd();
+
+    // Execute the swap transaction (using same pattern as preregister)
+    const result = await executeContractWithCoins(
+      contracts.ustcSwap,
+      swapMsg,
+      coins
+    );
+    
+    console.log('✅ Swap transaction submitted:', result.txHash);
+    
+    return result.txHash;
   }
 
   async executeAirdrop(

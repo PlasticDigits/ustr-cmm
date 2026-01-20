@@ -24,14 +24,19 @@ export function WalletButton() {
     isKeplrAvailable,
     isLeapAvailable,
     isCosmostationAvailable,
+    showWalletModal,
     connect,
     disconnect,
     cancelConnection,
+    setShowWalletModal,
   } = useWallet();
   
   const [showDropdown, setShowDropdown] = useState(false);
-  const [showModal, setShowModal] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Sync local modal state with global store state
+  const showModal = showWalletModal;
+  const setShowModal = setShowWalletModal;
 
   // Close modal and cancel any pending connection
   const closeModal = useCallback(() => {
@@ -40,7 +45,7 @@ export function WalletButton() {
     if (connecting) {
       cancelConnection();
     }
-  }, [connecting, cancelConnection]);
+  }, [connecting, cancelConnection, setShowModal]);
 
   // Handle Escape key to close modal
   useEffect(() => {

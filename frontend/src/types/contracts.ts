@@ -87,6 +87,10 @@ export interface SwapSimulation {
   ustc_amount: string;
   ustr_amount: string;
   rate: string;
+  /** Referral code used for this simulation (if any) */
+  referral_code?: string;
+  /** Bonus amount from referral (included in ustr_amount) */
+  bonus_amount?: string;
 }
 
 export interface SwapStatus {

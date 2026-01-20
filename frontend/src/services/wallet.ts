@@ -24,6 +24,7 @@ import { NETWORKS, DEFAULT_NETWORK } from '../utils/constants';
 // so we use fixed gas limits
 const GAS_PRICE_ULUNA = '28.325'; // uluna per gas unit
 const CW20_SEND_GAS_LIMIT = 350000; // Gas for CW20 Send with embedded message
+const SWAP_GAS_LIMIT = 500000; // Gas for swap transaction (includes minting, leaderboard updates)
 
 const networkConfig = NETWORKS[DEFAULT_NETWORK];
 const TERRA_CLASSIC_CHAIN_ID = networkConfig.chainId;
@@ -238,6 +239,114 @@ function estimateTerraClassicFee(gasLimit: number): Fee {
     ],
     gasLimit: BigInt(gasLimit),
   });
+}
+
+/**
+ * Execute a contract transaction with native coins (matching preregister pattern)
+ * This follows the exact same pattern as the working preregister dapp
+ */
+export async function executeContractWithCoins(
+  contractAddress: string,
+  executeMsg: Record<string, unknown>,
+  coins?: Array<{ denom: string; amount: string }>
+): Promise<{ txHash: string }> {
+  // Use getConnectedWallet() matching the working preregister pattern
+  const wallet = getConnectedWallet();
+  if (!wallet) {
+    throw new Error('Wallet not connected. Please connect your wallet first.');
+  }
+
+  try {
+    // Create the MsgExecuteContract message (matching preregister exactly)
+    const msg = new MsgExecuteContract({
+      sender: wallet.address,
+      contract: contractAddress,
+      msg: executeMsg,
+      funds: coins && coins.length > 0 ? coins : [],
+    });
+
+    // Log the raw message for debugging
+    console.group('📝 Raw Transaction Message');
+    console.log('MsgExecuteContract:', {
+      sender: wallet.address,
+      contract: contractAddress,
+      msg: JSON.stringify(executeMsg),
+      funds: coins && coins.length > 0 ? coins : [],
+    });
+    console.groupEnd();
+
+    // Create unsigned transaction
+    const unsignedTx: UnsignedTx = {
+      msgs: [msg],
+      memo: '',
+    };
+
+    // Estimate fee using fixed gas limits (Terra Classic doesn't support simulation)
+    const fee = estimateTerraClassicFee(SWAP_GAS_LIMIT);
+    
+    console.log('⛽ Fee estimate:', {
+      gasLimit: SWAP_GAS_LIMIT,
+      feeAmount: fee.amount,
+    });
+
+    // Broadcast transaction
+    const txHash = await wallet.broadcastTx(unsignedTx, fee);
+    
+    console.log('📡 Transaction broadcast, hash:', txHash);
+
+    // Poll for transaction confirmation
+    const { txResponse } = await wallet.pollTx(txHash);
+
+    // Check if transaction failed
+    if (txResponse.code !== 0) {
+      const errorMsg = 
+        txResponse.rawLog ||
+        `Transaction failed with code ${txResponse.code}`;
+      console.error('❌ Transaction failed:', errorMsg);
+      throw new Error(`Transaction failed: ${errorMsg}`);
+    }
+
+    console.log('✅ Transaction confirmed successfully');
+    return { txHash };
+  } catch (error) {
+    console.error('Transaction execution failed:', error);
+    throw handleSwapTransactionError(error);
+  }
+}
+
+/**
+ * Handle transaction errors with user-friendly messages
+ */
+function handleSwapTransactionError(error: unknown): Error {
+  if (error instanceof Error) {
+    const errorMessage = error.message;
+
+    // User rejection errors
+    if (
+      errorMessage.includes('User rejected') ||
+      errorMessage.includes('rejected') ||
+      errorMessage.includes('User denied') ||
+      errorMessage.includes('user rejected')
+    ) {
+      return new Error('Transaction rejected by user');
+    }
+
+    // Network/connection errors
+    if (
+      errorMessage.includes('Failed to fetch') ||
+      errorMessage.includes('NetworkError') ||
+      errorMessage.includes('network')
+    ) {
+      return new Error(
+        `Network error: ${errorMessage}. Please check your internet connection and try again.`
+      );
+    }
+
+    // Include full error message for debugging
+    return new Error(`Transaction failed: ${errorMessage}`);
+  }
+
+  return new Error(`Transaction failed: ${String(error)}`);
 }
 
 /**
