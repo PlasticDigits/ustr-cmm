@@ -2,7 +2,7 @@
 
 use cosmwasm_schema::cw_serde;
 use cosmwasm_std::{Addr, Decimal, Timestamp, Uint128};
-use cw_storage_plus::Item;
+use cw_storage_plus::{Item, Map};
 
 /// Contract configuration
 #[cw_serde]
@@ -47,6 +47,29 @@ pub struct Stats {
     pub total_referral_bonus_minted: Uint128,
     /// Count of swaps that used valid referral codes
     pub total_referral_swaps: u64,
+    /// Count of unique referral codes that have been used in at least one swap
+    pub unique_referral_codes_used: u64,
+}
+
+/// Per-referral-code statistics for leaderboard tracking
+#[cw_serde]
+pub struct ReferralCodeStats {
+    /// Total USTR earned by the code owner from referrals
+    pub total_rewards_earned: Uint128,
+    /// Total USTR bonuses given to users who used this code
+    pub total_user_bonuses: Uint128,
+    /// Number of swaps that used this referral code
+    pub total_swaps: u64,
+}
+
+/// Linked list node for maintaining sorted leaderboard
+/// Codes are sorted in descending order by total_rewards_earned
+#[cw_serde]
+pub struct LeaderboardLink {
+    /// Previous code in sorted order (higher rewards), None if this is the head
+    pub prev: Option<String>,
+    /// Next code in sorted order (lower rewards), None if this is the tail
+    pub next: Option<String>,
 }
 
 /// Contract name for cw2 migration info
@@ -70,6 +93,16 @@ pub const USTC_DENOM: &str = "uusd";
 pub const REFERRAL_BONUS_NUMERATOR: u128 = 10;
 pub const REFERRAL_BONUS_DENOMINATOR: u128 = 100;
 
+/// Maximum number of entries in the leaderboard
+/// Only the top 50 referral codes by rewards are tracked on-chain
+/// This provides O(50) bounded gas costs instead of O(n) unbounded
+pub const MAX_LEADERBOARD_SIZE: u32 = 50;
+
+/// Default limit for leaderboard pagination
+pub const DEFAULT_LEADERBOARD_LIMIT: u32 = 10;
+/// Maximum limit for leaderboard pagination
+pub const MAX_LEADERBOARD_LIMIT: u32 = 50;
+
 /// Primary config storage
 pub const CONFIG: Item<Config> = Item::new("config");
 
@@ -78,4 +111,24 @@ pub const PENDING_ADMIN: Item<PendingAdmin> = Item::new("pending_admin");
 
 /// Swap statistics
 pub const STATS: Item<Stats> = Item::new("stats");
+
+/// Per-referral-code statistics, keyed by normalized (lowercase) code
+pub const REFERRAL_CODE_STATS: Map<&str, ReferralCodeStats> = Map::new("referral_code_stats");
+
+/// Head of the sorted leaderboard linked list (code with highest rewards)
+/// None if no referral codes have been used yet
+pub const LEADERBOARD_HEAD: Item<Option<String>> = Item::new("leaderboard_head");
+
+/// Tail of the sorted leaderboard linked list (code with lowest rewards in top 50)
+/// None if no referral codes have been used yet
+/// Used to efficiently check if a new code qualifies for the leaderboard
+pub const LEADERBOARD_TAIL: Item<Option<String>> = Item::new("leaderboard_tail");
+
+/// Current number of entries in the leaderboard (0 to MAX_LEADERBOARD_SIZE)
+pub const LEADERBOARD_SIZE: Item<u32> = Item::new("leaderboard_size");
+
+/// Linked list structure for O(50) bounded insertion and O(1) traversal of leaderboard
+/// Keyed by normalized (lowercase) code
+/// Only contains the top 50 codes by total_rewards_earned
+pub const LEADERBOARD_LINKS: Map<&str, LeaderboardLink> = Map::new("leaderboard_links");
 

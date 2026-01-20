@@ -142,7 +142,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Referral bonus: +10% to user, +10% to referrer (if valid code provided)
 
 **Execute Messages**:
-- `Swap { referral_code }` - User sends USTC; contract forwards to Treasury (0.5% tax); mints USTR with optional referral bonus
+- `Swap { referral_code, leaderboard_hint }` - User sends USTC; contract forwards to Treasury (0.5% tax); mints USTR with optional referral bonus. Optional hint enables O(1) leaderboard insertion.
 - `EmergencyPause` - Pauses swap functionality (admin only)
 - `EmergencyResume` - Resumes swap functionality (admin only)
 - `ProposeAdmin` - Initiates 7-day timelock for admin transfer
@@ -174,6 +174,69 @@ The leaderboard query returns entries sorted by `total_rewards_earned` (descendi
 - `start_after`: Optional code for cursor-based pagination
 - `limit`: Max entries per page (default: 10, max: 50)
 - Response includes `has_more` boolean indicating additional pages
+
+**Leaderboard Data Structure (Top 50 Only):**
+
+The leaderboard uses an **optimized sorted doubly-linked list** that tracks only the **top 50 referral codes** by `total_rewards_earned`. This design provides **O(50) bounded gas costs** instead of O(n) unbounded costs, regardless of how many total referral codes exist.
+
+| State Key | Type | Description |
+|-----------|------|-------------|
+| `leaderboard_head` | `Option<String>` | Head of linked list (code with highest rewards) |
+| `leaderboard_tail` | `Option<String>` | Tail of linked list (50th place, threshold for entry) |
+| `leaderboard_size` | `u32` | Current entries in leaderboard (0-50) |
+| `leaderboard_links` | `Map<String, LeaderboardLink>` | Linked list pointers for codes in top 50 |
+
+```rust
+LeaderboardLink {
+    prev: Option<String>,  // Previous code (higher rewards)
+    next: Option<String>,  // Next code (lower rewards)
+}
+```
+
+**Why Top 50 Only?**
+
+For gas efficiency. An unbounded leaderboard with 500+ codes would require O(500) storage operations per swap. The top-50 approach guarantees bounded costs:
+
+| Operation | Gas Cost |
+|-----------|----------|
+| Code not in top 50, doesn't qualify | O(2) reads |
+| Code enters top 50 (new) | O(50) max |
+| Code already in top 50, moves up | O(1-5) typical |
+| Query top 10 | O(10) |
+
+**How it works:**
+- **Insertion**: When a swap uses a referral code:
+  - If code is already in top 50: check if it needs to move up (walk upward only, O(1-5))
+  - If code is not in top 50 and list has room: insert at correct position
+  - If code is not in top 50 and list is full: compare against tail, replace if higher
+- **Traversal**: Leaderboard queries start at `leaderboard_head` and follow `next` pointers for O(k) access to top k entries.
+- **Per-code stats**: `REFERRAL_CODE_STATS` tracks ALL codes (not just top 50), so `ReferralCodeStats { code }` query works for any code that has been used.
+
+**Trade-off**: Codes ranked #51+ don't appear in `ReferralLeaderboard` query, but their individual stats are still queryable via `ReferralCodeStats { code }`.
+
+**Leaderboard Hint Optimization:**
+
+The `Swap` message accepts an optional `leaderboard_hint` parameter for O(1) leaderboard insertion instead of O(50):
+
+```rust
+LeaderboardHint {
+    insert_after: Option<String>,  // Code immediately before us (higher rewards)
+                                   // None = we claim to be the new head
+}
+```
+
+**How the frontend uses hints:**
+1. Query `ReferralLeaderboard` to get current top 50 with their rewards
+2. After a swap, calculate where the code's new rewards would place it
+3. Pass `leaderboard_hint` with the correct `insert_after` code
+4. Contract validates in O(1) and inserts, or falls back to searching if wrong
+
+**Fallback behavior:** If the hint is wrong, the contract searches from the hint position (up or down depending on the error). This means:
+- Correct hint: O(1) insertion
+- Hint off by 5 positions: O(5) search
+- No hint: O(50) worst case
+
+Wrong hints do not cause failures—the user just pays more gas. This is similar to DEX slippage but self-punishing rather than rejecting.
 
 **Key Development Decisions**:
 

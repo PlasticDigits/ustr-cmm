@@ -486,6 +486,10 @@ Where:
 | `pending_admin` | `Option<PendingAdmin>` | Proposed new admin with timestamp |
 | `paused` | `bool` | Whether swap is currently paused |
 | `referral_code_stats` | `Map<String, ReferralCodeStats>` | Mapping of normalized codes to their cumulative reward statistics |
+| `leaderboard_head` | `Option<String>` | Head of the sorted linked list for leaderboard (code with highest rewards) |
+| `leaderboard_tail` | `Option<String>` | Tail of the sorted linked list (code with lowest rewards in top 50) |
+| `leaderboard_size` | `u32` | Current number of entries in the leaderboard (0 to 50) |
+| `leaderboard_links` | `Map<String, LeaderboardLink>` | Linked list structure for O(50) bounded leaderboard operations |
 
 ```
 ReferralCodeStats {
@@ -493,7 +497,83 @@ ReferralCodeStats {
     total_user_bonuses: Uint128,    // Total USTR bonuses earned by users using this code
     total_swaps: u64,               // Number of swaps using this code
 }
+
+LeaderboardLink {
+    prev: Option<String>,  // Previous code in sorted order (higher rewards)
+    next: Option<String>,  // Next code in sorted order (lower rewards)
+}
 ```
+
+**Leaderboard Data Structure (Top 50 Only):**
+
+The leaderboard uses an **optimized sorted doubly-linked list** that tracks only the **top 50 referral codes** by `total_rewards_earned`. This design provides **O(50) bounded gas costs** instead of O(n) unbounded costs, regardless of how many total referral codes exist.
+
+- **Top 50 Cap**: Only the top 50 codes by rewards are stored in the leaderboard linked list. Codes ranked #51 and below are not tracked in the leaderboard (but their per-code stats are still queryable via `ReferralCodeStats { code }`).
+- **Insertion Logic**:
+  - If leaderboard has < 50 entries: insert at correct sorted position
+  - If leaderboard is full (50 entries) and new code beats the tail: remove tail, insert new code
+  - If leaderboard is full and new code doesn't beat the tail: do nothing (code doesn't qualify)
+- **Update Logic (Optimized)**: When an existing code's rewards increase, the algorithm only walks upward from the code's current position (not from head), since rewards can only increase. Typically O(1-5) operations.
+- **Traversal**: Querying the leaderboard starts at `leaderboard_head` and follows `next` pointers, providing O(k) access to the top k entries.
+- **Gas Efficiency**: Maximum of ~50 storage operations per swap, regardless of total unique codes used.
+
+**Why Top 50 Only?**
+
+| Approach | Insert Gas | Update Gas | Storage |
+|----------|------------|------------|---------|
+| Unbounded (all codes) | O(n) | O(n) | Grows indefinitely |
+| **Top 50 Only** | O(50) max | O(1-5) typical | Fixed ~5KB |
+
+For a system with 500+ unique referral codes, the unbounded approach could require 500+ storage operations per swap. The top-50 approach guarantees bounded gas costs while still highlighting the most successful referrers.
+
+**Example Leaderboard State:**
+
+```
+leaderboard_head: "alpha"  // Code with most rewards
+leaderboard_tail: "delta"  // 50th place (or last if < 50 entries)
+leaderboard_size: 4
+
+alpha (1000 USTR) → beta (800 USTR) → gamma (500 USTR) → delta (100 USTR) → None
+  ↑                   ↑                  ↑                  ↑
+None ← alpha    alpha ← beta      beta ← gamma      gamma ← delta
+```
+
+When "gamma" earns 350 more USTR (total: 850), it moves ahead of "beta":
+```
+alpha (1000 USTR) → gamma (850 USTR) → beta (800 USTR) → delta (100 USTR) → None
+```
+
+**Leaderboard Hint Optimization:**
+
+The `Swap` message accepts an optional `leaderboard_hint` parameter for O(1) leaderboard insertion:
+
+```
+LeaderboardHint {
+    insert_after: Option<String>,  // Code that should be immediately before us (higher rewards)
+                                   // None means we claim to be the new head
+}
+```
+
+**How the hint works:**
+1. Frontend queries `ReferralLeaderboard` to get current top 50 with their rewards
+2. Frontend calculates where the code's new rewards would place it
+3. Frontend passes `leaderboard_hint` with the correct `insert_after` code
+4. Contract validates the hint in O(1):
+   - If correct: inserts at specified position (O(1))
+   - If wrong (too high): searches downward from hint position
+   - If wrong (too low): searches upward from hint position
+   - If hint code doesn't exist: falls back to standard insertion
+
+**Gas comparison:**
+
+| Scenario | Without Hint | With Correct Hint |
+|----------|--------------|-------------------|
+| Insert at position 1 | O(50) | O(1) |
+| Insert at position 25 | O(25) | O(1) |
+| Insert at position 50 | O(1) | O(1) |
+| Wrong hint (off by 5) | O(50) | O(5) |
+
+**Frontend integration:** The hint is optional and backwards-compatible. Transactions without hints work correctly but may use more gas. Wrong hints do not cause transaction failures—they just result in the "attacker" paying more gas while the contract still finds the correct position.
 
 ```
 PendingAdmin {
@@ -520,7 +600,7 @@ PendingAdmin {
 
 | Message | Authority | Description |
 |---------|-----------|-------------|
-| `Swap { referral_code }` | Any user | User sends USTC; contract forwards to Treasury (0.5% tax); mints USTR with optional referral bonus |
+| `Swap { referral_code, leaderboard_hint }` | Any user | User sends USTC; contract forwards to Treasury (0.5% tax); mints USTR with optional referral bonus. Optional `leaderboard_hint` enables O(1) leaderboard insertion. |
 | `EmergencyPause {}` | Admin | Pauses swap functionality |
 | `EmergencyResume {}` | Admin | Resumes swap functionality |
 | `ProposeAdmin { new_admin }` | Admin | Initiates 7-day timelock for admin transfer |
@@ -530,7 +610,7 @@ PendingAdmin {
 
 **Swap Method & Tax:**
 
-Users call `Swap { referral_code }` with USTC attached. The contract:
+Users call `Swap { referral_code, leaderboard_hint }` with USTC attached. The contract:
 1. Receives USTC from user (via `MsgExecuteContract` - **no tax** on this step)
 2. Forwards USTC to Treasury (via `BankMsg::Send` - **0.5% burn tax** applies)
 3. Mints USTR to user based on **pre-tax USTC amount**
@@ -568,7 +648,7 @@ ReferralCodeStatsResponse {
 
 ReferralLeaderboardResponse {
     entries: Vec<LeaderboardEntry>,  // Leaderboard entries sorted by total_rewards_earned (desc)
-    has_more: bool,                  // Whether more entries exist after this page
+    has_more: bool,                  // Whether more entries exist after this page (within top 50)
 }
 
 LeaderboardEntry {
@@ -584,6 +664,8 @@ LeaderboardEntry {
 **Pagination Parameters:**
 - `start_after`: Optional code to start after (for cursor-based pagination)
 - `limit`: Maximum number of entries to return (default: 10, max: 50)
+
+**Note**: The leaderboard only contains the **top 50 referral codes** by total rewards earned. Codes ranked #51 and below are not included in the leaderboard response, but their individual statistics can still be queried using `ReferralCodeStats { code }`.
 
 #### On-Chain Tax Handling
 

@@ -11,13 +11,16 @@ use cw20::Cw20ExecuteMsg;
 
 use crate::error::ContractError;
 use crate::msg::{
-    ConfigResponse, ExecuteMsg, InstantiateMsg, PendingAdminResponse, QueryMsg, RateResponse,
-    SimulationResponse, StatsResponse, StatusResponse,
+    ConfigResponse, ExecuteMsg, InstantiateMsg, LeaderboardEntry, PendingAdminResponse, QueryMsg,
+    RateResponse, ReferralCodeStatsResponse, ReferralLeaderboardResponse, SimulationResponse,
+    StatsResponse, StatusResponse,
 };
 use crate::state::{
-    Config, PendingAdmin, Stats, ADMIN_TIMELOCK_DURATION, CONFIG, CONTRACT_NAME, CONTRACT_VERSION,
-    MIN_SWAP_AMOUNT, PENDING_ADMIN, REFERRAL_BONUS_DENOMINATOR, REFERRAL_BONUS_NUMERATOR, STATS,
-    USTC_DENOM,
+    Config, LeaderboardLink, PendingAdmin, ReferralCodeStats, Stats, ADMIN_TIMELOCK_DURATION,
+    CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_LEADERBOARD_LIMIT, DEFAULT_SWAP_DURATION,
+    LEADERBOARD_HEAD, LEADERBOARD_LINKS, LEADERBOARD_SIZE, LEADERBOARD_TAIL,
+    MAX_LEADERBOARD_LIMIT, MAX_LEADERBOARD_SIZE, MIN_SWAP_AMOUNT, PENDING_ADMIN,
+    REFERRAL_BONUS_DENOMINATOR, REFERRAL_BONUS_NUMERATOR, REFERRAL_CODE_STATS, STATS, USTC_DENOM,
 };
 use common::AssetInfo;
 
@@ -33,6 +36,28 @@ pub struct ReferralValidateResponse {
     pub is_valid_format: bool,
     pub is_registered: bool,
     pub owner: Option<cosmwasm_std::Addr>,
+}
+
+/// Information about leaderboard changes for event emission
+#[derive(Debug, Clone, PartialEq)]
+pub struct LeaderboardChange {
+    /// The action that occurred
+    pub action: LeaderboardAction,
+    /// The new position in the leaderboard (1-indexed), if code is in leaderboard
+    pub position: Option<u32>,
+    /// The code that was displaced from the leaderboard (if any)
+    pub displaced_code: Option<String>,
+}
+
+/// Type of leaderboard change that occurred
+#[derive(Debug, Clone, PartialEq)]
+pub enum LeaderboardAction {
+    /// Code was added to the leaderboard for the first time
+    NewEntry,
+    /// Code moved to a higher position in the leaderboard
+    PositionUp,
+    /// Code stayed in the same position (rewards increased but didn't pass prev)
+    NoChange,
 }
 
 // ============ INSTANTIATE ============
@@ -52,7 +77,8 @@ pub fn instantiate(
     let admin = deps.api.addr_validate(&msg.admin)?;
 
     let start_time = Timestamp::from_seconds(msg.start_time);
-    let end_time = Timestamp::from_seconds(msg.start_time + msg.duration_seconds);
+    let duration = msg.duration_seconds.unwrap_or(DEFAULT_SWAP_DURATION);
+    let end_time = Timestamp::from_seconds(msg.start_time + duration);
 
     let config = Config {
         ustr_token: ustr_token.clone(),
@@ -71,7 +97,13 @@ pub fn instantiate(
         total_ustr_minted: Uint128::zero(),
         total_referral_bonus_minted: Uint128::zero(),
         total_referral_swaps: 0,
+        unique_referral_codes_used: 0,
     };
+
+    // Initialize leaderboard state
+    LEADERBOARD_HEAD.save(deps.storage, &None)?;
+    LEADERBOARD_TAIL.save(deps.storage, &None)?;
+    LEADERBOARD_SIZE.save(deps.storage, &0)?;
 
     CONFIG.save(deps.storage, &config)?;
     STATS.save(deps.storage, &stats)?;
@@ -96,7 +128,10 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Swap { referral_code } => execute_swap(deps, env, info, referral_code),
+        ExecuteMsg::Swap {
+            referral_code,
+            leaderboard_hint,
+        } => execute_swap(deps, env, info, referral_code, leaderboard_hint),
         ExecuteMsg::EmergencyPause {} => execute_emergency_pause(deps, info),
         ExecuteMsg::EmergencyResume {} => execute_emergency_resume(deps, info),
         ExecuteMsg::ProposeAdmin { new_admin } => execute_propose_admin(deps, env, info, new_admin),
@@ -117,6 +152,7 @@ fn execute_swap(
     env: Env,
     info: MessageInfo,
     referral_code: Option<String>,
+    leaderboard_hint: Option<crate::msg::LeaderboardHint>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
 
@@ -202,9 +238,55 @@ fn execute_swap(
     let mut stats = STATS.load(deps.storage)?;
     stats.total_ustc_received += ustc_amount;
     stats.total_ustr_minted += total_ustr_minted;
+    
+    // Track leaderboard changes for event emission
+    let mut leaderboard_change: Option<LeaderboardChange> = None;
+    
     if referrer_addr.is_some() {
         stats.total_referral_bonus_minted += user_bonus + referrer_bonus;
         stats.total_referral_swaps += 1;
+
+        // Update per-code statistics and leaderboard
+        if let Some(ref code) = referral_code {
+            let normalized_code = code.to_lowercase();
+            
+            // Load or create per-code stats
+            let (mut code_stats, is_new_code) =
+                match REFERRAL_CODE_STATS.may_load(deps.storage, &normalized_code)? {
+                    Some(existing) => (existing, false),
+                    None => (
+                        ReferralCodeStats {
+                            total_rewards_earned: Uint128::zero(),
+                            total_user_bonuses: Uint128::zero(),
+                            total_swaps: 0,
+                        },
+                        true,
+                    ),
+                };
+
+            // Track the old rewards for potential future use
+            let _old_rewards = code_stats.total_rewards_earned;
+
+            // Update per-code stats
+            code_stats.total_rewards_earned += referrer_bonus;
+            code_stats.total_user_bonuses += user_bonus;
+            code_stats.total_swaps += 1;
+
+            REFERRAL_CODE_STATS.save(deps.storage, &normalized_code, &code_stats)?;
+
+            // Update unique codes counter if this is a new code
+            if is_new_code {
+                stats.unique_referral_codes_used += 1;
+            }
+
+            // Update leaderboard linked list and capture the change for event emission
+            leaderboard_change = update_leaderboard(
+                deps.storage,
+                &normalized_code,
+                code_stats.total_rewards_earned,
+                leaderboard_hint.as_ref(),
+            )?;
+        }
     }
     STATS.save(deps.storage, &stats)?;
 
@@ -260,6 +342,24 @@ fn execute_swap(
         response = response
             .add_attribute("referrer", referrer)
             .add_attribute("referrer_bonus", referrer_bonus);
+    }
+
+    // Add leaderboard change events
+    if let Some(change) = leaderboard_change {
+        let action_str = match change.action {
+            LeaderboardAction::NewEntry => "new_entry",
+            LeaderboardAction::PositionUp => "position_up",
+            LeaderboardAction::NoChange => "no_change",
+        };
+        response = response.add_attribute("leaderboard_action", action_str);
+        
+        if let Some(position) = change.position {
+            response = response.add_attribute("leaderboard_position", position.to_string());
+        }
+        
+        if let Some(displaced) = change.displaced_code {
+            response = response.add_attribute("leaderboard_displaced", displaced);
+        }
     }
 
     Ok(response)
@@ -437,8 +537,488 @@ fn calculate_current_rate(config: &Config, current_time: Timestamp) -> Decimal {
     // rate(t) = start_rate + ((end_rate - start_rate) * elapsed_seconds / total_seconds)
     let rate_diff = config.end_rate - config.start_rate;
     let progress = Decimal::from_ratio(elapsed_seconds, total_seconds);
-    
+
     config.start_rate + rate_diff * progress
+}
+
+/// Update the top-50 leaderboard after a code's rewards change
+/// The list is maintained in descending order by total_rewards_earned
+/// Only the top 50 codes are tracked on-chain for gas efficiency
+/// 
+/// If a hint is provided, the contract validates it and uses it for O(1) insertion.
+/// If the hint is wrong, it falls back to searching from the hint position
+/// (up if hint was too low, down if hint was too high).
+/// 
+/// Returns information about the leaderboard change for event emission.
+fn update_leaderboard(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    new_rewards: Uint128,
+    hint: Option<&crate::msg::LeaderboardHint>,
+) -> Result<Option<LeaderboardChange>, ContractError> {
+    let is_in_leaderboard = LEADERBOARD_LINKS.may_load(storage, code)?.is_some();
+
+    let change = if is_in_leaderboard {
+        // Code is already in leaderboard - check if it needs to move up
+        let moved = reposition_in_leaderboard(storage, code, new_rewards)?;
+        let position = get_leaderboard_position(storage, code)?;
+        Some(LeaderboardChange {
+            action: if moved { LeaderboardAction::PositionUp } else { LeaderboardAction::NoChange },
+            position,
+            displaced_code: None, // Repositioning doesn't displace anyone
+        })
+    } else {
+        // Code is not in leaderboard - check if it qualifies
+        let insert_result = try_insert_into_leaderboard(storage, code, new_rewards, hint)?;
+        if let Some(displaced) = insert_result {
+            let position = get_leaderboard_position(storage, code)?;
+            Some(LeaderboardChange {
+                action: LeaderboardAction::NewEntry,
+                position,
+                displaced_code: displaced,
+            })
+        } else {
+            // Code didn't qualify for the leaderboard
+            None
+        }
+    };
+
+    Ok(change)
+}
+
+/// Get the position of a code in the leaderboard (1-indexed)
+/// Returns None if the code is not in the leaderboard
+fn get_leaderboard_position(
+    storage: &dyn cosmwasm_std::Storage,
+    target_code: &str,
+) -> Result<Option<u32>, ContractError> {
+    let head = LEADERBOARD_HEAD.load(storage)?;
+    let mut current = head;
+    let mut position = 1u32;
+
+    while let Some(ref code) = current {
+        if code == target_code {
+            return Ok(Some(position));
+        }
+        let link = LEADERBOARD_LINKS.load(storage, code)?;
+        current = link.next;
+        position += 1;
+    }
+
+    Ok(None)
+}
+
+/// Try to insert a code into the top-50 leaderboard
+/// Only inserts if the leaderboard has room or the code beats the current tail
+/// 
+/// If hint is provided:
+/// - Validates the hint position
+/// - If correct: O(1) insertion
+/// - If wrong: searches up or down from hint position (still often faster than from tail)
+/// 
+/// Returns:
+/// - None if the code didn't qualify for the leaderboard
+/// - Some(None) if inserted without displacing anyone (room in leaderboard)
+/// - Some(Some(code)) if inserted and displaced another code
+fn try_insert_into_leaderboard(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    rewards: Uint128,
+    hint: Option<&crate::msg::LeaderboardHint>,
+) -> Result<Option<Option<String>>, ContractError> {
+    let size = LEADERBOARD_SIZE.load(storage)?;
+
+    if size < MAX_LEADERBOARD_SIZE {
+        // Room in leaderboard - insert at correct position
+        insert_into_leaderboard_with_hint(storage, code, rewards, hint)?;
+        LEADERBOARD_SIZE.save(storage, &(size + 1))?;
+        Ok(Some(None)) // Inserted without displacing
+    } else {
+        // Leaderboard is full - check if we beat the tail
+        let tail = LEADERBOARD_TAIL.load(storage)?;
+        if let Some(ref tail_code) = tail {
+            let tail_stats = REFERRAL_CODE_STATS.load(storage, tail_code)?;
+            if rewards > tail_stats.total_rewards_earned {
+                // We beat the tail - remove tail and insert ourselves
+                // Use internal remove that doesn't decrement size (we'll add one right after)
+                let displaced = tail_code.clone();
+                let tail_link = LEADERBOARD_LINKS.load(storage, tail_code)?;
+                remove_from_leaderboard_internal(storage, tail_code, &tail_link)?;
+                insert_into_leaderboard_with_hint(storage, code, rewards, hint)?;
+                // Size stays the same (removed one, added one)
+                Ok(Some(Some(displaced))) // Inserted and displaced tail
+            } else {
+                // We don't qualify
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+/// Insert into leaderboard using an optional hint for O(1) insertion
+/// If hint is valid: O(1) insertion
+/// If hint is wrong: falls back to searching from the hint position (bidirectional)
+fn insert_into_leaderboard_with_hint(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    rewards: Uint128,
+    hint: Option<&crate::msg::LeaderboardHint>,
+) -> Result<(), ContractError> {
+    // If no hint provided, fall back to standard insertion
+    let hint = match hint {
+        Some(h) => h,
+        None => return insert_into_leaderboard(storage, code, rewards),
+    };
+
+    // Validate and use the hint
+    match &hint.insert_after {
+        Some(after_code) => {
+            // Hint claims we should insert after this code
+            // First check if the hint code exists in leaderboard
+            let after_link = match LEADERBOARD_LINKS.may_load(storage, after_code)? {
+                Some(link) => link,
+                None => {
+                    // Hint code not in leaderboard - fall back to standard insertion
+                    return insert_into_leaderboard(storage, code, rewards);
+                }
+            };
+
+            let after_stats = REFERRAL_CODE_STATS.load(storage, after_code)?;
+
+            if after_stats.total_rewards_earned >= rewards {
+                // Hint code has higher or equal rewards - we should be after it
+                // Now check if the next code (if any) has lower rewards
+                if let Some(ref next_code) = after_link.next {
+                    let next_stats = REFERRAL_CODE_STATS.load(storage, next_code)?;
+                    if next_stats.total_rewards_earned >= rewards {
+                        // Next code also has higher rewards - hint was too high
+                        // Search DOWNWARD from next_code
+                        return insert_searching_down(storage, code, rewards, next_code.clone());
+                    }
+                }
+                // Hint is correct! Insert between after_code and after_link.next
+                insert_at_position(storage, code, Some(after_code.clone()), after_link.next.clone())?;
+            } else {
+                // Hint code has lower rewards than us - hint was too low
+                // Search UPWARD from after_code
+                insert_into_leaderboard_from_position(storage, code, rewards, Some(after_code.clone()))?;
+            }
+        }
+        None => {
+            // Hint claims we should be the new head
+            let head = LEADERBOARD_HEAD.load(storage)?;
+            if let Some(ref head_code) = head {
+                let head_stats = REFERRAL_CODE_STATS.load(storage, head_code)?;
+                if head_stats.total_rewards_earned >= rewards {
+                    // Current head has higher rewards - hint was wrong
+                    // Search DOWNWARD from head
+                    return insert_searching_down(storage, code, rewards, head_code.clone());
+                }
+            }
+            // Hint is correct - we are the new head
+            insert_at_position(storage, code, None, head)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Insert by searching downward from a starting position
+/// Used when hint was too high (we need to go toward tail)
+fn insert_searching_down(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    rewards: Uint128,
+    start_from: String,
+) -> Result<(), ContractError> {
+    let mut current = Some(start_from);
+    let mut insert_after: Option<String> = None;
+
+    // Walk downward (toward tail) to find insertion point
+    while let Some(ref curr) = current {
+        let curr_stats = REFERRAL_CODE_STATS.load(storage, curr)?;
+        if curr_stats.total_rewards_earned >= rewards {
+            // This code has higher or equal rewards, so we insert after it
+            insert_after = Some(curr.clone());
+            let curr_link = LEADERBOARD_LINKS.load(storage, curr)?;
+            
+            // Check if next has lower rewards (or is None)
+            if let Some(ref next_code) = curr_link.next {
+                let next_stats = REFERRAL_CODE_STATS.load(storage, next_code)?;
+                if next_stats.total_rewards_earned < rewards {
+                    // Found the spot: insert between curr and next
+                    break;
+                }
+                // Keep going down
+                current = curr_link.next.clone();
+            } else {
+                // curr is the tail and we have lower rewards - we become new tail
+                break;
+            }
+        } else {
+            // This shouldn't happen if we're searching down correctly
+            // but handle gracefully by inserting before curr
+            break;
+        }
+    }
+
+    // Get the next code after insert_after
+    let insert_before = if let Some(ref after) = insert_after {
+        let after_link = LEADERBOARD_LINKS.load(storage, after)?;
+        after_link.next.clone()
+    } else {
+        LEADERBOARD_HEAD.load(storage)?
+    };
+
+    insert_at_position(storage, code, insert_after, insert_before)
+}
+
+/// Insert a code at a specific position (between prev and next)
+/// This is the O(1) insertion once position is known
+fn insert_at_position(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    prev: Option<String>,
+    next: Option<String>,
+) -> Result<(), ContractError> {
+    // Create our link
+    let new_link = LeaderboardLink {
+        prev: prev.clone(),
+        next: next.clone(),
+    };
+    LEADERBOARD_LINKS.save(storage, code, &new_link)?;
+
+    // Update prev's next pointer
+    if let Some(ref prev_code) = prev {
+        let mut prev_link = LEADERBOARD_LINKS.load(storage, prev_code)?;
+        prev_link.next = Some(code.to_string());
+        LEADERBOARD_LINKS.save(storage, prev_code, &prev_link)?;
+    } else {
+        // We're the new head
+        LEADERBOARD_HEAD.save(storage, &Some(code.to_string()))?;
+    }
+
+    // Update next's prev pointer
+    if let Some(ref next_code) = next {
+        let mut next_link = LEADERBOARD_LINKS.load(storage, next_code)?;
+        next_link.prev = Some(code.to_string());
+        LEADERBOARD_LINKS.save(storage, next_code, &next_link)?;
+    } else {
+        // We're the new tail
+        LEADERBOARD_TAIL.save(storage, &Some(code.to_string()))?;
+    }
+
+    Ok(())
+}
+
+/// Reposition a code that's already in the leaderboard after its rewards increased
+/// Optimized to only walk upward from current position since rewards only increase
+/// 
+/// Returns true if the code moved to a higher position, false if it stayed in place
+fn reposition_in_leaderboard(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    new_rewards: Uint128,
+) -> Result<bool, ContractError> {
+    let link = LEADERBOARD_LINKS.load(storage, code)?;
+
+    // Check if we need to move at all
+    let needs_move = if let Some(ref prev) = link.prev {
+        let prev_stats = REFERRAL_CODE_STATS.load(storage, prev)?;
+        new_rewards > prev_stats.total_rewards_earned
+    } else {
+        false // Already at head, no movement needed
+    };
+
+    if needs_move {
+        // Remove from current position and reinsert
+        // We track if we were the tail before removing
+        let was_tail = link.next.is_none();
+
+        remove_from_leaderboard_internal(storage, code, &link)?;
+        insert_into_leaderboard_from_position(storage, code, new_rewards, link.prev.clone())?;
+
+        // If we were the tail, we need to update the tail pointer
+        // The new tail is our old prev (since we moved up)
+        if was_tail {
+            LEADERBOARD_TAIL.save(storage, &link.prev)?;
+        }
+    }
+
+    Ok(needs_move)
+}
+
+/// Insert a code into the leaderboard at the correct sorted position
+/// Walks from head to find insertion point (used for new entries)
+fn insert_into_leaderboard(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    rewards: Uint128,
+) -> Result<(), ContractError> {
+    let head = LEADERBOARD_HEAD.load(storage)?;
+
+    match head {
+        None => {
+            // First entry in the leaderboard
+            LEADERBOARD_HEAD.save(storage, &Some(code.to_string()))?;
+            LEADERBOARD_TAIL.save(storage, &Some(code.to_string()))?;
+            LEADERBOARD_LINKS.save(
+                storage,
+                code,
+                &LeaderboardLink {
+                    prev: None,
+                    next: None,
+                },
+            )?;
+        }
+        Some(head_code) => {
+            // Walk from tail upward to find insertion point
+            // This is more efficient for new entries which typically enter near the bottom
+            let tail = LEADERBOARD_TAIL.load(storage)?;
+            let tail_code = tail.unwrap_or(head_code.clone());
+
+            let tail_stats = REFERRAL_CODE_STATS.load(storage, &tail_code)?;
+            if rewards <= tail_stats.total_rewards_earned {
+                // Insert after tail (we become new tail)
+                let mut tail_link = LEADERBOARD_LINKS.load(storage, &tail_code)?;
+                tail_link.next = Some(code.to_string());
+                LEADERBOARD_LINKS.save(storage, &tail_code, &tail_link)?;
+
+                LEADERBOARD_LINKS.save(
+                    storage,
+                    code,
+                    &LeaderboardLink {
+                        prev: Some(tail_code),
+                        next: None,
+                    },
+                )?;
+                LEADERBOARD_TAIL.save(storage, &Some(code.to_string()))?;
+            } else {
+                // Walk up from tail to find correct position
+                insert_into_leaderboard_from_position(storage, code, rewards, Some(tail_code))?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Insert a code starting search from a given position (walking upward)
+/// Used when we know the code should be inserted above a certain position
+fn insert_into_leaderboard_from_position(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    rewards: Uint128,
+    start_from: Option<String>,
+) -> Result<(), ContractError> {
+    let mut current = start_from;
+    let mut insert_after: Option<String> = None;
+
+    // Walk upward (toward head) to find insertion point
+    while let Some(ref curr) = current {
+        let curr_stats = REFERRAL_CODE_STATS.load(storage, curr)?;
+        if curr_stats.total_rewards_earned >= rewards {
+            // Insert after this one
+            insert_after = Some(curr.clone());
+            break;
+        }
+        let curr_link = LEADERBOARD_LINKS.load(storage, curr)?;
+        current = curr_link.prev.clone();
+    }
+
+    // Get the code that will be after us
+    let insert_before = if let Some(ref after) = insert_after {
+        let after_link = LEADERBOARD_LINKS.load(storage, after)?;
+        after_link.next.clone()
+    } else {
+        // We're the new head
+        LEADERBOARD_HEAD.load(storage)?
+    };
+
+    // Create our link
+    let new_link = LeaderboardLink {
+        prev: insert_after.clone(),
+        next: insert_before.clone(),
+    };
+    LEADERBOARD_LINKS.save(storage, code, &new_link)?;
+
+    // Update prev's next pointer
+    if let Some(ref prev) = insert_after {
+        let mut prev_link = LEADERBOARD_LINKS.load(storage, prev)?;
+        prev_link.next = Some(code.to_string());
+        LEADERBOARD_LINKS.save(storage, prev, &prev_link)?;
+    } else {
+        // We're the new head
+        LEADERBOARD_HEAD.save(storage, &Some(code.to_string()))?;
+    }
+
+    // Update next's prev pointer
+    if let Some(ref next) = insert_before {
+        let mut next_link = LEADERBOARD_LINKS.load(storage, next)?;
+        next_link.prev = Some(code.to_string());
+        LEADERBOARD_LINKS.save(storage, next, &next_link)?;
+    } else {
+        // We're the new tail
+        LEADERBOARD_TAIL.save(storage, &Some(code.to_string()))?;
+    }
+
+    Ok(())
+}
+
+/// Remove a code from the leaderboard linked list (public interface)
+/// Used primarily in tests; production code uses try_insert_into_leaderboard
+#[cfg(test)]
+fn remove_from_leaderboard(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+) -> Result<(), ContractError> {
+    let link = LEADERBOARD_LINKS.may_load(storage, code)?;
+
+    if let Some(link) = link {
+        remove_from_leaderboard_internal(storage, code, &link)?;
+
+        // Update size
+        let size = LEADERBOARD_SIZE.load(storage)?;
+        if size > 0 {
+            LEADERBOARD_SIZE.save(storage, &(size - 1))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Remove a code from the leaderboard linked list (internal, doesn't update size)
+fn remove_from_leaderboard_internal(
+    storage: &mut dyn cosmwasm_std::Storage,
+    code: &str,
+    link: &LeaderboardLink,
+) -> Result<(), ContractError> {
+    // Update prev's next pointer
+    if let Some(ref prev) = link.prev {
+        let mut prev_link = LEADERBOARD_LINKS.load(storage, prev)?;
+        prev_link.next = link.next.clone();
+        LEADERBOARD_LINKS.save(storage, prev, &prev_link)?;
+    } else {
+        // We were the head, update head to our next
+        LEADERBOARD_HEAD.save(storage, &link.next)?;
+    }
+
+    // Update next's prev pointer
+    if let Some(ref next) = link.next {
+        let mut next_link = LEADERBOARD_LINKS.load(storage, next)?;
+        next_link.prev = link.prev.clone();
+        LEADERBOARD_LINKS.save(storage, next, &next_link)?;
+    } else {
+        // We were the tail, update tail to our prev
+        LEADERBOARD_TAIL.save(storage, &link.prev)?;
+    }
+
+    // Remove our link entry
+    LEADERBOARD_LINKS.remove(storage, code);
+
+    Ok(())
 }
 
 // ============ QUERY ============
@@ -455,6 +1035,12 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Status {} => to_json_binary(&query_status(deps, env)?),
         QueryMsg::Stats {} => to_json_binary(&query_stats(deps)?),
         QueryMsg::PendingAdmin {} => to_json_binary(&query_pending_admin(deps)?),
+        QueryMsg::ReferralCodeStats { code } => {
+            to_json_binary(&query_referral_code_stats(deps, code)?)
+        }
+        QueryMsg::ReferralLeaderboard { start_after, limit } => {
+            to_json_binary(&query_referral_leaderboard(deps, start_after, limit)?)
+        }
     }
 }
 
@@ -585,6 +1171,7 @@ fn query_stats(deps: Deps) -> StdResult<StatsResponse> {
         total_ustr_minted: stats.total_ustr_minted,
         total_referral_bonus_minted: stats.total_referral_bonus_minted,
         total_referral_swaps: stats.total_referral_swaps,
+        unique_referral_codes_used: stats.unique_referral_codes_used,
     })
 }
 
@@ -594,6 +1181,135 @@ fn query_pending_admin(deps: Deps) -> StdResult<Option<PendingAdminResponse>> {
         new_address: p.new_address,
         execute_after: p.execute_after,
     }))
+}
+
+fn query_referral_code_stats(deps: Deps, code: String) -> StdResult<ReferralCodeStatsResponse> {
+    let config = CONFIG.load(deps.storage)?;
+    let normalized_code = code.to_lowercase();
+
+    // Query the referral contract to get the owner
+    let validate_response: ReferralValidateResponse = deps.querier.query(
+        &QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: config.referral.to_string(),
+            msg: to_json_binary(&ReferralQueryMsg::ValidateCode {
+                code: normalized_code.clone(),
+            })?,
+        }),
+    )?;
+
+    // If code is not registered, return error
+    if !validate_response.is_registered {
+        return Err(cosmwasm_std::StdError::generic_err(format!(
+            "Referral code '{}' is not registered",
+            code
+        )));
+    }
+
+    let owner = validate_response
+        .owner
+        .ok_or_else(|| cosmwasm_std::StdError::generic_err("Code owner not found"))?;
+
+    // Load per-code stats (may not exist if code was never used in a swap)
+    let code_stats = REFERRAL_CODE_STATS
+        .may_load(deps.storage, &normalized_code)?
+        .unwrap_or(ReferralCodeStats {
+            total_rewards_earned: Uint128::zero(),
+            total_user_bonuses: Uint128::zero(),
+            total_swaps: 0,
+        });
+
+    Ok(ReferralCodeStatsResponse {
+        code: normalized_code,
+        owner,
+        total_rewards_earned: code_stats.total_rewards_earned,
+        total_user_bonuses: code_stats.total_user_bonuses,
+        total_swaps: code_stats.total_swaps,
+    })
+}
+
+fn query_referral_leaderboard(
+    deps: Deps,
+    start_after: Option<String>,
+    limit: Option<u32>,
+) -> StdResult<ReferralLeaderboardResponse> {
+    let config = CONFIG.load(deps.storage)?;
+    let limit = limit.unwrap_or(DEFAULT_LEADERBOARD_LIMIT).min(MAX_LEADERBOARD_LIMIT);
+
+    let mut entries: Vec<LeaderboardEntry> = Vec::new();
+    let mut rank: u32 = 1;
+
+    // Find starting position
+    let start_code = if let Some(ref after) = start_after {
+        let normalized = after.to_lowercase();
+        // Start from the code after the given one
+        let link = LEADERBOARD_LINKS.may_load(deps.storage, &normalized)?;
+        if let Some(link) = link {
+            // Count ranks up to this code
+            let mut current = LEADERBOARD_HEAD.load(deps.storage)?;
+            while let Some(ref curr) = current {
+                if curr == &normalized {
+                    break;
+                }
+                rank += 1;
+                let curr_link = LEADERBOARD_LINKS.load(deps.storage, curr)?;
+                current = curr_link.next;
+            }
+            rank += 1; // Move past the start_after code
+            link.next
+        } else {
+            // Code not found, start from head
+            LEADERBOARD_HEAD.load(deps.storage)?
+        }
+    } else {
+        LEADERBOARD_HEAD.load(deps.storage)?
+    };
+
+    let mut current = start_code;
+    let mut count = 0u32;
+
+    while let Some(ref code) = current {
+        if count >= limit {
+            break;
+        }
+
+        // Load code stats
+        let code_stats = REFERRAL_CODE_STATS.load(deps.storage, code)?;
+
+        // Query owner from referral contract
+        let validate_response: Result<ReferralValidateResponse, _> = deps.querier.query(
+            &QueryRequest::Wasm(WasmQuery::Smart {
+                contract_addr: config.referral.to_string(),
+                msg: to_json_binary(&ReferralQueryMsg::ValidateCode { code: code.clone() })?,
+            }),
+        );
+
+        let owner = match validate_response {
+            Ok(resp) => resp.owner.unwrap_or_else(|| {
+                cosmwasm_std::Addr::unchecked("unknown")
+            }),
+            Err(_) => cosmwasm_std::Addr::unchecked("unknown"),
+        };
+
+        entries.push(LeaderboardEntry {
+            code: code.clone(),
+            owner,
+            total_rewards_earned: code_stats.total_rewards_earned,
+            total_user_bonuses: code_stats.total_user_bonuses,
+            total_swaps: code_stats.total_swaps,
+            rank,
+        });
+
+        // Move to next
+        let link = LEADERBOARD_LINKS.load(deps.storage, code)?;
+        current = link.next;
+        rank += 1;
+        count += 1;
+    }
+
+    // Check if there are more entries
+    let has_more = current.is_some();
+
+    Ok(ReferralLeaderboardResponse { entries, has_more })
 }
 
 // ============ TESTS ============
@@ -617,7 +1333,7 @@ mod tests {
             start_time,
             start_rate: Decimal::from_ratio(15u128, 10u128), // 1.5
             end_rate: Decimal::from_ratio(25u128, 10u128),   // 2.5
-            duration_seconds: 8_640_000,                      // 100 days
+            duration_seconds: None, // Uses DEFAULT_SWAP_DURATION (100 days)
             admin: ADMIN.to_string(),
         };
         let info = mock_info("creator", &[]);
@@ -649,6 +1365,11 @@ mod tests {
         assert_eq!(stats.total_ustr_minted, Uint128::zero());
         assert_eq!(stats.total_referral_bonus_minted, Uint128::zero());
         assert_eq!(stats.total_referral_swaps, 0);
+        assert_eq!(stats.unique_referral_codes_used, 0);
+
+        // Verify leaderboard head is initialized to None
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert!(head.is_none());
     }
 
     #[test]
@@ -659,7 +1380,10 @@ mod tests {
 
         // No funds sent
         let info = mock_info("user", &[]);
-        let msg = ExecuteMsg::Swap { referral_code: None };
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::NoFundsSent);
@@ -679,7 +1403,10 @@ mod tests {
                 amount: Uint128::from(1_000_000u128),
             }],
         );
-        let msg = ExecuteMsg::Swap { referral_code: None };
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::WrongDenom);
@@ -693,7 +1420,10 @@ mod tests {
         setup_contract(deps.as_mut(), env.block.time.seconds() + 1000);
 
         let info = mock_info("user", &ustc_coins(1_000_000));
-        let msg = ExecuteMsg::Swap { referral_code: None };
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapNotStarted);
@@ -709,7 +1439,10 @@ mod tests {
         env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 8_640_001);
 
         let info = mock_info("user", &ustc_coins(1_000_000));
-        let msg = ExecuteMsg::Swap { referral_code: None };
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapEnded);
@@ -722,7 +1455,10 @@ mod tests {
         setup_contract(deps.as_mut(), env.block.time.seconds());
 
         let info = mock_info("user", &ustc_coins(999_999)); // Below 1 USTC
-        let msg = ExecuteMsg::Swap { referral_code: None };
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
 
         let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
         assert_eq!(err, ContractError::BelowMinimumSwap);
@@ -736,7 +1472,10 @@ mod tests {
 
         let ustc_amount = 15_000_000u128; // 15 USTC
         let info = mock_info("user", &ustc_coins(ustc_amount));
-        let msg = ExecuteMsg::Swap { referral_code: None };
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
 
         let res = execute(deps.as_mut(), env, info, msg).unwrap();
 
@@ -760,6 +1499,7 @@ mod tests {
         assert_eq!(stats.total_ustr_minted, Uint128::from(10_000_000u128));
         assert_eq!(stats.total_referral_bonus_minted, Uint128::zero());
         assert_eq!(stats.total_referral_swaps, 0);
+        assert_eq!(stats.unique_referral_codes_used, 0);
     }
 
     #[test]
@@ -772,6 +1512,7 @@ mod tests {
         let info = mock_info("user", &ustc_coins(ustc_amount));
         let msg = ExecuteMsg::Swap {
             referral_code: Some("".to_string()),
+            leaderboard_hint: None,
         };
 
         // Empty code should be treated as no referral
@@ -795,7 +1536,10 @@ mod tests {
 
         // Try to swap while paused
         let info = mock_info("user", &ustc_coins(1_000_000));
-        let msg = ExecuteMsg::Swap { referral_code: None };
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
         let err = execute(deps.as_mut(), env.clone(), info, msg).unwrap_err();
         assert_eq!(err, ContractError::SwapPaused);
 
@@ -1310,10 +2054,14 @@ mod tests {
         assert_eq!(stats.total_ustr_minted, Uint128::zero());
         assert_eq!(stats.total_referral_bonus_minted, Uint128::zero());
         assert_eq!(stats.total_referral_swaps, 0);
+        assert_eq!(stats.unique_referral_codes_used, 0);
 
         // Do a swap (without referral - can't mock the referral contract query easily)
         let info = mock_info("user", &ustc_coins(15_000_000));
-        let msg = ExecuteMsg::Swap { referral_code: None };
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
         execute(deps.as_mut(), env.clone(), info, msg).unwrap();
 
         // Check updated stats
@@ -1323,6 +2071,7 @@ mod tests {
         assert_eq!(stats.total_ustr_minted, Uint128::from(10_000_000u128));
         assert_eq!(stats.total_referral_bonus_minted, Uint128::zero()); // No referral used
         assert_eq!(stats.total_referral_swaps, 0);
+        assert_eq!(stats.unique_referral_codes_used, 0);
     }
 
     #[test]
@@ -1354,6 +2103,1475 @@ mod tests {
         assert!(pending.is_some());
         let pending = pending.unwrap();
         assert_eq!(pending.new_address.as_str(), "new_admin");
+    }
+
+    // ============ LEADERBOARD TESTS ============
+
+    #[test]
+    fn test_leaderboard_head_initialized() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Leaderboard head should be None initially
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert!(head.is_none());
+
+        // Tail should also be None
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert!(tail.is_none());
+
+        // Size should be 0
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 0);
+    }
+
+    #[test]
+    fn test_leaderboard_insert_single() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Manually insert a code into leaderboard to test the structure
+        let code = "testcode";
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: Uint128::from(100u128),
+            total_user_bonuses: Uint128::from(100u128),
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, code, &code_stats)
+            .unwrap();
+
+        // Insert into leaderboard using try_insert (respects size tracking)
+        try_insert_into_leaderboard(&mut deps.storage, code, Uint128::from(100u128), None).unwrap();
+
+        // Verify head is set
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("testcode".to_string()));
+
+        // Verify tail is set (same as head for single entry)
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(tail, Some("testcode".to_string()));
+
+        // Verify size is 1
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 1);
+
+        // Verify link structure
+        let link = LEADERBOARD_LINKS.load(&deps.storage, code).unwrap();
+        assert!(link.prev.is_none());
+        assert!(link.next.is_none());
+    }
+
+    #[test]
+    fn test_leaderboard_insert_multiple_sorted() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert three codes with different rewards
+        // alpha: 100, beta: 200, gamma: 50
+        let codes = vec![
+            ("alpha", Uint128::from(100u128)),
+            ("beta", Uint128::from(200u128)),
+            ("gamma", Uint128::from(50u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Verify sorted order: beta (200) -> alpha (100) -> gamma (50)
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("beta".to_string()));
+
+        // Verify tail is gamma (lowest)
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(tail, Some("gamma".to_string()));
+
+        // Verify size is 3
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 3);
+
+        let beta_link = LEADERBOARD_LINKS.load(&deps.storage, "beta").unwrap();
+        assert!(beta_link.prev.is_none());
+        assert_eq!(beta_link.next, Some("alpha".to_string()));
+
+        let alpha_link = LEADERBOARD_LINKS.load(&deps.storage, "alpha").unwrap();
+        assert_eq!(alpha_link.prev, Some("beta".to_string()));
+        assert_eq!(alpha_link.next, Some("gamma".to_string()));
+
+        let gamma_link = LEADERBOARD_LINKS.load(&deps.storage, "gamma").unwrap();
+        assert_eq!(gamma_link.prev, Some("alpha".to_string()));
+        assert!(gamma_link.next.is_none());
+    }
+
+    #[test]
+    fn test_leaderboard_remove_middle() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert three codes
+        let codes = vec![
+            ("alpha", Uint128::from(100u128)),
+            ("beta", Uint128::from(200u128)),
+            ("gamma", Uint128::from(50u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Remove alpha (middle element)
+        remove_from_leaderboard(&mut deps.storage, "alpha").unwrap();
+
+        // Verify structure: beta (200) -> gamma (50)
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("beta".to_string()));
+
+        // Verify tail is still gamma
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(tail, Some("gamma".to_string()));
+
+        // Verify size decreased
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 2);
+
+        let beta_link = LEADERBOARD_LINKS.load(&deps.storage, "beta").unwrap();
+        assert!(beta_link.prev.is_none());
+        assert_eq!(beta_link.next, Some("gamma".to_string()));
+
+        let gamma_link = LEADERBOARD_LINKS.load(&deps.storage, "gamma").unwrap();
+        assert_eq!(gamma_link.prev, Some("beta".to_string()));
+        assert!(gamma_link.next.is_none());
+
+        // Verify alpha is removed
+        assert!(LEADERBOARD_LINKS.may_load(&deps.storage, "alpha").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_leaderboard_remove_head() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert two codes
+        let codes = vec![
+            ("alpha", Uint128::from(100u128)),
+            ("beta", Uint128::from(200u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Remove beta (head)
+        remove_from_leaderboard(&mut deps.storage, "beta").unwrap();
+
+        // Verify structure: alpha is now head and tail
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("alpha".to_string()));
+
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(tail, Some("alpha".to_string()));
+
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 1);
+
+        let alpha_link = LEADERBOARD_LINKS.load(&deps.storage, "alpha").unwrap();
+        assert!(alpha_link.prev.is_none());
+        assert!(alpha_link.next.is_none());
+    }
+
+    #[test]
+    fn test_leaderboard_top_50_cap() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert 50 codes (the max)
+        for i in 0..50 {
+            let code = format!("code{:02}", i);
+            let rewards = Uint128::from((50 - i) as u128 * 100); // Higher rewards for lower i
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: rewards,
+                total_user_bonuses: rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, &code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, &code, rewards, None).unwrap();
+        }
+
+        // Verify size is 50
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 50);
+
+        // Verify head is code00 (highest rewards: 5000)
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("code00".to_string()));
+
+        // Verify tail is code49 (lowest rewards: 100)
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(tail, Some("code49".to_string()));
+
+        // Try to insert a code with rewards lower than tail - should not enter
+        let low_code = "lowcode";
+        let low_rewards = Uint128::from(50u128); // Less than tail's 100
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: low_rewards,
+            total_user_bonuses: low_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, low_code, &code_stats)
+            .unwrap();
+        try_insert_into_leaderboard(&mut deps.storage, low_code, low_rewards, None).unwrap();
+
+        // Size should still be 50
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 50);
+
+        // lowcode should not be in leaderboard
+        assert!(LEADERBOARD_LINKS.may_load(&deps.storage, low_code).unwrap().is_none());
+
+        // Try to insert a code with rewards higher than tail - should enter
+        let high_code = "highcode";
+        let high_rewards = Uint128::from(150u128); // More than tail's 100
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: high_rewards,
+            total_user_bonuses: high_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, high_code, &code_stats)
+            .unwrap();
+        try_insert_into_leaderboard(&mut deps.storage, high_code, high_rewards, None).unwrap();
+
+        // Size should still be 50 (replaced tail)
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 50);
+
+        // highcode should be in leaderboard
+        assert!(LEADERBOARD_LINKS.may_load(&deps.storage, high_code).unwrap().is_some());
+
+        // code49 (old tail with 100 rewards) should be removed
+        assert!(LEADERBOARD_LINKS.may_load(&deps.storage, "code49").unwrap().is_none());
+
+        // New tail should be highcode (150) since it's less than code48 (200)
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(tail, Some("highcode".to_string()));
+
+        // Verify highcode is correctly positioned (after code48)
+        let highcode_link = LEADERBOARD_LINKS.load(&deps.storage, "highcode").unwrap();
+        assert_eq!(highcode_link.prev, Some("code48".to_string()));
+        assert!(highcode_link.next.is_none()); // It's the tail
+    }
+
+    #[test]
+    fn test_query_referral_leaderboard_empty() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::ReferralLeaderboard {
+                start_after: None,
+                limit: None,
+            },
+        )
+        .unwrap();
+        let leaderboard: ReferralLeaderboardResponse = from_json(res).unwrap();
+
+        assert!(leaderboard.entries.is_empty());
+        assert!(!leaderboard.has_more);
+    }
+
+    // ============ HINT-BASED INSERTION TESTS ============
+
+    #[test]
+    fn test_leaderboard_hint_correct() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert three codes: alpha (300), beta (200), gamma (100)
+        let codes = vec![
+            ("alpha", Uint128::from(300u128)),
+            ("beta", Uint128::from(200u128)),
+            ("gamma", Uint128::from(100u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Now insert "delta" with 150 rewards, with correct hint (after beta)
+        let delta_rewards = Uint128::from(150u128);
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: delta_rewards,
+            total_user_bonuses: delta_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "delta", &code_stats)
+            .unwrap();
+
+        let hint = crate::msg::LeaderboardHint {
+            insert_after: Some("beta".to_string()),
+        };
+        try_insert_into_leaderboard(&mut deps.storage, "delta", delta_rewards, Some(&hint)).unwrap();
+
+        // Verify order: alpha (300) -> beta (200) -> delta (150) -> gamma (100)
+        let delta_link = LEADERBOARD_LINKS.load(&deps.storage, "delta").unwrap();
+        assert_eq!(delta_link.prev, Some("beta".to_string()));
+        assert_eq!(delta_link.next, Some("gamma".to_string()));
+    }
+
+    #[test]
+    fn test_leaderboard_hint_too_high_fallback_down() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert: alpha (400), beta (300), gamma (200), epsilon (100)
+        let codes = vec![
+            ("alpha", Uint128::from(400u128)),
+            ("beta", Uint128::from(300u128)),
+            ("gamma", Uint128::from(200u128)),
+            ("epsilon", Uint128::from(100u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Insert "delta" with 150 rewards, but hint says after alpha (wrong - too high)
+        let delta_rewards = Uint128::from(150u128);
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: delta_rewards,
+            total_user_bonuses: delta_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "delta", &code_stats)
+            .unwrap();
+
+        let hint = crate::msg::LeaderboardHint {
+            insert_after: Some("alpha".to_string()), // Wrong! Should be after gamma
+        };
+        try_insert_into_leaderboard(&mut deps.storage, "delta", delta_rewards, Some(&hint)).unwrap();
+
+        // Should fall back and find correct position: after gamma (200), before epsilon (100)
+        let delta_link = LEADERBOARD_LINKS.load(&deps.storage, "delta").unwrap();
+        assert_eq!(delta_link.prev, Some("gamma".to_string()));
+        assert_eq!(delta_link.next, Some("epsilon".to_string()));
+    }
+
+    #[test]
+    fn test_leaderboard_hint_too_low_fallback_up() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert: alpha (400), beta (300), gamma (200), epsilon (100)
+        let codes = vec![
+            ("alpha", Uint128::from(400u128)),
+            ("beta", Uint128::from(300u128)),
+            ("gamma", Uint128::from(200u128)),
+            ("epsilon", Uint128::from(100u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Insert "delta" with 350 rewards, but hint says after gamma (wrong - too low)
+        let delta_rewards = Uint128::from(350u128);
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: delta_rewards,
+            total_user_bonuses: delta_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "delta", &code_stats)
+            .unwrap();
+
+        let hint = crate::msg::LeaderboardHint {
+            insert_after: Some("gamma".to_string()), // Wrong! Should be after alpha
+        };
+        try_insert_into_leaderboard(&mut deps.storage, "delta", delta_rewards, Some(&hint)).unwrap();
+
+        // Should fall back and find correct position: after alpha (400), before beta (300)
+        let delta_link = LEADERBOARD_LINKS.load(&deps.storage, "delta").unwrap();
+        assert_eq!(delta_link.prev, Some("alpha".to_string()));
+        assert_eq!(delta_link.next, Some("beta".to_string()));
+    }
+
+    #[test]
+    fn test_leaderboard_hint_new_head() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert: alpha (300), beta (200)
+        let codes = vec![
+            ("alpha", Uint128::from(300u128)),
+            ("beta", Uint128::from(200u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Insert "delta" with 500 rewards, hint says new head (insert_after: None)
+        let delta_rewards = Uint128::from(500u128);
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: delta_rewards,
+            total_user_bonuses: delta_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "delta", &code_stats)
+            .unwrap();
+
+        let hint = crate::msg::LeaderboardHint {
+            insert_after: None, // We claim to be new head
+        };
+        try_insert_into_leaderboard(&mut deps.storage, "delta", delta_rewards, Some(&hint)).unwrap();
+
+        // Verify delta is the new head
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("delta".to_string()));
+
+        let delta_link = LEADERBOARD_LINKS.load(&deps.storage, "delta").unwrap();
+        assert!(delta_link.prev.is_none());
+        assert_eq!(delta_link.next, Some("alpha".to_string()));
+    }
+
+    #[test]
+    fn test_leaderboard_hint_invalid_code_fallback() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert: alpha (300), beta (200)
+        let codes = vec![
+            ("alpha", Uint128::from(300u128)),
+            ("beta", Uint128::from(200u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Insert "delta" with 150 rewards, hint points to non-existent code
+        let delta_rewards = Uint128::from(150u128);
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: delta_rewards,
+            total_user_bonuses: delta_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "delta", &code_stats)
+            .unwrap();
+
+        let hint = crate::msg::LeaderboardHint {
+            insert_after: Some("nonexistent".to_string()), // Invalid hint
+        };
+        try_insert_into_leaderboard(&mut deps.storage, "delta", delta_rewards, Some(&hint)).unwrap();
+
+        // Should fall back to standard insertion and find correct position
+        let delta_link = LEADERBOARD_LINKS.load(&deps.storage, "delta").unwrap();
+        assert_eq!(delta_link.prev, Some("beta".to_string()));
+        assert!(delta_link.next.is_none()); // Delta is the new tail
+    }
+
+    // ============ LEADERBOARD EVENT EMISSION TESTS ============
+
+    #[test]
+    fn test_leaderboard_event_new_entry() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Setup code stats
+        let code = "testcode";
+        let rewards = Uint128::from(100u128);
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: rewards,
+            total_user_bonuses: rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, code, &code_stats)
+            .unwrap();
+
+        // Call update_leaderboard for a new entry
+        let change = update_leaderboard(
+            &mut deps.storage,
+            code,
+            rewards,
+            None,
+        )
+        .unwrap();
+
+        // Verify the change info
+        assert!(change.is_some());
+        let change = change.unwrap();
+        assert_eq!(change.action, LeaderboardAction::NewEntry);
+        assert_eq!(change.position, Some(1)); // First entry is position 1
+        assert!(change.displaced_code.is_none()); // No displacement
+    }
+
+    #[test]
+    fn test_leaderboard_event_position_up() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Setup two codes - alpha at 100, beta at 200
+        let codes = vec![
+            ("alpha", Uint128::from(100u128)),
+            ("beta", Uint128::from(200u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Verify initial order: beta (200) -> alpha (100)
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("beta".to_string()));
+
+        // Now alpha earns more rewards and should move up
+        let new_alpha_rewards = Uint128::from(300u128);
+        let alpha_stats = ReferralCodeStats {
+            total_rewards_earned: new_alpha_rewards,
+            total_user_bonuses: new_alpha_rewards,
+            total_swaps: 2,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "alpha", &alpha_stats)
+            .unwrap();
+
+        let change = update_leaderboard(
+            &mut deps.storage,
+            "alpha",
+            new_alpha_rewards,
+            None,
+        )
+        .unwrap();
+
+        // Verify the change info
+        assert!(change.is_some());
+        let change = change.unwrap();
+        assert_eq!(change.action, LeaderboardAction::PositionUp);
+        assert_eq!(change.position, Some(1)); // Alpha is now #1
+        assert!(change.displaced_code.is_none());
+
+        // Verify new order: alpha (300) -> beta (200)
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("alpha".to_string()));
+    }
+
+    #[test]
+    fn test_leaderboard_event_no_change() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Setup two codes - alpha at 100, beta at 200
+        let codes = vec![
+            ("alpha", Uint128::from(100u128)),
+            ("beta", Uint128::from(200u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Alpha earns a bit more but not enough to pass beta
+        let new_alpha_rewards = Uint128::from(150u128);
+        let alpha_stats = ReferralCodeStats {
+            total_rewards_earned: new_alpha_rewards,
+            total_user_bonuses: new_alpha_rewards,
+            total_swaps: 2,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "alpha", &alpha_stats)
+            .unwrap();
+
+        let change = update_leaderboard(
+            &mut deps.storage,
+            "alpha",
+            new_alpha_rewards,
+            None,
+        )
+        .unwrap();
+
+        // Verify the change info
+        assert!(change.is_some());
+        let change = change.unwrap();
+        assert_eq!(change.action, LeaderboardAction::NoChange);
+        assert_eq!(change.position, Some(2)); // Alpha stays at #2
+        assert!(change.displaced_code.is_none());
+
+        // Verify order unchanged: beta (200) -> alpha (150)
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("beta".to_string()));
+    }
+
+    #[test]
+    fn test_leaderboard_event_new_entry_with_displacement() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Fill leaderboard to capacity (50 entries)
+        for i in 0..50 {
+            let code = format!("code{}", i);
+            let rewards = Uint128::from((100 + i) as u128);
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: rewards,
+                total_user_bonuses: rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, &code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, &code, rewards, None).unwrap();
+        }
+
+        // Verify leaderboard is full
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 50);
+
+        // Get the current tail (lowest rewards - code0 with 100)
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(tail, Some("code0".to_string()));
+
+        // Add a new code with higher rewards than the tail
+        let new_code = "newcode";
+        let new_rewards = Uint128::from(105u128); // Higher than code0 (100) but lower than code1 (101)
+        let new_stats = ReferralCodeStats {
+            total_rewards_earned: new_rewards,
+            total_user_bonuses: new_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, new_code, &new_stats)
+            .unwrap();
+
+        let change = update_leaderboard(
+            &mut deps.storage,
+            new_code,
+            new_rewards,
+            None,
+        )
+        .unwrap();
+
+        // Verify the change info
+        assert!(change.is_some());
+        let change = change.unwrap();
+        assert_eq!(change.action, LeaderboardAction::NewEntry);
+        assert!(change.position.is_some());
+        assert_eq!(change.displaced_code, Some("code0".to_string())); // code0 was displaced
+
+        // Verify code0 is no longer in leaderboard
+        assert!(LEADERBOARD_LINKS
+            .may_load(&deps.storage, "code0")
+            .unwrap()
+            .is_none());
+
+        // Verify newcode is in leaderboard
+        assert!(LEADERBOARD_LINKS
+            .may_load(&deps.storage, new_code)
+            .unwrap()
+            .is_some());
+
+        // Size should still be 50
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 50);
+    }
+
+    #[test]
+    fn test_leaderboard_event_no_qualification() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Fill leaderboard to capacity (50 entries)
+        for i in 0..50 {
+            let code = format!("code{}", i);
+            let rewards = Uint128::from((100 + i) as u128);
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: rewards,
+                total_user_bonuses: rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, &code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, &code, rewards, None).unwrap();
+        }
+
+        // Add a new code with LOWER rewards than the tail
+        let new_code = "lowcode";
+        let new_rewards = Uint128::from(50u128); // Lower than code0 (100)
+        let new_stats = ReferralCodeStats {
+            total_rewards_earned: new_rewards,
+            total_user_bonuses: new_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, new_code, &new_stats)
+            .unwrap();
+
+        let change = update_leaderboard(
+            &mut deps.storage,
+            new_code,
+            new_rewards,
+            None,
+        )
+        .unwrap();
+
+        // Should return None - code didn't qualify
+        assert!(change.is_none());
+
+        // Verify lowcode is NOT in leaderboard
+        assert!(LEADERBOARD_LINKS
+            .may_load(&deps.storage, new_code)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn test_leaderboard_event_position_attribute_correct() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Insert three codes in specific order
+        // beta: 300, alpha: 200, gamma: 100
+        let codes = vec![
+            ("alpha", Uint128::from(200u128)),
+            ("beta", Uint128::from(300u128)),
+            ("gamma", Uint128::from(100u128)),
+        ];
+
+        for (code, rewards) in &codes {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: *rewards,
+                total_user_bonuses: *rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, *rewards, None).unwrap();
+        }
+
+        // Add delta at position 3 (150 - between alpha and gamma)
+        let delta_rewards = Uint128::from(150u128);
+        let delta_stats = ReferralCodeStats {
+            total_rewards_earned: delta_rewards,
+            total_user_bonuses: delta_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "delta", &delta_stats)
+            .unwrap();
+
+        let change = update_leaderboard(
+            &mut deps.storage,
+            "delta",
+            delta_rewards,
+            None,
+        )
+        .unwrap();
+
+        // Verify position is 3 (beta=1, alpha=2, delta=3, gamma=4)
+        assert!(change.is_some());
+        let change = change.unwrap();
+        assert_eq!(change.action, LeaderboardAction::NewEntry);
+        assert_eq!(change.position, Some(3));
+    }
+
+    // ============ REFERRAL CODE TESTS WITH MOCK QUERIER ============
+
+    use cosmwasm_std::testing::{MockApi, MockQuerier, MockStorage};
+    use cosmwasm_std::{
+        from_json as from_binary, ContractResult, Empty, OwnedDeps, Querier, QuerierResult,
+        SystemError, SystemResult,
+    };
+    use std::collections::HashMap;
+
+    /// Custom mock querier that handles referral contract queries
+    struct ReferralMockQuerier {
+        base: MockQuerier<Empty>,
+        referral_codes: HashMap<String, (bool, bool, Option<String>)>, // (is_valid_format, is_registered, owner)
+    }
+
+    impl ReferralMockQuerier {
+        fn new() -> Self {
+            Self {
+                base: MockQuerier::new(&[]),
+                referral_codes: HashMap::new(),
+            }
+        }
+
+        fn with_referral_code(
+            mut self,
+            code: &str,
+            is_valid_format: bool,
+            is_registered: bool,
+            owner: Option<&str>,
+        ) -> Self {
+            self.referral_codes.insert(
+                code.to_lowercase(),
+                (is_valid_format, is_registered, owner.map(|s| s.to_string())),
+            );
+            self
+        }
+    }
+
+    impl Querier for ReferralMockQuerier {
+        fn raw_query(&self, bin_request: &[u8]) -> QuerierResult {
+            let request: QueryRequest<Empty> = match from_binary(bin_request) {
+                Ok(v) => v,
+                Err(e) => {
+                    return SystemResult::Err(SystemError::InvalidRequest {
+                        error: format!("Parsing query request: {}", e),
+                        request: bin_request.into(),
+                    })
+                }
+            };
+
+            match request {
+                QueryRequest::Wasm(WasmQuery::Smart { contract_addr, msg }) => {
+                    // Check if this is a referral contract query
+                    if contract_addr == REFERRAL {
+                        let query_msg: ReferralQueryMsg = match from_binary(&msg) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                return SystemResult::Err(SystemError::InvalidRequest {
+                                    error: format!("Parsing referral query: {}", e),
+                                    request: msg.into(),
+                                })
+                            }
+                        };
+
+                        match query_msg {
+                            ReferralQueryMsg::ValidateCode { code } => {
+                                let normalized = code.to_lowercase();
+                                let (is_valid_format, is_registered, owner) = self
+                                    .referral_codes
+                                    .get(&normalized)
+                                    .cloned()
+                                    .unwrap_or((false, false, None));
+
+                                let response = ReferralValidateResponse {
+                                    is_valid_format,
+                                    is_registered,
+                                    owner: owner.map(|o| Addr::unchecked(o)),
+                                };
+
+                                SystemResult::Ok(ContractResult::Ok(
+                                    to_json_binary(&response).unwrap(),
+                                ))
+                            }
+                        }
+                    } else {
+                        self.base.raw_query(bin_request)
+                    }
+                }
+                _ => self.base.raw_query(bin_request),
+            }
+        }
+    }
+
+    fn mock_deps_with_referral(
+        codes: Vec<(&str, bool, bool, Option<&str>)>,
+    ) -> OwnedDeps<MockStorage, MockApi, ReferralMockQuerier, Empty> {
+        let mut querier = ReferralMockQuerier::new();
+        for (code, is_valid_format, is_registered, owner) in codes {
+            querier = querier.with_referral_code(code, is_valid_format, is_registered, owner);
+        }
+        OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier,
+            custom_query_type: std::marker::PhantomData,
+        }
+    }
+
+    fn setup_contract_with_querier(
+        deps: DepsMut<Empty>,
+        start_time: u64,
+    ) {
+        let msg = InstantiateMsg {
+            ustr_token: USTR_TOKEN.to_string(),
+            treasury: TREASURY.to_string(),
+            referral: REFERRAL.to_string(),
+            start_time,
+            start_rate: Decimal::from_ratio(15u128, 10u128),
+            end_rate: Decimal::from_ratio(25u128, 10u128),
+            duration_seconds: None,
+            admin: ADMIN.to_string(),
+        };
+        let info = mock_info("creator", &[]);
+        instantiate(deps, mock_env(), info, msg).unwrap();
+    }
+
+    #[test]
+    fn test_swap_with_valid_referral_code() {
+        // Setup with a valid, registered referral code
+        let mut deps = mock_deps_with_referral(vec![
+            ("TESTCODE", true, true, Some("referrer_addr")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let ustc_amount = 15_000_000u128; // 15 USTC
+        let info = mock_info("user", &ustc_coins(ustc_amount));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("TESTCODE".to_string()),
+            leaderboard_hint: None,
+        };
+
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        // Should have 3 messages: forward USTC, mint to user, mint to referrer
+        assert_eq!(res.messages.len(), 3);
+
+        // Check attributes
+        assert_eq!(res.attributes[0].value, "swap");
+        assert_eq!(res.attributes[1].value, "user");
+
+        // At day 0, rate = 1.5, so 15 USTC / 1.5 = 10 USTR base
+        // user_bonus = 10% of 10 USTR = 1 USTR
+        // referrer_bonus = 10% of 10 USTR = 1 USTR
+        let base_ustr = 10_000_000u128;
+        let bonus = base_ustr / 10; // 10% = 1_000_000
+
+        assert_eq!(res.attributes[4].value, base_ustr.to_string()); // base_ustr
+        assert_eq!(res.attributes[5].value, bonus.to_string()); // user_bonus
+        assert_eq!(
+            res.attributes[6].value,
+            (base_ustr + bonus).to_string()
+        ); // total_ustr_to_user
+
+        // Check referrer attributes
+        assert_eq!(res.attributes[7].value, "referrer_addr");
+        assert_eq!(res.attributes[8].value, bonus.to_string()); // referrer_bonus
+
+        // Verify stats updated
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.total_ustc_received, Uint128::from(ustc_amount));
+        assert_eq!(
+            stats.total_ustr_minted,
+            Uint128::from(base_ustr + bonus + bonus)
+        );
+        assert_eq!(
+            stats.total_referral_bonus_minted,
+            Uint128::from(bonus + bonus)
+        );
+        assert_eq!(stats.total_referral_swaps, 1);
+        assert_eq!(stats.unique_referral_codes_used, 1);
+
+        // Verify per-code stats created
+        let code_stats = REFERRAL_CODE_STATS
+            .load(&deps.storage, "testcode")
+            .unwrap();
+        assert_eq!(code_stats.total_rewards_earned, Uint128::from(bonus));
+        assert_eq!(code_stats.total_user_bonuses, Uint128::from(bonus));
+        assert_eq!(code_stats.total_swaps, 1);
+
+        // Verify leaderboard updated
+        let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
+        assert_eq!(head, Some("testcode".to_string()));
+    }
+
+    #[test]
+    fn test_swap_with_invalid_format_referral_code() {
+        // Setup with an invalid format code
+        let mut deps = mock_deps_with_referral(vec![
+            ("BAD!", false, false, None),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("user", &ustc_coins(15_000_000));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("BAD!".to_string()),
+            leaderboard_hint: None,
+        };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        match err {
+            ContractError::InvalidReferralCode { code } => {
+                assert_eq!(code, "BAD!");
+            }
+            _ => panic!("Expected InvalidReferralCode error, got: {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_swap_with_unregistered_referral_code() {
+        // Setup with a valid format but unregistered code
+        let mut deps = mock_deps_with_referral(vec![
+            ("NOTREGISTERED", true, false, None),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("user", &ustc_coins(15_000_000));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("NOTREGISTERED".to_string()),
+            leaderboard_hint: None,
+        };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        match err {
+            ContractError::ReferralCodeNotRegistered { code } => {
+                assert_eq!(code, "NOTREGISTERED");
+            }
+            _ => panic!("Expected ReferralCodeNotRegistered error, got: {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_swap_multiple_denoms() {
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Send multiple denominations
+        let info = mock_info(
+            "user",
+            &[
+                Coin {
+                    denom: USTC_DENOM.to_string(),
+                    amount: Uint128::from(1_000_000u128),
+                },
+                Coin {
+                    denom: "uluna".to_string(),
+                    amount: Uint128::from(1_000_000u128),
+                },
+            ],
+        );
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
+
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(err, ContractError::MultipleDenoms);
+    }
+
+    #[test]
+    fn test_multiple_swaps_same_referral_code() {
+        // Setup with a valid referral code
+        let mut deps = mock_deps_with_referral(vec![
+            ("MYCODE", true, true, Some("referrer_addr")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        // First swap
+        let ustc_amount = 15_000_000u128;
+        let info = mock_info("user1", &ustc_coins(ustc_amount));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("MYCODE".to_string()),
+            leaderboard_hint: None,
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Second swap with same code, different user
+        let info = mock_info("user2", &ustc_coins(ustc_amount));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("mycode".to_string()), // Test case-insensitivity
+            leaderboard_hint: None,
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Verify aggregated stats
+        let stats = STATS.load(&deps.storage).unwrap();
+        assert_eq!(stats.total_referral_swaps, 2);
+        assert_eq!(stats.unique_referral_codes_used, 1); // Same code, only counted once
+
+        // Verify per-code stats aggregated
+        let code_stats = REFERRAL_CODE_STATS.load(&deps.storage, "mycode").unwrap();
+        assert_eq!(code_stats.total_swaps, 2);
+
+        // Each swap: base=10M, bonus=1M
+        // Total rewards = 2M (1M per swap)
+        let bonus_per_swap = 1_000_000u128;
+        assert_eq!(
+            code_stats.total_rewards_earned,
+            Uint128::from(bonus_per_swap * 2)
+        );
+        assert_eq!(
+            code_stats.total_user_bonuses,
+            Uint128::from(bonus_per_swap * 2)
+        );
+    }
+
+    #[test]
+    fn test_swap_referral_updates_leaderboard_with_events() {
+        // Setup with a valid referral code
+        let mut deps = mock_deps_with_referral(vec![
+            ("CODE1", true, true, Some("referrer1")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("user", &ustc_coins(15_000_000));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("CODE1".to_string()),
+            leaderboard_hint: None,
+        };
+
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        // Find leaderboard_action attribute
+        let leaderboard_action = res
+            .attributes
+            .iter()
+            .find(|a| a.key == "leaderboard_action")
+            .map(|a| a.value.as_str());
+        assert_eq!(leaderboard_action, Some("new_entry"));
+
+        // Find leaderboard_position attribute
+        let leaderboard_position = res
+            .attributes
+            .iter()
+            .find(|a| a.key == "leaderboard_position")
+            .map(|a| a.value.as_str());
+        assert_eq!(leaderboard_position, Some("1"));
+    }
+
+    #[test]
+    fn test_query_referral_code_stats_with_usage() {
+        // Setup with a valid referral code
+        let mut deps = mock_deps_with_referral(vec![
+            ("STATCODE", true, true, Some("owner_addr")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        // Do a swap with the code
+        let info = mock_info("user", &ustc_coins(15_000_000));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("STATCODE".to_string()),
+            leaderboard_hint: None,
+        };
+        execute(deps.as_mut(), env.clone(), info, msg).unwrap();
+
+        // Query the stats
+        let query_msg = QueryMsg::ReferralCodeStats {
+            code: "STATCODE".to_string(),
+        };
+        let res = query(deps.as_ref(), env, query_msg).unwrap();
+        let stats: ReferralCodeStatsResponse = from_json(res).unwrap();
+
+        assert_eq!(stats.code, "statcode");
+        assert_eq!(stats.owner.as_str(), "owner_addr");
+        assert_eq!(stats.total_swaps, 1);
+        assert_eq!(stats.total_rewards_earned, Uint128::from(1_000_000u128));
+        assert_eq!(stats.total_user_bonuses, Uint128::from(1_000_000u128));
+    }
+
+    #[test]
+    fn test_query_referral_code_stats_never_used() {
+        // Setup with a valid, registered code that was never used in a swap
+        let mut deps = mock_deps_with_referral(vec![
+            ("UNUSEDCODE", true, true, Some("owner_addr")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        // Query the stats without doing any swaps
+        let query_msg = QueryMsg::ReferralCodeStats {
+            code: "UNUSEDCODE".to_string(),
+        };
+        let res = query(deps.as_ref(), env, query_msg).unwrap();
+        let stats: ReferralCodeStatsResponse = from_json(res).unwrap();
+
+        assert_eq!(stats.code, "unusedcode");
+        assert_eq!(stats.owner.as_str(), "owner_addr");
+        assert_eq!(stats.total_swaps, 0);
+        assert_eq!(stats.total_rewards_earned, Uint128::zero());
+        assert_eq!(stats.total_user_bonuses, Uint128::zero());
+    }
+
+    #[test]
+    fn test_query_referral_leaderboard_pagination() {
+        let mut deps = mock_deps_with_referral(vec![
+            ("code1", true, true, Some("owner1")),
+            ("code2", true, true, Some("owner2")),
+            ("code3", true, true, Some("owner3")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        // Insert codes directly into leaderboard with different rewards
+        // code3: 300, code2: 200, code1: 100
+        for (code, rewards) in [("code1", 100u128), ("code2", 200u128), ("code3", 300u128)] {
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: Uint128::from(rewards),
+                total_user_bonuses: Uint128::from(rewards),
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, code, Uint128::from(rewards), None)
+                .unwrap();
+        }
+
+        // Query first page with limit 2
+        let query_msg = QueryMsg::ReferralLeaderboard {
+            start_after: None,
+            limit: Some(2),
+        };
+        let res = query(deps.as_ref(), env.clone(), query_msg).unwrap();
+        let leaderboard: ReferralLeaderboardResponse = from_json(res).unwrap();
+
+        assert_eq!(leaderboard.entries.len(), 2);
+        assert!(leaderboard.has_more);
+        assert_eq!(leaderboard.entries[0].code, "code3");
+        assert_eq!(leaderboard.entries[0].rank, 1);
+        assert_eq!(leaderboard.entries[1].code, "code2");
+        assert_eq!(leaderboard.entries[1].rank, 2);
+
+        // Query second page
+        let query_msg = QueryMsg::ReferralLeaderboard {
+            start_after: Some("code2".to_string()),
+            limit: Some(2),
+        };
+        let res = query(deps.as_ref(), env, query_msg).unwrap();
+        let leaderboard: ReferralLeaderboardResponse = from_json(res).unwrap();
+
+        assert_eq!(leaderboard.entries.len(), 1);
+        assert!(!leaderboard.has_more);
+        assert_eq!(leaderboard.entries[0].code, "code1");
+        assert_eq!(leaderboard.entries[0].rank, 3);
+    }
+
+    #[test]
+    fn test_query_swap_simulation_with_valid_referral() {
+        let mut deps = mock_deps_with_referral(vec![
+            ("VALIDCODE", true, true, Some("owner_addr")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let query_msg = QueryMsg::SwapSimulation {
+            ustc_amount: Uint128::from(15_000_000u128),
+            referral_code: Some("VALIDCODE".to_string()),
+        };
+        let res = query(deps.as_ref(), env, query_msg).unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        assert!(sim.referral_valid);
+        assert_eq!(sim.base_ustr_amount, Uint128::from(10_000_000u128));
+        assert_eq!(sim.user_bonus, Uint128::from(1_000_000u128));
+        assert_eq!(sim.referrer_bonus, Uint128::from(1_000_000u128));
+        assert_eq!(sim.total_ustr_to_user, Uint128::from(11_000_000u128));
+    }
+
+    #[test]
+    fn test_query_swap_simulation_with_invalid_referral() {
+        let mut deps = mock_deps_with_referral(vec![
+            ("BADCODE", false, false, None),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let query_msg = QueryMsg::SwapSimulation {
+            ustc_amount: Uint128::from(15_000_000u128),
+            referral_code: Some("BADCODE".to_string()),
+        };
+        let res = query(deps.as_ref(), env, query_msg).unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        assert!(!sim.referral_valid);
+        assert_eq!(sim.user_bonus, Uint128::zero());
+        assert_eq!(sim.referrer_bonus, Uint128::zero());
+        assert_eq!(sim.total_ustr_to_user, Uint128::from(10_000_000u128));
+    }
+
+    #[test]
+    fn test_query_swap_simulation_with_empty_referral() {
+        let mut deps = mock_deps_with_referral(vec![]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let query_msg = QueryMsg::SwapSimulation {
+            ustc_amount: Uint128::from(15_000_000u128),
+            referral_code: Some("".to_string()),
+        };
+        let res = query(deps.as_ref(), env, query_msg).unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        assert!(!sim.referral_valid);
+        assert_eq!(sim.user_bonus, Uint128::zero());
+    }
+
+    #[test]
+    fn test_referral_code_case_insensitive() {
+        // Setup with a lowercase code
+        let mut deps = mock_deps_with_referral(vec![
+            ("mycode", true, true, Some("referrer")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        // Use uppercase version
+        let info = mock_info("user", &ustc_coins(15_000_000));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("MYCODE".to_string()),
+            leaderboard_hint: None,
+        };
+
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+        assert_eq!(res.messages.len(), 3); // Should succeed with referral bonus
+
+        // Stats should be saved with lowercase
+        let code_stats = REFERRAL_CODE_STATS.load(&deps.storage, "mycode").unwrap();
+        assert_eq!(code_stats.total_swaps, 1);
+    }
+
+    #[test]
+    fn test_swap_referral_mints_to_correct_addresses() {
+        let mut deps = mock_deps_with_referral(vec![
+            ("CODE", true, true, Some("referrer_wallet")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("swapper", &ustc_coins(15_000_000));
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("CODE".to_string()),
+            leaderboard_hint: None,
+        };
+
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        // Message 0: Forward USTC to treasury
+        // Message 1: Mint USTR to user (swapper)
+        // Message 2: Mint USTR to referrer
+
+        // Verify user mint message
+        if let CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) = &res.messages[1].msg {
+            let mint_msg: Cw20ExecuteMsg = from_json(msg).unwrap();
+            match mint_msg {
+                Cw20ExecuteMsg::Mint { recipient, amount } => {
+                    assert_eq!(recipient, "swapper");
+                    assert_eq!(amount, Uint128::from(11_000_000u128)); // base + bonus
+                }
+                _ => panic!("Expected Mint message"),
+            }
+        }
+
+        // Verify referrer mint message
+        if let CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) = &res.messages[2].msg {
+            let mint_msg: Cw20ExecuteMsg = from_json(msg).unwrap();
+            match mint_msg {
+                Cw20ExecuteMsg::Mint { recipient, amount } => {
+                    assert_eq!(recipient, "referrer_wallet");
+                    assert_eq!(amount, Uint128::from(1_000_000u128)); // referrer bonus
+                }
+                _ => panic!("Expected Mint message"),
+            }
+        }
     }
 }
 

@@ -231,6 +231,13 @@ All submessages execute in the same transaction context. If any fails, everythin
 | `total_ustc_received` | `Uint128` | Cumulative USTC deposited (tracked via notifications) |
 | `total_ustr_minted` | `Uint128` | Cumulative USTR issued |
 | `paused` | `bool` | Emergency pause status |
+| `referral_code_stats` | `Map<String, ReferralCodeStats>` | Per-code reward tracking (rewards earned, user bonuses, swap count) |
+| `leaderboard_head` | `Option<String>` | Head of sorted linked list (code with highest rewards) |
+| `leaderboard_links` | `Map<String, LeaderboardLink>` | Linked list pointers for leaderboard ordering |
+
+**Referral Tracking**: Each referral code tracks cumulative rewards paid to the referrer (`total_rewards_earned`), bonuses given to users (`total_user_bonuses`), and swap count (`total_swaps`). For example, if 100 USTR is swapped using a code, the referrer earns 10 USTR (10% bonus).
+
+**Leaderboard**: Uses a sorted doubly-linked list to rank codes by `total_rewards_earned`. Queries traverse from `leaderboard_head` following `next` pointers for efficient pagination.
 
 ## Security Model
 

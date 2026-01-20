@@ -19,10 +19,20 @@ pub struct InstantiateMsg {
     pub start_rate: Decimal,
     /// Ending exchange rate (2.5)
     pub end_rate: Decimal,
-    /// Swap duration in seconds (8,640,000 for 100 days)
-    pub duration_seconds: u64,
+    /// Swap duration in seconds (defaults to 8,640,000 for 100 days if not provided)
+    pub duration_seconds: Option<u64>,
     /// Admin address for emergencies
     pub admin: String,
+}
+
+/// Hint for O(1) leaderboard insertion
+/// Frontend queries current leaderboard and provides the position hint
+/// If hint is wrong, contract falls back to searching from the hint position
+#[cw_serde]
+pub struct LeaderboardHint {
+    /// Code that should be immediately before us in the leaderboard (higher rewards)
+    /// None means we claim to be the new head (highest rewards)
+    pub insert_after: Option<String>,
 }
 
 /// Execute messages
@@ -36,6 +46,10 @@ pub enum ExecuteMsg {
         /// Optional referral code. If None or empty, no referral bonus.
         /// If Some but invalid/not registered, transaction fails.
         referral_code: Option<String>,
+        /// Optional hint for O(1) leaderboard insertion.
+        /// If None, falls back to O(n) search from tail.
+        /// If wrong, searches from hint position (up or down).
+        leaderboard_hint: Option<LeaderboardHint>,
     },
 
     /// Pauses swap functionality (admin only)
@@ -92,6 +106,22 @@ pub enum QueryMsg {
     /// Returns pending admin proposal details
     #[returns(Option<PendingAdminResponse>)]
     PendingAdmin {},
+
+    /// Returns reward statistics for a specific referral code
+    #[returns(ReferralCodeStatsResponse)]
+    ReferralCodeStats {
+        /// The referral code to query (case-insensitive)
+        code: String,
+    },
+
+    /// Returns paginated leaderboard of referral codes ranked by total rewards earned
+    #[returns(ReferralLeaderboardResponse)]
+    ReferralLeaderboard {
+        /// Optional code to start after (for cursor-based pagination)
+        start_after: Option<String>,
+        /// Maximum number of entries to return (default: 10, max: 50)
+        limit: Option<u32>,
+    },
 }
 
 /// Response for Config query
@@ -166,6 +196,8 @@ pub struct StatsResponse {
     pub total_referral_bonus_minted: Uint128,
     /// Count of swaps that used valid referral codes
     pub total_referral_swaps: u64,
+    /// Count of unique referral codes that have been used in at least one swap
+    pub unique_referral_codes_used: u64,
 }
 
 /// Response for PendingAdmin query
@@ -173,5 +205,46 @@ pub struct StatsResponse {
 pub struct PendingAdminResponse {
     pub new_address: Addr,
     pub execute_after: Timestamp,
+}
+
+/// Response for ReferralCodeStats query
+#[cw_serde]
+pub struct ReferralCodeStatsResponse {
+    /// The referral code (normalized to lowercase)
+    pub code: String,
+    /// Code owner address (queried from Referral contract)
+    pub owner: Addr,
+    /// Total USTR earned by the code owner from referrals
+    pub total_rewards_earned: Uint128,
+    /// Total USTR bonuses given to users who used this code
+    pub total_user_bonuses: Uint128,
+    /// Number of swaps that used this referral code
+    pub total_swaps: u64,
+}
+
+/// Response for ReferralLeaderboard query
+#[cw_serde]
+pub struct ReferralLeaderboardResponse {
+    /// Leaderboard entries sorted by total_rewards_earned (descending)
+    pub entries: Vec<LeaderboardEntry>,
+    /// Whether more entries exist after this page
+    pub has_more: bool,
+}
+
+/// Single entry in the referral leaderboard
+#[cw_serde]
+pub struct LeaderboardEntry {
+    /// The referral code
+    pub code: String,
+    /// Code owner address
+    pub owner: Addr,
+    /// Total USTR earned by the code owner from referrals
+    pub total_rewards_earned: Uint128,
+    /// Total USTR bonuses given to users who used this code
+    pub total_user_bonuses: Uint128,
+    /// Number of swaps that used this referral code
+    pub total_swaps: u64,
+    /// Position on the leaderboard (1-indexed)
+    pub rank: u32,
 }
 
