@@ -11,13 +11,21 @@
  * - Optional countdown timer in overlay
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSwap } from '../../hooks/useSwap';
 import { useWallet } from '../../hooks/useWallet';
 import { useLaunchStatus } from '../../hooks/useLaunchStatus';
 import { Card, CardContent } from '../common/Card';
 import { Button } from '../common/Button';
 import { formatAmount, formatRate, formatDuration } from '../../utils/format';
+
+/** Launch date for countdown timer */
+const LAUNCH_DATE = new Date('2026-01-22T13:00:00Z');
+
+/** Format countdown values with leading zeros */
+function padNumber(num: number): string {
+  return num.toString().padStart(2, '0');
+}
 
 interface SwapCardProps {
   /** Pre-filled referral code (from URL parameter) */
@@ -45,6 +53,48 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
     isActive,
     timeRemaining,
   } = useSwap();
+
+  // Countdown timer state
+  const [countdown, setCountdown] = useState<{
+    days: number;
+    hours: number;
+    minutes: number;
+    seconds: number;
+  } | null>(null);
+
+  // Update countdown every second when not launched
+  useEffect(() => {
+    if (isLaunched) {
+      setCountdown(null);
+      return;
+    }
+
+    const calculateCountdown = () => {
+      const now = new Date().getTime();
+      const target = LAUNCH_DATE.getTime();
+      const diff = target - now;
+
+      if (diff <= 0) {
+        setCountdown(null);
+        return;
+      }
+
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+      setCountdown({ days, hours, minutes, seconds });
+    };
+
+    // Calculate immediately
+    calculateCountdown();
+
+    // Update every second
+    const interval = setInterval(calculateCountdown, 1000);
+
+    return () => clearInterval(interval);
+  }, [isLaunched]);
 
   // Set initial referral code from props
   useEffect(() => {
@@ -78,6 +128,30 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
               <p className="text-lg font-semibold text-white mb-2">
                 Swap Not Available Yet
               </p>
+              {/* Countdown Timer */}
+              {countdown && (
+                <div className="flex items-center justify-center gap-2 mb-3">
+                  <div className="flex flex-col items-center">
+                    <span className="text-2xl font-mono-numbers font-bold text-amber-400">{padNumber(countdown.days)}</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">days</span>
+                  </div>
+                  <span className="text-xl font-bold text-gray-600 -mt-4">:</span>
+                  <div className="flex flex-col items-center">
+                    <span className="text-2xl font-mono-numbers font-bold text-amber-400">{padNumber(countdown.hours)}</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">hrs</span>
+                  </div>
+                  <span className="text-xl font-bold text-gray-600 -mt-4">:</span>
+                  <div className="flex flex-col items-center">
+                    <span className="text-2xl font-mono-numbers font-bold text-amber-400">{padNumber(countdown.minutes)}</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">min</span>
+                  </div>
+                  <span className="text-xl font-bold text-gray-600 -mt-4">:</span>
+                  <div className="flex flex-col items-center">
+                    <span className="text-2xl font-mono-numbers font-bold text-amber-400">{padNumber(countdown.seconds)}</span>
+                    <span className="text-[10px] text-gray-500 uppercase tracking-wider">sec</span>
+                  </div>
+                </div>
+              )}
               <p className="text-sm text-gray-400">
                 Opens January 22, 2026 at 13:00 UTC
               </p>
