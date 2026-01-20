@@ -264,9 +264,6 @@ fn execute_swap(
                     ),
                 };
 
-            // Track the old rewards for potential future use
-            let _old_rewards = code_stats.total_rewards_earned;
-
             // Update per-code stats
             code_stats.total_rewards_earned += referrer_bonus;
             code_stats.total_user_bonuses += user_bonus;
