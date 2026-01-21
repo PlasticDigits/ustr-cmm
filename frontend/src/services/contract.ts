@@ -77,33 +77,168 @@ class ContractService {
 
   async getSwapConfig(): Promise<SwapConfig> {
     const contracts = this.getContracts();
-    // TODO: Implement actual query
-    console.log('Querying swap config from:', contracts.ustcSwap);
     
-    // Placeholder response
-    return {
-      ustr_token: contracts.ustrToken,
-      treasury: contracts.treasury,
-      start_time: '0',
-      end_time: '0',
-      start_rate: '1.5',
-      end_rate: '2.5',
-      admin: '',
-      ustc_denom: 'uusd',
-      paused: false,
-    };
+    if (!contracts.ustcSwap) {
+      console.warn('Swap contract address not configured');
+      return {
+        ustr_token: contracts.ustrToken || '',
+        treasury: contracts.treasury || '',
+        start_time: '0',
+        end_time: '0',
+        start_rate: '1.5',
+        end_rate: '2.5',
+        admin: '',
+        ustc_denom: 'uusd',
+        paused: false,
+      };
+    }
+    
+    try {
+      // Contract returns ConfigResponse with these fields
+      interface ContractConfigResponse {
+        ustr_token: string;
+        treasury: string;
+        referral: string;
+        start_time: string; // Timestamp as nanoseconds string
+        end_time: string;   // Timestamp as nanoseconds string
+        start_rate: string; // Decimal as string
+        end_rate: string;   // Decimal as string
+        admin: string;
+        paused: boolean;
+      }
+      
+      const result = await this.queryContract<{ data: ContractConfigResponse }>(
+        contracts.ustcSwap,
+        { config: {} }
+      );
+      
+      const data = result.data;
+      
+      // Convert nanosecond timestamps to seconds for frontend
+      // CosmWasm Timestamp is stored as nanoseconds
+      const startTimeNanos = BigInt(data.start_time);
+      const endTimeNanos = BigInt(data.end_time);
+      const startTimeSecs = (startTimeNanos / BigInt(1_000_000_000)).toString();
+      const endTimeSecs = (endTimeNanos / BigInt(1_000_000_000)).toString();
+      
+      return {
+        ustr_token: data.ustr_token,
+        treasury: data.treasury,
+        start_time: startTimeSecs,
+        end_time: endTimeSecs,
+        start_rate: data.start_rate,
+        end_rate: data.end_rate,
+        admin: data.admin,
+        ustc_denom: 'uusd', // Native USTC denom on Terra Classic
+        paused: data.paused,
+      };
+    } catch (error) {
+      console.error('Failed to get swap config:', error);
+      return {
+        ustr_token: contracts.ustrToken || '',
+        treasury: contracts.treasury || '',
+        start_time: '0',
+        end_time: '0',
+        start_rate: '1.5',
+        end_rate: '2.5',
+        admin: '',
+        ustc_denom: 'uusd',
+        paused: false,
+      };
+    }
   }
 
   async getCurrentRate(): Promise<SwapRate> {
-    // TODO: Implement actual query
-    return {
-      rate: '1.5',
-      timestamp: Date.now().toString(),
-    };
+    const contracts = this.getContracts();
+    
+    if (!contracts.ustcSwap) {
+      console.warn('Swap contract address not configured');
+      return {
+        rate: '1.5',
+        timestamp: Date.now().toString(),
+      };
+    }
+    
+    try {
+      // Contract returns RateResponse with these fields
+      interface ContractRateResponse {
+        rate: string;         // Decimal as string
+        elapsed_seconds: number;
+        total_seconds: number;
+      }
+      
+      const result = await this.queryContract<{ data: ContractRateResponse }>(
+        contracts.ustcSwap,
+        { current_rate: {} }
+      );
+      
+      const data = result.data;
+      
+      return {
+        rate: data.rate,
+        timestamp: Date.now().toString(),
+      };
+    } catch (error) {
+      console.error('Failed to get current rate:', error);
+      return {
+        rate: '1.5',
+        timestamp: Date.now().toString(),
+      };
+    }
   }
 
   async simulateSwap(ustcAmount: string, referralCode?: string): Promise<SwapSimulation> {
-    // TODO: Implement actual contract query
+    const contracts = this.getContracts();
+    
+    if (!contracts.ustcSwap) {
+      console.warn('Swap contract address not configured, using client-side simulation');
+      return this.simulateSwapClientSide(ustcAmount, referralCode);
+    }
+    
+    try {
+      // Contract returns SimulationResponse with these fields
+      interface ContractSimulationResponse {
+        ustc_amount: string;
+        base_ustr_amount: string;
+        user_bonus: string;
+        referrer_bonus: string;
+        total_ustr_to_user: string;
+        rate: string;
+        referral_valid: boolean;
+      }
+      
+      // Build query with optional referral code
+      const query: { swap_simulation: { ustc_amount: string; referral_code?: string } } = {
+        swap_simulation: { ustc_amount: ustcAmount }
+      };
+      if (referralCode) {
+        query.swap_simulation.referral_code = referralCode;
+      }
+      
+      const result = await this.queryContract<{ data: ContractSimulationResponse }>(
+        contracts.ustcSwap,
+        query
+      );
+      
+      const data = result.data;
+      
+      return {
+        ustc_amount: data.ustc_amount,
+        ustr_amount: data.total_ustr_to_user,
+        rate: data.rate,
+        referral_code: referralCode,
+        bonus_amount: data.referral_valid ? data.user_bonus : undefined,
+      };
+    } catch (error) {
+      console.error('Failed to simulate swap from contract, using client-side:', error);
+      return this.simulateSwapClientSide(ustcAmount, referralCode);
+    }
+  }
+
+  /**
+   * Client-side swap simulation fallback when contract query fails
+   */
+  private simulateSwapClientSide(ustcAmount: string, referralCode?: string): SwapSimulation {
     const rate = 1.5;
     const ustc = parseFloat(ustcAmount);
     const baseUstr = ustc / rate;
@@ -140,24 +275,105 @@ class ContractService {
       };
     }
 
-    // TODO: Implement actual query
-    return {
-      started: false,
-      ended: false,
-      paused: false,
-      seconds_until_start: 0,
-      seconds_until_end: 8640000,
-      elapsed_seconds: 0,
-    };
+    const contracts = this.getContracts();
+    
+    if (!contracts.ustcSwap) {
+      console.warn('Swap contract address not configured');
+      return {
+        started: false,
+        ended: false,
+        paused: false,
+        seconds_until_start: 0,
+        seconds_until_end: 0,
+        elapsed_seconds: 0,
+      };
+    }
+    
+    try {
+      // Contract returns StatusResponse with different field names
+      interface ContractStatusResponse {
+        is_active: boolean;
+        has_started: boolean;
+        has_ended: boolean;
+        is_paused: boolean;
+        seconds_remaining: number;
+        seconds_until_start: number;
+      }
+      
+      const result = await this.queryContract<{ data: ContractStatusResponse }>(
+        contracts.ustcSwap,
+        { status: {} }
+      );
+      
+      const data = result.data;
+      
+      // Map contract response to frontend SwapStatus type
+      // elapsed_seconds can be derived from config if needed, or estimated
+      return {
+        started: data.has_started,
+        ended: data.has_ended,
+        paused: data.is_paused,
+        seconds_until_start: data.seconds_until_start,
+        seconds_until_end: data.seconds_remaining,
+        elapsed_seconds: 0, // Not directly available from status query
+      };
+    } catch (error) {
+      console.error('Failed to get swap status:', error);
+      return {
+        started: false,
+        ended: false,
+        paused: false,
+        seconds_until_start: 0,
+        seconds_until_end: 0,
+        elapsed_seconds: 0,
+      };
+    }
   }
 
   async getSwapStats(): Promise<SwapStats> {
-    // TODO: Implement actual query
-    return {
-      total_ustc_received: '0',
-      total_ustr_minted: '0',
-      swap_count: 0,
-    };
+    const contracts = this.getContracts();
+    
+    if (!contracts.ustcSwap) {
+      console.warn('Swap contract address not configured');
+      return {
+        total_ustc_received: '0',
+        total_ustr_minted: '0',
+        swap_count: 0,
+      };
+    }
+    
+    try {
+      // Contract returns StatsResponse
+      interface ContractStatsResponse {
+        total_ustc_received: string;
+        total_ustr_minted: string;
+        total_referral_bonus_minted: string;
+        total_referral_swaps: number;
+        unique_referral_codes_used: number;
+      }
+      
+      const result = await this.queryContract<{ data: ContractStatsResponse }>(
+        contracts.ustcSwap,
+        { stats: {} }
+      );
+      
+      const data = result.data;
+      
+      // Map contract response to frontend SwapStats type
+      // Note: contract doesn't track total swap count, only referral swaps
+      return {
+        total_ustc_received: data.total_ustc_received,
+        total_ustr_minted: data.total_ustr_minted,
+        swap_count: data.total_referral_swaps, // Using referral swaps as approximation
+      };
+    } catch (error) {
+      console.error('Failed to get swap stats:', error);
+      return {
+        total_ustc_received: '0',
+        total_ustr_minted: '0',
+        swap_count: 0,
+      };
+    }
   }
 
   // ============================================
@@ -165,19 +381,99 @@ class ContractService {
   // ============================================
 
   async getTreasuryConfig(): Promise<TreasuryConfig> {
-    // TODO: Implement actual query
-    return {
-      governance: '',
-      timelock_duration: 604800,
-    };
+    const contracts = this.getContracts();
+    
+    if (!contracts.treasury) {
+      console.warn('Treasury contract address not configured');
+      return {
+        governance: '',
+        timelock_duration: 604800, // 7 days default
+      };
+    }
+    
+    try {
+      // Contract returns ConfigResponse with these fields
+      interface ContractConfigResponse {
+        governance: string;
+        timelock_duration: number;
+        swap_contract: string | null;
+      }
+      
+      const result = await this.queryContract<{ data: ContractConfigResponse }>(
+        contracts.treasury,
+        { config: {} }
+      );
+      
+      const data = result.data;
+      
+      return {
+        governance: data.governance,
+        timelock_duration: data.timelock_duration,
+      };
+    } catch (error) {
+      console.error('Failed to get treasury config:', error);
+      return {
+        governance: '',
+        timelock_duration: 604800,
+      };
+    }
   }
 
   async getTreasuryBalances(): Promise<TreasuryAllBalances> {
-    // TODO: Implement actual query
-    return {
-      native: [],
-      cw20: [],
-    };
+    const contracts = this.getContracts();
+    
+    if (!contracts.treasury) {
+      console.warn('Treasury contract address not configured');
+      return {
+        native: [],
+        cw20: [],
+      };
+    }
+    
+    try {
+      // Contract returns AllBalancesResponse with AssetBalance entries
+      interface AssetBalance {
+        asset: { native: { denom: string } } | { cw20: { contract_addr: string } };
+        amount: string;
+      }
+      
+      interface ContractAllBalancesResponse {
+        balances: AssetBalance[];
+      }
+      
+      const result = await this.queryContract<{ data: ContractAllBalancesResponse }>(
+        contracts.treasury,
+        { all_balances: {} }
+      );
+      
+      const data = result.data;
+      
+      // Separate native and CW20 balances
+      const native: Array<{ denom: string; amount: string }> = [];
+      const cw20: Array<{ contract_addr: string; amount: string }> = [];
+      
+      for (const balance of data.balances) {
+        if ('native' in balance.asset) {
+          native.push({
+            denom: balance.asset.native.denom,
+            amount: balance.amount,
+          });
+        } else if ('cw20' in balance.asset) {
+          cw20.push({
+            contract_addr: balance.asset.cw20.contract_addr,
+            amount: balance.amount,
+          });
+        }
+      }
+      
+      return { native, cw20 };
+    } catch (error) {
+      console.error('Failed to get treasury balances:', error);
+      return {
+        native: [],
+        cw20: [],
+      };
+    }
   }
 
   // ============================================
@@ -326,18 +622,19 @@ class ContractService {
   }
 
   async executeAirdrop(
-    senderAddress: string,
-    tokenAddress: string,
-    recipients: Array<{ address: string; amount: string }>
+    _senderAddress: string,
+    _tokenAddress: string,
+    _recipients: Array<{ address: string; amount: string }>
   ): Promise<string> {
-    // TODO: Implement actual execution
-    console.log('Executing airdrop:', { 
-      sender: senderAddress, 
-      token: tokenAddress, 
-      recipientCount: recipients.length 
-    });
-    
-    return 'placeholder_tx_hash';
+    // Airdrop functionality requires a dedicated airdrop contract or
+    // batch transfer capability which is not currently implemented.
+    // CW20 tokens require individual transfer messages, making batch
+    // airdrops gas-intensive. Consider using an airdrop contract like
+    // cw20-merkle-airdrop for efficient large-scale distributions.
+    throw new Error(
+      'Airdrop functionality not implemented. ' +
+      'For batch token distributions, deploy a dedicated airdrop contract.'
+    );
   }
 
   // ============================================
