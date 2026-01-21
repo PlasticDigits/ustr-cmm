@@ -18,6 +18,7 @@ import { useLaunchStatus } from '../../hooks/useLaunchStatus';
 import { Card, CardContent } from '../common/Card';
 import { Button } from '../common/Button';
 import { formatAmount, formatRate, formatDuration } from '../../utils/format';
+import { DECIMALS } from '../../utils/constants';
 
 /** Launch date for countdown timer */
 const LAUNCH_DATE = new Date('2026-01-22T13:00:00Z');
@@ -251,7 +252,7 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
             <div className="px-4 py-4 bg-surface-800/30 border border-white/5 rounded-xl flex items-center justify-between">
               <span className="text-lg font-mono-numbers text-white font-medium">
                 {simulation 
-                  ? formatAmount(simulation.ustr_amount)
+                  ? formatAmount(simulation.ustr_amount, DECIMALS.USTR)
                   : '0.00'
                 }
               </span>

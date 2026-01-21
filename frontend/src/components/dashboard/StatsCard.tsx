@@ -9,6 +9,7 @@
 
 import { Card, CardContent } from '../common/Card';
 import { formatAmount } from '../../utils/format';
+import { DECIMALS } from '../../utils/constants';
 import { useSwap } from '../../hooks/useSwap';
 
 export function StatsCard() {
@@ -29,7 +30,7 @@ export function StatsCard() {
     },
     {
       label: 'Total USTR Minted',
-      value: swapStats ? formatAmount(swapStats.total_ustr_minted) : '—',
+      value: swapStats ? formatAmount(swapStats.total_ustr_minted, DECIMALS.USTR) : '—',
       suffix: 'USTR',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
