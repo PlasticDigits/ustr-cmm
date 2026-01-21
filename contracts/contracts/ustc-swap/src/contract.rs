@@ -7,7 +7,7 @@ use cosmwasm_std::{
     QueryRequest, Response, StdResult, Timestamp, Uint128, WasmMsg, WasmQuery,
 };
 use cw2::set_contract_version;
-use cw20::Cw20ExecuteMsg;
+use cw20::{Cw20ExecuteMsg, Cw20QueryMsg, TokenInfoResponse};
 
 use crate::error::ContractError;
 use crate::msg::{
@@ -17,10 +17,11 @@ use crate::msg::{
 };
 use crate::state::{
     Config, LeaderboardLink, PendingAdmin, ReferralCodeStats, Stats, ADMIN_TIMELOCK_DURATION,
-    CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DEFAULT_LEADERBOARD_LIMIT, DEFAULT_SWAP_DURATION,
-    LEADERBOARD_HEAD, LEADERBOARD_LINKS, LEADERBOARD_SIZE, LEADERBOARD_TAIL,
-    MAX_LEADERBOARD_LIMIT, MAX_LEADERBOARD_SIZE, MIN_SWAP_AMOUNT, PENDING_ADMIN,
-    REFERRAL_BONUS_DENOMINATOR, REFERRAL_BONUS_NUMERATOR, REFERRAL_CODE_STATS, STATS, USTC_DENOM,
+    CONFIG, CONTRACT_NAME, CONTRACT_VERSION, DECIMAL_ADJUSTMENT, DEFAULT_LEADERBOARD_LIMIT,
+    DEFAULT_SWAP_DURATION, LEADERBOARD_HEAD, LEADERBOARD_LINKS, LEADERBOARD_SIZE, LEADERBOARD_TAIL,
+    MAX_LEADERBOARD_LIMIT, MAX_LEADERBOARD_SIZE, MIN_SWAP_AMOUNT, MINT_SAFETY_LIMIT_DENOMINATOR,
+    MINT_SAFETY_LIMIT_NUMERATOR, PENDING_ADMIN, REFERRAL_BONUS_DENOMINATOR, REFERRAL_BONUS_NUMERATOR,
+    REFERRAL_CODE_STATS, STATS, USTC_DENOM,
 };
 use common::AssetInfo;
 
@@ -60,6 +61,15 @@ pub enum LeaderboardAction {
     NoChange,
 }
 
+/// Expected USTR decimals (18 decimals like most ERC20-style tokens)
+const EXPECTED_USTR_DECIMALS: u8 = 18;
+
+/// Expected USTC decimals (6 decimals for Terra Classic native tokens)
+/// Note: Native token decimals cannot be queried on-chain; this is a protocol constant.
+/// USTC (uusd) on Terra Classic uses 6 decimals (1 USTC = 1,000,000 uusd).
+#[allow(dead_code)]
+const EXPECTED_USTC_DECIMALS: u8 = 6;
+
 // ============ INSTANTIATE ============
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -75,6 +85,21 @@ pub fn instantiate(
     let treasury = deps.api.addr_validate(&msg.treasury)?;
     let referral = deps.api.addr_validate(&msg.referral)?;
     let admin = deps.api.addr_validate(&msg.admin)?;
+
+    // Validate USTR token decimals at deployment time
+    // The contract's decimal adjustment assumes USTR has 18 decimals and USTC has 6 decimals
+    // USTC decimals (6) are a Terra Classic protocol constant and cannot be queried on-chain
+    let ustr_token_info: TokenInfoResponse = deps.querier.query(&QueryRequest::Wasm(WasmQuery::Smart {
+        contract_addr: ustr_token.to_string(),
+        msg: to_json_binary(&Cw20QueryMsg::TokenInfo {})?,
+    }))?;
+
+    if ustr_token_info.decimals != EXPECTED_USTR_DECIMALS {
+        return Err(ContractError::InvalidUstrDecimals {
+            expected: EXPECTED_USTR_DECIMALS,
+            actual: ustr_token_info.decimals,
+        });
+    }
 
     let start_time = Timestamp::from_seconds(msg.start_time);
     let duration = msg.duration_seconds.unwrap_or(DEFAULT_SWAP_DURATION);
@@ -192,8 +217,12 @@ fn execute_swap(
     // Calculate current rate
     let rate = calculate_current_rate(&config, env.block.time);
 
-    // Calculate base USTR amount: base_ustr = floor(ustc_amount / current_rate)
-    let ustc_decimal = Decimal::from_ratio(ustc_amount, 1u128);
+    // Calculate base USTR amount with decimal adjustment
+    // USTC has 6 decimals, USTR has 18 decimals, so we multiply by 10^12
+    // base_ustr = floor((ustc_amount * 10^12) / current_rate)
+    let adjusted_ustc = ustc_amount.checked_mul(Uint128::from(DECIMAL_ADJUSTMENT))
+        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::generic_err(e.to_string())))?;
+    let ustc_decimal = Decimal::from_ratio(adjusted_ustc, 1u128);
     let ustr_decimal = ustc_decimal / rate;
     let base_ustr = ustr_decimal * Uint128::one();
 
@@ -233,6 +262,24 @@ fn execute_swap(
 
     let total_ustr_to_user = base_ustr + user_bonus;
     let total_ustr_minted = total_ustr_to_user + referrer_bonus;
+
+    // Safety check: ensure mint amount doesn't exceed 5% of total supply
+    // This prevents catastrophic minting bugs from draining value
+    let token_info: TokenInfoResponse = deps.querier.query(
+        &QueryRequest::Wasm(WasmQuery::Smart {
+            contract_addr: config.ustr_token.to_string(),
+            msg: to_json_binary(&Cw20QueryMsg::TokenInfo {})?,
+        }),
+    )?;
+    let max_safe_mint = token_info
+        .total_supply
+        .multiply_ratio(MINT_SAFETY_LIMIT_NUMERATOR, MINT_SAFETY_LIMIT_DENOMINATOR);
+    if total_ustr_minted > max_safe_mint {
+        return Err(ContractError::MintExceedsSafetyLimit {
+            mint_amount: total_ustr_minted.to_string(),
+            total_supply: token_info.total_supply.to_string(),
+        });
+    }
 
     // Update stats
     let mut stats = STATS.load(deps.storage)?;
@@ -1084,7 +1131,11 @@ fn query_swap_simulation(
     let config = CONFIG.load(deps.storage)?;
     let rate = calculate_current_rate(&config, env.block.time);
 
-    let ustc_decimal = Decimal::from_ratio(ustc_amount, 1u128);
+    // Calculate base USTR amount with decimal adjustment
+    // USTC has 6 decimals, USTR has 18 decimals, so we multiply by 10^12
+    // base_ustr = floor((ustc_amount * 10^12) / current_rate)
+    let adjusted_ustc = ustc_amount.checked_mul(Uint128::from(DECIMAL_ADJUSTMENT))?;
+    let ustc_decimal = Decimal::from_ratio(adjusted_ustc, 1u128);
     let ustr_decimal = ustc_decimal / rate;
     let base_ustr_amount = ustr_decimal * Uint128::one();
 
@@ -1314,13 +1365,82 @@ fn query_referral_leaderboard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{from_json, Addr, Coin, Decimal};
+    use cosmwasm_std::testing::{mock_env, mock_info, MockApi, MockQuerier, MockStorage};
+    use cosmwasm_std::{from_json, Addr, Coin, Decimal, Empty, OwnedDeps, Querier, QuerierResult, SystemResult, ContractResult, SystemError};
 
     const ADMIN: &str = "admin_addr";
     const USTR_TOKEN: &str = "ustr_token_addr";
     const TREASURY: &str = "treasury_addr";
     const REFERRAL: &str = "referral_addr";
+    
+    // USTR has 18 decimals, USTC has 6 decimals
+    // 1 USTR = 10^18 atomic units, 1 USTC = 10^6 atomic units
+    // When swapping 15 USTC at rate 1.5: 15 / 1.5 = 10 USTR = 10 * 10^18 atomic units
+    const TEN_USTR: u128 = 10_000_000_000_000_000_000; // 10 USTR in 18-decimal
+    const ONE_USTR: u128 = 1_000_000_000_000_000_000;  // 1 USTR in 18-decimal (10% bonus)
+    
+    // Default total supply for USTR token in tests
+    const DEFAULT_USTR_TOTAL_SUPPLY_BASIC: u128 = 1_000_000_000_000_000_000_000_000_000;
+
+    /// Simple mock querier that handles USTR TokenInfo queries
+    /// Used for tests that don't need referral mocking
+    struct UstrMockQuerier {
+        base: MockQuerier<Empty>,
+    }
+
+    impl UstrMockQuerier {
+        fn new() -> Self {
+            Self {
+                base: MockQuerier::new(&[]),
+            }
+        }
+    }
+
+    impl Querier for UstrMockQuerier {
+        fn raw_query(&self, bin_request: &[u8]) -> QuerierResult {
+            let request: QueryRequest<Empty> = match cosmwasm_std::from_json(bin_request) {
+                Ok(v) => v,
+                Err(e) => {
+                    return SystemResult::Err(SystemError::InvalidRequest {
+                        error: format!("Parsing query request: {}", e),
+                        request: bin_request.into(),
+                    })
+                }
+            };
+
+            match request {
+                QueryRequest::Wasm(WasmQuery::Smart { contract_addr, msg }) => {
+                    // Handle USTR token queries
+                    if contract_addr == USTR_TOKEN {
+                        let query_msg: Result<Cw20QueryMsg, _> = cosmwasm_std::from_json(&msg);
+                        if let Ok(Cw20QueryMsg::TokenInfo {}) = query_msg {
+                            let response = TokenInfoResponse {
+                                name: "USTR Token".to_string(),
+                                symbol: "USTR".to_string(),
+                                decimals: 18,
+                                total_supply: Uint128::from(DEFAULT_USTR_TOTAL_SUPPLY_BASIC),
+                            };
+                            return SystemResult::Ok(ContractResult::Ok(
+                                to_json_binary(&response).unwrap(),
+                            ));
+                        }
+                    }
+                    self.base.raw_query(bin_request)
+                }
+                _ => self.base.raw_query(bin_request),
+            }
+        }
+    }
+
+    /// Create mock dependencies with USTR token info support
+    fn mock_dependencies() -> OwnedDeps<MockStorage, MockApi, UstrMockQuerier, Empty> {
+        OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier: UstrMockQuerier::new(),
+            custom_query_type: std::marker::PhantomData,
+        }
+    }
 
     fn setup_contract(deps: DepsMut, start_time: u64) {
         let msg = InstantiateMsg {
@@ -1367,6 +1487,105 @@ mod tests {
         // Verify leaderboard head is initialized to None
         let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
         assert!(head.is_none());
+    }
+
+    #[test]
+    fn test_instantiate_rejects_wrong_ustr_decimals() {
+        // Mock querier that returns wrong decimals for USTR
+        struct WrongDecimalsMockQuerier {
+            base: MockQuerier<Empty>,
+            decimals: u8,
+        }
+
+        impl Querier for WrongDecimalsMockQuerier {
+            fn raw_query(&self, bin_request: &[u8]) -> QuerierResult {
+                let request: QueryRequest<Empty> = match cosmwasm_std::from_json(bin_request) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return SystemResult::Err(SystemError::InvalidRequest {
+                            error: format!("Parsing query request: {}", e),
+                            request: bin_request.into(),
+                        })
+                    }
+                };
+
+                match request {
+                    QueryRequest::Wasm(WasmQuery::Smart { contract_addr, msg }) => {
+                        if contract_addr == USTR_TOKEN {
+                            let query_msg: Result<Cw20QueryMsg, _> = cosmwasm_std::from_json(&msg);
+                            if let Ok(Cw20QueryMsg::TokenInfo {}) = query_msg {
+                                let response = TokenInfoResponse {
+                                    name: "USTR Token".to_string(),
+                                    symbol: "USTR".to_string(),
+                                    decimals: self.decimals, // Wrong decimals!
+                                    total_supply: Uint128::from(1_000_000_000u128),
+                                };
+                                return SystemResult::Ok(ContractResult::Ok(
+                                    to_json_binary(&response).unwrap(),
+                                ));
+                            }
+                        }
+                        self.base.raw_query(bin_request)
+                    }
+                    _ => self.base.raw_query(bin_request),
+                }
+            }
+        }
+
+        // Test with 6 decimals (like USTC) - should fail
+        let deps_6_decimals = OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier: WrongDecimalsMockQuerier {
+                base: MockQuerier::new(&[]),
+                decimals: 6,
+            },
+            custom_query_type: std::marker::PhantomData,
+        };
+        let mut deps = deps_6_decimals;
+        let env = mock_env();
+
+        let msg = InstantiateMsg {
+            ustr_token: USTR_TOKEN.to_string(),
+            treasury: TREASURY.to_string(),
+            referral: REFERRAL.to_string(),
+            start_time: env.block.time.seconds(),
+            start_rate: Decimal::from_ratio(15u128, 10u128),
+            end_rate: Decimal::from_ratio(25u128, 10u128),
+            duration_seconds: None,
+            admin: ADMIN.to_string(),
+        };
+        let info = mock_info("creator", &[]);
+
+        let err = instantiate(deps.as_mut(), env.clone(), info.clone(), msg.clone()).unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::InvalidUstrDecimals {
+                expected: 18,
+                actual: 6
+            }
+        );
+
+        // Test with 8 decimals - should also fail
+        let deps_8_decimals = OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier: WrongDecimalsMockQuerier {
+                base: MockQuerier::new(&[]),
+                decimals: 8,
+            },
+            custom_query_type: std::marker::PhantomData,
+        };
+        let mut deps = deps_8_decimals;
+
+        let err = instantiate(deps.as_mut(), env, info, msg).unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::InvalidUstrDecimals {
+                expected: 18,
+                actual: 8
+            }
+        );
     }
 
     #[test]
@@ -1463,9 +1682,9 @@ mod tests {
 
     #[test]
     fn test_swap_success_no_referral() {
-        let mut deps = mock_dependencies();
+        let mut deps = mock_deps_with_referral(vec![]);
         let env = mock_env();
-        setup_contract(deps.as_mut(), env.block.time.seconds());
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
 
         let ustc_amount = 15_000_000u128; // 15 USTC
         let info = mock_info("user", &ustc_coins(ustc_amount));
@@ -1484,16 +1703,16 @@ mod tests {
         assert_eq!(res.attributes[1].value, "user");
         assert_eq!(res.attributes[2].value, ustc_amount.to_string());
 
-        // At day 0, rate = 1.5, so 15 USTC / 1.5 = 10 USTR
-        // base_ustr = 10_000_000, user_bonus = 0 (no referral)
-        assert_eq!(res.attributes[4].value, "10000000"); // base_ustr
+        // At day 0, rate = 1.5, so 15 USTC / 1.5 = 10 USTR (in 18-decimal)
+        // base_ustr = 10 * 10^18, user_bonus = 0 (no referral)
+        assert_eq!(res.attributes[4].value, TEN_USTR.to_string()); // base_ustr
         assert_eq!(res.attributes[5].value, "0"); // user_bonus
-        assert_eq!(res.attributes[6].value, "10000000"); // total_ustr_to_user
+        assert_eq!(res.attributes[6].value, TEN_USTR.to_string()); // total_ustr_to_user
 
         // Verify stats updated
         let stats = STATS.load(&deps.storage).unwrap();
         assert_eq!(stats.total_ustc_received, Uint128::from(ustc_amount));
-        assert_eq!(stats.total_ustr_minted, Uint128::from(10_000_000u128));
+        assert_eq!(stats.total_ustr_minted, Uint128::from(TEN_USTR));
         assert_eq!(stats.total_referral_bonus_minted, Uint128::zero());
         assert_eq!(stats.total_referral_swaps, 0);
         assert_eq!(stats.unique_referral_codes_used, 0);
@@ -1501,9 +1720,9 @@ mod tests {
 
     #[test]
     fn test_swap_with_empty_referral_code() {
-        let mut deps = mock_dependencies();
+        let mut deps = mock_deps_with_referral(vec![]);
         let env = mock_env();
-        setup_contract(deps.as_mut(), env.block.time.seconds());
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
 
         let ustc_amount = 15_000_000u128;
         let info = mock_info("user", &ustc_coins(ustc_amount));
@@ -1958,11 +2177,11 @@ mod tests {
         let sim: SimulationResponse = from_json(res).unwrap();
 
         assert_eq!(sim.ustc_amount, ustc_amount);
-        // At rate 1.5: 15 USTC / 1.5 = 10 USTR
-        assert_eq!(sim.base_ustr_amount, Uint128::from(10_000_000u128));
+        // At rate 1.5: 15 USTC / 1.5 = 10 USTR (in 18-decimal)
+        assert_eq!(sim.base_ustr_amount, Uint128::from(TEN_USTR));
         assert_eq!(sim.user_bonus, Uint128::zero());
         assert_eq!(sim.referrer_bonus, Uint128::zero());
-        assert_eq!(sim.total_ustr_to_user, Uint128::from(10_000_000u128));
+        assert_eq!(sim.total_ustr_to_user, Uint128::from(TEN_USTR));
         assert_eq!(sim.rate, Decimal::from_ratio(15u128, 10u128));
         assert!(!sim.referral_valid);
     }
@@ -2040,9 +2259,9 @@ mod tests {
 
     #[test]
     fn test_query_stats() {
-        let mut deps = mock_dependencies();
+        let mut deps = mock_deps_with_referral(vec![]);
         let env = mock_env();
-        setup_contract(deps.as_mut(), env.block.time.seconds());
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
 
         // Initial stats should be zero
         let res = query(deps.as_ref(), env.clone(), QueryMsg::Stats {}).unwrap();
@@ -2053,7 +2272,7 @@ mod tests {
         assert_eq!(stats.total_referral_swaps, 0);
         assert_eq!(stats.unique_referral_codes_used, 0);
 
-        // Do a swap (without referral - can't mock the referral contract query easily)
+        // Do a swap (without referral)
         let info = mock_info("user", &ustc_coins(15_000_000));
         let msg = ExecuteMsg::Swap {
             referral_code: None,
@@ -2065,7 +2284,7 @@ mod tests {
         let res = query(deps.as_ref(), env, QueryMsg::Stats {}).unwrap();
         let stats: StatsResponse = from_json(res).unwrap();
         assert_eq!(stats.total_ustc_received, Uint128::from(15_000_000u128));
-        assert_eq!(stats.total_ustr_minted, Uint128::from(10_000_000u128));
+        assert_eq!(stats.total_ustr_minted, Uint128::from(TEN_USTR));
         assert_eq!(stats.total_referral_bonus_minted, Uint128::zero()); // No referral used
         assert_eq!(stats.total_referral_swaps, 0);
         assert_eq!(stats.unique_referral_codes_used, 0);
@@ -2982,17 +3201,16 @@ mod tests {
 
     // ============ REFERRAL CODE TESTS WITH MOCK QUERIER ============
 
-    use cosmwasm_std::testing::{MockApi, MockQuerier, MockStorage};
-    use cosmwasm_std::{
-        from_json as from_binary, ContractResult, Empty, OwnedDeps, Querier, QuerierResult,
-        SystemError, SystemResult,
-    };
     use std::collections::HashMap;
 
-    /// Custom mock querier that handles referral contract queries
+    /// Default USTR total supply for tests (1 billion USTR in 18-decimal)
+    const DEFAULT_USTR_TOTAL_SUPPLY: u128 = 1_000_000_000_000_000_000_000_000_000;
+
+    /// Custom mock querier that handles referral and USTR token queries
     struct ReferralMockQuerier {
         base: MockQuerier<Empty>,
         referral_codes: HashMap<String, (bool, bool, Option<String>)>, // (is_valid_format, is_registered, owner)
+        ustr_total_supply: Uint128,
     }
 
     impl ReferralMockQuerier {
@@ -3000,6 +3218,7 @@ mod tests {
             Self {
                 base: MockQuerier::new(&[]),
                 referral_codes: HashMap::new(),
+                ustr_total_supply: Uint128::from(DEFAULT_USTR_TOTAL_SUPPLY),
             }
         }
 
@@ -3016,11 +3235,16 @@ mod tests {
             );
             self
         }
+
+        fn with_ustr_total_supply(mut self, supply: Uint128) -> Self {
+            self.ustr_total_supply = supply;
+            self
+        }
     }
 
     impl Querier for ReferralMockQuerier {
         fn raw_query(&self, bin_request: &[u8]) -> QuerierResult {
-            let request: QueryRequest<Empty> = match from_binary(bin_request) {
+            let request: QueryRequest<Empty> = match from_json(bin_request) {
                 Ok(v) => v,
                 Err(e) => {
                     return SystemResult::Err(SystemError::InvalidRequest {
@@ -3032,9 +3256,26 @@ mod tests {
 
             match request {
                 QueryRequest::Wasm(WasmQuery::Smart { contract_addr, msg }) => {
+                    // Check if this is a USTR token query
+                    if contract_addr == USTR_TOKEN {
+                        // Try to parse as CW20 query
+                        let query_msg: Result<Cw20QueryMsg, _> = from_json(&msg);
+                        if let Ok(Cw20QueryMsg::TokenInfo {}) = query_msg {
+                            let response = TokenInfoResponse {
+                                name: "USTR Token".to_string(),
+                                symbol: "USTR".to_string(),
+                                decimals: 18,
+                                total_supply: self.ustr_total_supply,
+                            };
+                            return SystemResult::Ok(ContractResult::Ok(
+                                to_json_binary(&response).unwrap(),
+                            ));
+                        }
+                        self.base.raw_query(bin_request)
+                    }
                     // Check if this is a referral contract query
-                    if contract_addr == REFERRAL {
-                        let query_msg: ReferralQueryMsg = match from_binary(&msg) {
+                    else if contract_addr == REFERRAL {
+                        let query_msg: ReferralQueryMsg = match from_json(&msg) {
                             Ok(v) => v,
                             Err(e) => {
                                 return SystemResult::Err(SystemError::InvalidRequest {
@@ -3088,6 +3329,7 @@ mod tests {
         }
     }
 
+
     fn setup_contract_with_querier(
         deps: DepsMut<Empty>,
         start_time: u64,
@@ -3131,11 +3373,11 @@ mod tests {
         assert_eq!(res.attributes[0].value, "swap");
         assert_eq!(res.attributes[1].value, "user");
 
-        // At day 0, rate = 1.5, so 15 USTC / 1.5 = 10 USTR base
+        // At day 0, rate = 1.5, so 15 USTC / 1.5 = 10 USTR base (in 18-decimal)
         // user_bonus = 10% of 10 USTR = 1 USTR
         // referrer_bonus = 10% of 10 USTR = 1 USTR
-        let base_ustr = 10_000_000u128;
-        let bonus = base_ustr / 10; // 10% = 1_000_000
+        let base_ustr = TEN_USTR;
+        let bonus = ONE_USTR; // 10% of TEN_USTR
 
         assert_eq!(res.attributes[4].value, base_ustr.to_string()); // base_ustr
         assert_eq!(res.attributes[5].value, bonus.to_string()); // user_bonus
@@ -3287,16 +3529,15 @@ mod tests {
         let code_stats = REFERRAL_CODE_STATS.load(&deps.storage, "mycode").unwrap();
         assert_eq!(code_stats.total_swaps, 2);
 
-        // Each swap: base=10M, bonus=1M
-        // Total rewards = 2M (1M per swap)
-        let bonus_per_swap = 1_000_000u128;
+        // Each swap: base=10 USTR (10 * 10^18), bonus=1 USTR (10^18)
+        // Total rewards = 2 USTR (1 USTR per swap)
         assert_eq!(
             code_stats.total_rewards_earned,
-            Uint128::from(bonus_per_swap * 2)
+            Uint128::from(ONE_USTR * 2)
         );
         assert_eq!(
             code_stats.total_user_bonuses,
-            Uint128::from(bonus_per_swap * 2)
+            Uint128::from(ONE_USTR * 2)
         );
     }
 
@@ -3361,8 +3602,9 @@ mod tests {
         assert_eq!(stats.code, "statcode");
         assert_eq!(stats.owner.as_str(), "owner_addr");
         assert_eq!(stats.total_swaps, 1);
-        assert_eq!(stats.total_rewards_earned, Uint128::from(1_000_000u128));
-        assert_eq!(stats.total_user_bonuses, Uint128::from(1_000_000u128));
+        // 15 USTC / 1.5 = 10 USTR base, 10% bonus = 1 USTR (in 18-decimal)
+        assert_eq!(stats.total_rewards_earned, Uint128::from(ONE_USTR));
+        assert_eq!(stats.total_user_bonuses, Uint128::from(ONE_USTR));
     }
 
     #[test]
@@ -3458,10 +3700,10 @@ mod tests {
         let sim: SimulationResponse = from_json(res).unwrap();
 
         assert!(sim.referral_valid);
-        assert_eq!(sim.base_ustr_amount, Uint128::from(10_000_000u128));
-        assert_eq!(sim.user_bonus, Uint128::from(1_000_000u128));
-        assert_eq!(sim.referrer_bonus, Uint128::from(1_000_000u128));
-        assert_eq!(sim.total_ustr_to_user, Uint128::from(11_000_000u128));
+        assert_eq!(sim.base_ustr_amount, Uint128::from(TEN_USTR));
+        assert_eq!(sim.user_bonus, Uint128::from(ONE_USTR));
+        assert_eq!(sim.referrer_bonus, Uint128::from(ONE_USTR));
+        assert_eq!(sim.total_ustr_to_user, Uint128::from(TEN_USTR + ONE_USTR));
     }
 
     #[test]
@@ -3482,7 +3724,7 @@ mod tests {
         assert!(!sim.referral_valid);
         assert_eq!(sim.user_bonus, Uint128::zero());
         assert_eq!(sim.referrer_bonus, Uint128::zero());
-        assert_eq!(sim.total_ustr_to_user, Uint128::from(10_000_000u128));
+        assert_eq!(sim.total_ustr_to_user, Uint128::from(TEN_USTR));
     }
 
     #[test]
@@ -3552,7 +3794,7 @@ mod tests {
             match mint_msg {
                 Cw20ExecuteMsg::Mint { recipient, amount } => {
                     assert_eq!(recipient, "swapper");
-                    assert_eq!(amount, Uint128::from(11_000_000u128)); // base + bonus
+                    assert_eq!(amount, Uint128::from(TEN_USTR + ONE_USTR)); // base + bonus
                 }
                 _ => panic!("Expected Mint message"),
             }
@@ -3564,10 +3806,379 @@ mod tests {
             match mint_msg {
                 Cw20ExecuteMsg::Mint { recipient, amount } => {
                     assert_eq!(recipient, "referrer_wallet");
-                    assert_eq!(amount, Uint128::from(1_000_000u128)); // referrer bonus
+                    assert_eq!(amount, Uint128::from(ONE_USTR)); // referrer bonus
                 }
                 _ => panic!("Expected Mint message"),
             }
+        }
+    }
+
+    // ============ DECIMAL HANDLING TESTS ============
+    // These tests verify correct handling of USTC (6 decimals) to USTR (18 decimals) conversion
+
+    #[test]
+    fn test_decimal_conversion_1_ustc() {
+        // 1 USTC = 1,000,000 uusd (6 decimals)
+        // At rate 1.5, 1 USTC should give 1/1.5 = 0.666... USTR
+        // In 18-decimal: 666,666,666,666,666,666 atomic units
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let ustc_amount = Uint128::from(1_000_000u128); // 1 USTC
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        // 1 USTC / 1.5 = 0.666... USTR = 666,666,666,666,666,666 atomic units (truncated)
+        let expected = Uint128::from(666_666_666_666_666_666u128);
+        assert_eq!(sim.base_ustr_amount, expected);
+        assert_eq!(sim.total_ustr_to_user, expected);
+    }
+
+    #[test]
+    fn test_decimal_conversion_100_ustc() {
+        // 100 USTC = 100,000,000 uusd
+        // At rate 1.5: 100 / 1.5 = 66.666... USTR
+        // In 18-decimal: 66,666,666,666,666,666,666 atomic units
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let ustc_amount = Uint128::from(100_000_000u128); // 100 USTC
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        // 100 USTC / 1.5 = 66.666... USTR in 18-decimal
+        let expected = Uint128::from(66_666_666_666_666_666_666u128);
+        assert_eq!(sim.base_ustr_amount, expected);
+    }
+
+    #[test]
+    fn test_decimal_conversion_at_rate_2() {
+        // At midpoint (rate = 2.0), 10 USTC should give 5 USTR
+        let mut deps = mock_dependencies();
+        let mut env = mock_env();
+        
+        // Set start time so we're at 50% progress (rate = 2.0)
+        let start_time = env.block.time.seconds();
+        setup_contract(deps.as_mut(), start_time);
+        
+        // Advance to midpoint (rate goes from 1.5 to 2.0 at 50%)
+        env.block.time = Timestamp::from_seconds(start_time + DEFAULT_SWAP_DURATION / 2);
+
+        let ustc_amount = Uint128::from(10_000_000u128); // 10 USTC
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        // 10 USTC / 2.0 = 5 USTR = 5 * 10^18 atomic units
+        let expected = Uint128::from(5_000_000_000_000_000_000u128);
+        assert_eq!(sim.base_ustr_amount, expected);
+        assert_eq!(sim.rate, Decimal::from_ratio(20u128, 10u128)); // 2.0
+    }
+
+    #[test]
+    fn test_decimal_conversion_at_end_rate() {
+        // At end (rate = 2.5), 25 USTC should give 10 USTR
+        let mut deps = mock_dependencies();
+        let mut env = mock_env();
+        
+        let start_time = env.block.time.seconds();
+        setup_contract(deps.as_mut(), start_time);
+        
+        // Advance to end (rate = 2.5)
+        env.block.time = Timestamp::from_seconds(start_time + DEFAULT_SWAP_DURATION);
+
+        let ustc_amount = Uint128::from(25_000_000u128); // 25 USTC
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        // 25 USTC / 2.5 = 10 USTR = 10 * 10^18 atomic units
+        assert_eq!(sim.base_ustr_amount, Uint128::from(TEN_USTR));
+        assert_eq!(sim.rate, Decimal::from_ratio(25u128, 10u128)); // 2.5
+    }
+
+    #[test]
+    fn test_decimal_precision_small_amount() {
+        // Test minimum swap amount: 1 USTC at rate 1.5
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Minimum: 1 USTC = 1,000,000 uusd
+        let ustc_amount = Uint128::from(MIN_SWAP_AMOUNT);
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        // 1 USTC / 1.5 ≈ 0.666... USTR
+        // Verify it's in the expected 18-decimal range (not 6-decimal)
+        assert!(sim.base_ustr_amount > Uint128::from(600_000_000_000_000_000u128)); // > 0.6 USTR
+        assert!(sim.base_ustr_amount < Uint128::from(700_000_000_000_000_000u128)); // < 0.7 USTR
+    }
+
+    #[test]
+    fn test_decimal_conversion_larger_amount() {
+        // Test a moderately large swap: 150 USTC
+        // This verifies correct scaling for amounts larger than typical test values
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // 150 USTC = 150,000,000 uusd
+        let ustc_amount = Uint128::from(150_000_000u128);
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        // 150 USTC / 1.5 = 100 USTR exactly
+        // In 18-decimal: 100 * 10^18 = 100,000,000,000,000,000,000 atomic units
+        let expected = Uint128::from(100_000_000_000_000_000_000u128);
+        assert_eq!(sim.base_ustr_amount, expected);
+    }
+
+    #[test]
+    fn test_decimal_adjustment_constant() {
+        // Verify the decimal adjustment constant is correct
+        // USTR has 18 decimals, USTC has 6, so adjustment should be 10^12
+        assert_eq!(DECIMAL_ADJUSTMENT, 1_000_000_000_000u128);
+        assert_eq!(DECIMAL_ADJUSTMENT, 10u128.pow(12));
+    }
+
+    #[test]
+    fn test_referral_bonus_decimal_handling() {
+        // Verify referral bonus calculation preserves 18-decimal precision
+        let mut deps = mock_deps_with_referral(vec![
+            ("BONUSCODE", true, true, Some("referrer")),
+        ]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        // 15 USTC at rate 1.5 = 10 USTR base
+        let ustc_amount = Uint128::from(15_000_000u128);
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: Some("BONUSCODE".to_string()),
+            },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        // Base: 10 USTR = 10 * 10^18
+        // Bonus: 10% of 10 USTR = 1 USTR = 1 * 10^18
+        assert_eq!(sim.base_ustr_amount, Uint128::from(TEN_USTR));
+        assert_eq!(sim.user_bonus, Uint128::from(ONE_USTR));
+        assert_eq!(sim.referrer_bonus, Uint128::from(ONE_USTR));
+        assert_eq!(sim.total_ustr_to_user, Uint128::from(TEN_USTR + ONE_USTR));
+    }
+
+    #[test]
+    fn test_swap_execution_decimal_handling() {
+        // Verify actual swap execution mints correct 18-decimal amounts
+        let mut deps = mock_deps_with_referral(vec![]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let ustc_amount = 15_000_000u128; // 15 USTC
+        let info = mock_info("user", &ustc_coins(ustc_amount));
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
+
+        let res = execute(deps.as_mut(), env, info, msg).unwrap();
+
+        // Verify the mint message has correct 18-decimal amount
+        if let CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) = &res.messages[1].msg {
+            let mint_msg: Cw20ExecuteMsg = from_json(msg).unwrap();
+            match mint_msg {
+                Cw20ExecuteMsg::Mint { amount, .. } => {
+                    // 15 USTC / 1.5 = 10 USTR = 10 * 10^18 atomic units
+                    assert_eq!(amount, Uint128::from(TEN_USTR));
+                }
+                _ => panic!("Expected Mint message"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_fractional_ustc_decimal_handling() {
+        // Test with a non-round number of USTC: 1.5 USTC = 1,500,000 uusd
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        let ustc_amount = Uint128::from(1_500_000u128); // 1.5 USTC
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        )
+        .unwrap();
+        let sim: SimulationResponse = from_json(res).unwrap();
+
+        // 1.5 USTC / 1.5 = 1 USTR = 1 * 10^18 atomic units
+        assert_eq!(sim.base_ustr_amount, Uint128::from(ONE_USTR));
+    }
+
+    // ============ MINT SAFETY LIMIT TESTS ============
+
+    #[test]
+    fn test_mint_safety_limit_passes_under_threshold() {
+        // With default supply of 1 billion USTR, 5% = 50 million USTR
+        // Minting 10 USTR should pass easily
+        let mut deps = mock_deps_with_referral(vec![]);
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("user", &ustc_coins(15_000_000)); // 15 USTC = 10 USTR
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
+
+        // Should succeed - 10 USTR is way under 5% of 1 billion
+        let res = execute(deps.as_mut(), env, info, msg);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_mint_safety_limit_rejects_over_threshold() {
+        // Create a low total supply where 10 USTR exceeds 5%
+        // If total supply is 100 USTR, 5% = 5 USTR
+        // Minting 10 USTR should fail
+        let small_supply = Uint128::from(100_000_000_000_000_000_000u128); // 100 USTR
+        let querier = ReferralMockQuerier::new().with_ustr_total_supply(small_supply);
+        let mut deps = OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier,
+            custom_query_type: std::marker::PhantomData,
+        };
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("user", &ustc_coins(15_000_000)); // 15 USTC = 10 USTR
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
+
+        // Should fail - 10 USTR > 5% of 100 USTR (which is 5 USTR)
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        match err {
+            ContractError::MintExceedsSafetyLimit { .. } => {}
+            _ => panic!("Expected MintExceedsSafetyLimit error, got: {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_mint_safety_limit_at_exactly_5_percent() {
+        // Create a total supply where 10 USTR is exactly 5%
+        // 10 USTR = 5% of X, so X = 200 USTR
+        let exact_supply = Uint128::from(200_000_000_000_000_000_000u128); // 200 USTR
+        let querier = ReferralMockQuerier::new().with_ustr_total_supply(exact_supply);
+        let mut deps = OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier,
+            custom_query_type: std::marker::PhantomData,
+        };
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("user", &ustc_coins(15_000_000)); // 15 USTC = 10 USTR
+        let msg = ExecuteMsg::Swap {
+            referral_code: None,
+            leaderboard_hint: None,
+        };
+
+        // Should succeed - 10 USTR = 5% of 200 USTR (equal is allowed)
+        let res = execute(deps.as_mut(), env, info, msg);
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn test_mint_safety_limit_with_referral_bonus() {
+        // Referral bonus adds 20% extra minting (10% to user + 10% to referrer)
+        // With referral: 10 USTR base + 1 USTR user bonus + 1 USTR referrer = 12 USTR total minted
+        // Create supply where 12 USTR exceeds 5%
+        // 12 USTR > 5% of X means X < 240 USTR
+        let small_supply = Uint128::from(200_000_000_000_000_000_000u128); // 200 USTR
+        let querier = ReferralMockQuerier::new()
+            .with_ustr_total_supply(small_supply)
+            .with_referral_code("TESTCODE", true, true, Some("referrer"));
+        let mut deps = OwnedDeps {
+            storage: MockStorage::default(),
+            api: MockApi::default(),
+            querier,
+            custom_query_type: std::marker::PhantomData,
+        };
+        let env = mock_env();
+        setup_contract_with_querier(deps.as_mut(), env.block.time.seconds());
+
+        let info = mock_info("user", &ustc_coins(15_000_000)); // 15 USTC = 10 USTR + referral bonus
+        let msg = ExecuteMsg::Swap {
+            referral_code: Some("TESTCODE".to_string()),
+            leaderboard_hint: None,
+        };
+
+        // Should fail - 12 USTR > 5% of 200 USTR (10 USTR)
+        let err = execute(deps.as_mut(), env, info, msg).unwrap_err();
+        match err {
+            ContractError::MintExceedsSafetyLimit { .. } => {}
+            _ => panic!("Expected MintExceedsSafetyLimit error, got: {:?}", err),
         }
     }
 }

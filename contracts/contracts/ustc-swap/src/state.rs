@@ -89,9 +89,20 @@ pub const MIN_SWAP_AMOUNT: u128 = 1_000_000;
 /// USTC denomination on TerraClassic
 pub const USTC_DENOM: &str = "uusd";
 
+/// Decimal adjustment factor for USTC (6 decimals) to USTR (18 decimals) conversion
+/// USTR has 18 decimals, USTC has 6 decimals, so we multiply by 10^12
+/// Note: USTR decimals are validated at instantiation time; USTC decimals (6) are a
+/// Terra Classic protocol constant for native tokens and cannot be queried on-chain.
+pub const DECIMAL_ADJUSTMENT: u128 = 1_000_000_000_000; // 10^12
+
 /// Referral bonus percentage (10% = 10 out of 100)
 pub const REFERRAL_BONUS_NUMERATOR: u128 = 10;
 pub const REFERRAL_BONUS_DENOMINATOR: u128 = 100;
+
+/// Safety limit: max single mint cannot exceed 5% of total supply
+/// This prevents catastrophic minting bugs from draining value
+pub const MINT_SAFETY_LIMIT_NUMERATOR: u128 = 5;
+pub const MINT_SAFETY_LIMIT_DENOMINATOR: u128 = 100;
 
 /// Maximum number of entries in the leaderboard
 /// Only the top 50 referral codes by rewards are tracked on-chain

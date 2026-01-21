@@ -8,6 +8,9 @@ pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
 
+    #[error("USTR token has {actual} decimals, expected {expected}")]
+    InvalidUstrDecimals { expected: u8, actual: u8 },
+
     #[error("Unauthorized: only admin can perform this action")]
     Unauthorized,
 
@@ -52,5 +55,11 @@ pub enum ContractError {
 
     #[error("Referral code not registered: {code}")]
     ReferralCodeNotRegistered { code: String },
+
+    #[error("Mint amount {mint_amount} exceeds 5% safety limit of total supply {total_supply}")]
+    MintExceedsSafetyLimit {
+        mint_amount: String,
+        total_supply: String,
+    },
 }
 
