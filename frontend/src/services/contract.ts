@@ -687,7 +687,7 @@ class ContractService {
     // Build the swap message matching the contract's ExecuteMsg::Swap
     // Use Record<string, unknown> to match the working preregister pattern
     // IMPORTANT: Don't include null values - omit the fields entirely for Option<T> = None
-    // The cosmes library's removeNull() strips nulls which can cause signature mismatches
+    // The cosmes library's removeNull() strips nulls AFTER signing which causes signature mismatches
     const swapInner: Record<string, unknown> = {};
     
     // Only include referral_code if provided (Option<String> in Rust)
@@ -695,13 +695,18 @@ class ContractService {
       swapInner.referral_code = referralCode;
     }
     
-    // Include leaderboard_hint for O(1) insertion if provided
-    // The hint tells the contract where to insert the referral code in the leaderboard
-    if (leaderboardHint) {
+    // Include leaderboard_hint for O(1) insertion ONLY if we have a valid insert_after value
+    // If insert_after is undefined (meaning "insert at head"), we OMIT the entire hint
+    // and let the contract fall back to O(n) search. This avoids the cosmes removeNull()
+    // issue where null values get stripped after signing, causing signature mismatches.
+    if (leaderboardHint && leaderboardHint.insert_after !== undefined) {
       swapInner.leaderboard_hint = {
-        insert_after: leaderboardHint.insert_after ?? null,
+        insert_after: leaderboardHint.insert_after,
       };
     }
+    // NOTE: When insert_after is undefined (new head position), we intentionally omit
+    // leaderboard_hint entirely. The contract will use O(n) fallback which is fine
+    // since the leaderboard is small. This is safer than risking signature mismatches.
     
     const swapMsg: Record<string, unknown> = {
       swap: swapInner,
@@ -727,7 +732,9 @@ class ContractService {
     console.log('  USTC Amount (display):', (parseFloat(ustcAmount) / 1_000_000).toFixed(6), 'USTC');
     console.log('  Referral Code:', referralCode || '(none)');
     console.log('  Leaderboard Hint:', leaderboardHint 
-      ? (leaderboardHint.insert_after ? `after "${leaderboardHint.insert_after}"` : '(new head)')
+      ? (leaderboardHint.insert_after !== undefined 
+          ? `after "${leaderboardHint.insert_after}"` 
+          : '(new head - omitted to avoid null serialization issue)')
       : '(none - O(n) fallback)');
     console.log('');
     console.log('📤 Execute Message:');

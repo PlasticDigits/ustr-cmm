@@ -24,7 +24,7 @@ import { NETWORKS, DEFAULT_NETWORK } from '../utils/constants';
 // so we use fixed gas limits
 const GAS_PRICE_ULUNA = '28.325'; // uluna per gas unit
 const CW20_SEND_GAS_LIMIT = 350000; // Gas for CW20 Send with embedded message
-const SWAP_GAS_LIMIT = 500000; // Gas for swap transaction (includes minting, leaderboard updates)
+const SWAP_GAS_LIMIT = 700000; // Gas for swap transaction (includes minting, leaderboard updates, referral bonuses)
 
 const networkConfig = NETWORKS[DEFAULT_NETWORK];
 const TERRA_CLASSIC_CHAIN_ID = networkConfig.chainId;
@@ -242,76 +242,164 @@ function estimateTerraClassicFee(gasLimit: number): Fee {
 }
 
 /**
+ * Check if error is a sequence mismatch error that can be retried
+ */
+function isSequenceMismatchError(error: unknown): boolean {
+  if (error instanceof Error) {
+    const msg = error.message.toLowerCase();
+    return (
+      msg.includes('sequence') ||
+      msg.includes('account sequence mismatch') ||
+      msg.includes('signature verification failed')
+    );
+  }
+  return false;
+}
+
+/**
+ * Reconnect wallet to refresh account info (account number and sequence)
+ * This is needed when sequence gets out of sync with the chain
+ */
+async function reconnectWalletForRefresh(): Promise<void> {
+  const wallet = connectedWallets.get(TERRA_CLASSIC_CHAIN_ID);
+  if (!wallet) {
+    throw new Error('No wallet connected');
+  }
+
+  const walletId = wallet.id;
+  const controller = CONTROLLERS[walletId];
+  
+  if (!controller) {
+    console.warn('Cannot refresh: controller not found for wallet', walletId);
+    return;
+  }
+
+  console.log('🔄 Refreshing wallet connection to update account info...');
+  
+  // Disconnect and reconnect to refresh cached account info
+  try {
+    controller.disconnect([TERRA_CLASSIC_CHAIN_ID]);
+    connectedWallets.delete(TERRA_CLASSIC_CHAIN_ID);
+    
+    // Small delay to ensure cleanup
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // Reconnect
+    const chainInfo = getChainInfo();
+    const wallets = await controller.connect(WalletType.EXTENSION, [chainInfo]);
+    
+    const newWallet = wallets.get(TERRA_CLASSIC_CHAIN_ID);
+    if (newWallet) {
+      connectedWallets.set(TERRA_CLASSIC_CHAIN_ID, newWallet);
+      console.log('✅ Wallet reconnected, account info refreshed');
+    } else {
+      throw new Error('Failed to reconnect wallet');
+    }
+  } catch (error) {
+    console.error('Failed to refresh wallet connection:', error);
+    throw new Error('Failed to refresh wallet. Please disconnect and reconnect manually.');
+  }
+}
+
+/**
  * Execute a contract transaction with native coins (matching preregister pattern)
  * This follows the exact same pattern as the working preregister dapp
+ * Includes retry logic for sequence mismatch errors
  */
 export async function executeContractWithCoins(
   contractAddress: string,
   executeMsg: Record<string, unknown>,
-  coins?: Array<{ denom: string; amount: string }>
+  coins?: Array<{ denom: string; amount: string }>,
+  maxRetries: number = 2
 ): Promise<{ txHash: string }> {
-  // Use getConnectedWallet() matching the working preregister pattern
-  const wallet = getConnectedWallet();
-  if (!wallet) {
-    throw new Error('Wallet not connected. Please connect your wallet first.');
-  }
-
-  try {
-    // Create the MsgExecuteContract message (matching preregister exactly)
-    const msg = new MsgExecuteContract({
-      sender: wallet.address,
-      contract: contractAddress,
-      msg: executeMsg,
-      funds: coins && coins.length > 0 ? coins : [],
-    });
-
-    // Log the raw message for debugging
-    console.group('📝 Raw Transaction Message');
-    console.log('MsgExecuteContract:', {
-      sender: wallet.address,
-      contract: contractAddress,
-      msg: JSON.stringify(executeMsg),
-      funds: coins && coins.length > 0 ? coins : [],
-    });
-    console.groupEnd();
-
-    // Create unsigned transaction
-    const unsignedTx: UnsignedTx = {
-      msgs: [msg],
-      memo: '',
-    };
-
-    // Estimate fee using fixed gas limits (Terra Classic doesn't support simulation)
-    const fee = estimateTerraClassicFee(SWAP_GAS_LIMIT);
-    
-    console.log('⛽ Fee estimate:', {
-      gasLimit: SWAP_GAS_LIMIT,
-      feeAmount: fee.amount,
-    });
-
-    // Broadcast transaction
-    const txHash = await wallet.broadcastTx(unsignedTx, fee);
-    
-    console.log('📡 Transaction broadcast, hash:', txHash);
-
-    // Poll for transaction confirmation
-    const { txResponse } = await wallet.pollTx(txHash);
-
-    // Check if transaction failed
-    if (txResponse.code !== 0) {
-      const errorMsg = 
-        txResponse.rawLog ||
-        `Transaction failed with code ${txResponse.code}`;
-      console.error('❌ Transaction failed:', errorMsg);
-      throw new Error(`Transaction failed: ${errorMsg}`);
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    // Use getConnectedWallet() matching the working preregister pattern
+    const wallet = getConnectedWallet();
+    if (!wallet) {
+      throw new Error('Wallet not connected. Please connect your wallet first.');
     }
 
-    console.log('✅ Transaction confirmed successfully');
-    return { txHash };
-  } catch (error) {
-    console.error('Transaction execution failed:', error);
-    throw handleSwapTransactionError(error);
+    try {
+      // Create the MsgExecuteContract message (matching preregister exactly)
+      const msg = new MsgExecuteContract({
+        sender: wallet.address,
+        contract: contractAddress,
+        msg: executeMsg,
+        funds: coins && coins.length > 0 ? coins : [],
+      });
+
+      // Log the raw message for debugging
+      console.group(`📝 Raw Transaction Message (attempt ${attempt + 1}/${maxRetries + 1})`);
+      console.log('MsgExecuteContract:', {
+        sender: wallet.address,
+        contract: contractAddress,
+        msg: JSON.stringify(executeMsg),
+        funds: coins && coins.length > 0 ? coins : [],
+      });
+      console.groupEnd();
+
+      // Create unsigned transaction
+      const unsignedTx: UnsignedTx = {
+        msgs: [msg],
+        memo: '',
+      };
+
+      // Estimate fee using fixed gas limits (Terra Classic doesn't support simulation)
+      const fee = estimateTerraClassicFee(SWAP_GAS_LIMIT);
+      
+      console.log('⛽ Fee estimate:', {
+        gasLimit: SWAP_GAS_LIMIT,
+        feeAmount: fee.amount,
+      });
+
+      // Broadcast transaction
+      const txHash = await wallet.broadcastTx(unsignedTx, fee);
+      
+      console.log('📡 Transaction broadcast, hash:', txHash);
+
+      // Poll for transaction confirmation
+      const { txResponse } = await wallet.pollTx(txHash);
+
+      // Check if transaction failed
+      if (txResponse.code !== 0) {
+        const errorMsg = 
+          txResponse.rawLog ||
+          `Transaction failed with code ${txResponse.code}`;
+        console.error('❌ Transaction failed:', errorMsg);
+        throw new Error(`Transaction failed: ${errorMsg}`);
+      }
+
+      console.log('✅ Transaction confirmed successfully');
+      return { txHash };
+    } catch (error) {
+      console.error(`Transaction attempt ${attempt + 1} failed:`, error);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      // Check if this is a sequence mismatch error and we have retries left
+      if (isSequenceMismatchError(error) && attempt < maxRetries) {
+        console.log(`🔄 Sequence mismatch detected, refreshing wallet and retrying (${maxRetries - attempt} retries left)...`);
+        
+        try {
+          await reconnectWalletForRefresh();
+          // Add a small delay before retry
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue; // Retry the transaction
+        } catch (refreshError) {
+          console.error('Failed to refresh wallet:', refreshError);
+          // If refresh fails, throw the original error
+          throw handleSwapTransactionError(error);
+        }
+      }
+      
+      // Not a sequence error or no retries left
+      throw handleSwapTransactionError(error);
+    }
   }
+  
+  // Should not reach here, but just in case
+  throw lastError || new Error('Transaction failed after retries');
 }
 
 /**
@@ -329,6 +417,18 @@ function handleSwapTransactionError(error: unknown): Error {
       errorMessage.includes('user rejected')
     ) {
       return new Error('Transaction rejected by user');
+    }
+
+    // Sequence mismatch errors (after retries exhausted)
+    if (
+      errorMessage.includes('sequence') ||
+      errorMessage.includes('account sequence mismatch') ||
+      errorMessage.includes('signature verification failed')
+    ) {
+      return new Error(
+        'Transaction sequence mismatch. This usually happens when transactions are sent too quickly. ' +
+        'Please wait a few seconds and try again, or disconnect and reconnect your wallet.'
+      );
     }
 
     // Network/connection errors
