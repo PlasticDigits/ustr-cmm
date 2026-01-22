@@ -6,10 +6,14 @@ import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
 
 /**
  * Format a micro-denominated amount to human-readable
+ * @param microAmount The amount in micro units
+ * @param decimals The number of decimal places for conversion (default: USTC = 6)
+ * @param displayDecimals Optional max decimal places for display (default: same as decimals)
  */
 export function formatAmount(
   microAmount: string | number,
-  decimals: number = DECIMALS.USTC
+  decimals: number = DECIMALS.USTC,
+  displayDecimals?: number
 ): string {
   const amount = typeof microAmount === 'string' 
     ? parseFloat(microAmount) 
@@ -17,9 +21,11 @@ export function formatAmount(
   
   const formatted = amount / Math.pow(10, decimals);
   
+  const maxDecimals = displayDecimals ?? decimals;
+  
   return formatted.toLocaleString('en-US', {
     minimumFractionDigits: 2,
-    maximumFractionDigits: decimals,
+    maximumFractionDigits: maxDecimals,
   });
 }
 

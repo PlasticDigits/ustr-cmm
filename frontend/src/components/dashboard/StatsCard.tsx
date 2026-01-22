@@ -18,7 +18,7 @@ export function StatsCard() {
   const stats = [
     {
       label: 'Total USTC Received',
-      value: swapStats ? formatAmount(swapStats.total_ustc_received) : '—',
+      value: swapStats ? formatAmount(swapStats.total_ustc_received, DECIMALS.USTC, 2) : '—',
       suffix: 'USTC',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -30,7 +30,7 @@ export function StatsCard() {
     },
     {
       label: 'Total USTR Minted',
-      value: swapStats ? formatAmount(swapStats.total_ustr_minted, DECIMALS.USTR) : '—',
+      value: swapStats ? formatAmount(swapStats.total_ustr_minted, DECIMALS.USTR, 2) : '—',
       suffix: 'USTR',
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
