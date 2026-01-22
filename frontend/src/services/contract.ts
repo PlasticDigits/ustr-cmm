@@ -726,6 +726,9 @@ class ContractService {
     console.log('  USTC Amount (micro):', ustcAmount);
     console.log('  USTC Amount (display):', (parseFloat(ustcAmount) / 1_000_000).toFixed(6), 'USTC');
     console.log('  Referral Code:', referralCode || '(none)');
+    console.log('  Leaderboard Hint:', leaderboardHint 
+      ? (leaderboardHint.insert_after ? `after "${leaderboardHint.insert_after}"` : '(new head)')
+      : '(none - O(n) fallback)');
     console.log('');
     console.log('📤 Execute Message:');
     console.log(JSON.stringify(swapMsg, null, 2));
