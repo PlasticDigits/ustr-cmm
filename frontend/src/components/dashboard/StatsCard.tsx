@@ -41,7 +41,7 @@ export function StatsCard() {
       iconColor: 'text-amber-400',
     },
     {
-      label: 'Total Swaps',
+      label: 'Total Swaps (approx)',
       value: swapStats?.swap_count?.toString() ?? '—',
       suffix: '',
       icon: (
