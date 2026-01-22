@@ -54,6 +54,8 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
     canSwap,
     isActive,
     timeRemaining,
+    exceedsMax,
+    maxUstcPerSwap,
   } = useSwap();
 
   // Smooth ticking rate that updates 20x per second (based on fixed launch time)
@@ -113,7 +115,9 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
   const handleMaxClick = () => {
     if (ustcBalance) {
       const balance = parseFloat(ustcBalance) / 1_000_000;
-      setInputAmount(balance.toString());
+      // Cap at maxUstcPerSwap due to contract limitations
+      const cappedAmount = Math.min(balance, maxUstcPerSwap);
+      setInputAmount(cappedAmount.toString());
     }
   };
 
@@ -346,6 +350,14 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
           </div>
 
           {/* Status Messages */}
+          {exceedsMax && (
+            <div className="flex items-center justify-center gap-2 text-red-400 text-sm mb-4 p-3 bg-red-500/10 rounded-lg">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              Maximum {maxUstcPerSwap} USTC per swap
+            </div>
+          )}
           {!connected && (
             <div className="flex items-center justify-center gap-2 text-amber-400 text-sm mb-4 p-3 bg-amber-500/10 rounded-lg">
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -404,7 +416,7 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
 
           {/* Info */}
           <p className="text-xs text-gray-500 text-center mt-4">
-            Minimum swap: 1 USTC • Rate increases daily
+            Min: 1 USTC • Max: {maxUstcPerSwap} USTC • Rate increases daily
           </p>
         </CardContent>
       </Card>

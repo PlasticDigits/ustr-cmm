@@ -4,6 +4,10 @@ use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Decimal, Timestamp, Uint128};
 use common::AssetInfo;
 
+/// Migrate message (empty for now, can be extended for future migrations)
+#[cw_serde]
+pub struct MigrateMsg {}
+
 /// Instantiate message
 #[cw_serde]
 pub struct InstantiateMsg {

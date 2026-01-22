@@ -66,6 +66,8 @@ export const SWAP_CONFIG = {
   endRate: 2.5,
   durationDays: 100,
   durationSeconds: 8640000,
+  // Max swap amount per transaction (effectively unlimited)
+  maxUstcPerSwap: 1000000000,
 } as const;
 
 // UI constants

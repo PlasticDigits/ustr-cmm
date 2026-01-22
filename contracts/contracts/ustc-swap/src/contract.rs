@@ -4,16 +4,16 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_json_binary, BankMsg, Binary, Coin, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo,
-    QueryRequest, Response, StdResult, Timestamp, Uint128, WasmMsg, WasmQuery,
+    QueryRequest, Response, StdError, StdResult, Timestamp, Uint128, WasmMsg, WasmQuery,
 };
-use cw2::set_contract_version;
+use cw2::{get_contract_version, set_contract_version};
 use cw20::{Cw20ExecuteMsg, Cw20QueryMsg, TokenInfoResponse};
 
 use crate::error::ContractError;
 use crate::msg::{
-    ConfigResponse, ExecuteMsg, InstantiateMsg, LeaderboardEntry, PendingAdminResponse, QueryMsg,
-    RateResponse, ReferralCodeStatsResponse, ReferralLeaderboardResponse, SimulationResponse,
-    StatsResponse, StatusResponse,
+    ConfigResponse, ExecuteMsg, InstantiateMsg, LeaderboardEntry, MigrateMsg, PendingAdminResponse,
+    QueryMsg, RateResponse, ReferralCodeStatsResponse, ReferralLeaderboardResponse,
+    SimulationResponse, StatsResponse, StatusResponse,
 };
 use crate::state::{
     Config, LeaderboardLink, PendingAdmin, ReferralCodeStats, Stats, ADMIN_TIMELOCK_DURATION,
@@ -143,6 +143,28 @@ pub fn instantiate(
         .add_attribute("end_time", end_time.to_string()))
 }
 
+// ============ MIGRATE ============
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+    // Verify we're migrating from the same contract
+    let ver = get_contract_version(deps.storage)?;
+    if ver.contract != CONTRACT_NAME {
+        return Err(ContractError::Std(StdError::generic_err(format!(
+            "Cannot migrate from different contract: {} != {}",
+            ver.contract, CONTRACT_NAME
+        ))));
+    }
+
+    // Update contract version
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "migrate")
+        .add_attribute("from_version", ver.version)
+        .add_attribute("to_version", CONTRACT_VERSION))
+}
+
 // ============ EXECUTE ============
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -219,12 +241,20 @@ fn execute_swap(
 
     // Calculate base USTR amount with decimal adjustment
     // USTC has 6 decimals, USTR has 18 decimals, so we multiply by 10^12
-    // base_ustr = floor((ustc_amount * 10^12) / current_rate)
-    let adjusted_ustc = ustc_amount.checked_mul(Uint128::from(DECIMAL_ADJUSTMENT))
-        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::generic_err(e.to_string())))?;
-    let ustc_decimal = Decimal::from_ratio(adjusted_ustc, 1u128);
+    // base_ustr = floor((ustc_amount / current_rate) * 10^12)
+    //
+    // IMPORTANT: We divide first, then multiply by DECIMAL_ADJUSTMENT to avoid overflow.
+    // The previous approach (multiply by 10^12 first, then use Decimal::from_ratio)
+    // caused overflow because Decimal::from_ratio(n, 1) internally multiplies n by 10^18,
+    // and (ustc * 10^12 * 10^18) overflows Uint128 for amounts as small as 340 USTC.
+    let ustc_decimal = Decimal::from_ratio(ustc_amount, 1u128);
     let ustr_decimal = ustc_decimal / rate;
-    let base_ustr = ustr_decimal * Uint128::one();
+    let base_ustr_unscaled = ustr_decimal * Uint128::one();
+    let base_ustr = base_ustr_unscaled
+        .checked_mul(Uint128::from(DECIMAL_ADJUSTMENT))
+        .map_err(|e| ContractError::Std(cosmwasm_std::StdError::generic_err(
+            format!("Decimal adjustment overflow: {}", e)
+        )))?;
 
     // Process referral code if provided
     let (user_bonus, referrer_bonus, referrer_addr) = if let Some(ref code) = referral_code {
@@ -1133,11 +1163,17 @@ fn query_swap_simulation(
 
     // Calculate base USTR amount with decimal adjustment
     // USTC has 6 decimals, USTR has 18 decimals, so we multiply by 10^12
-    // base_ustr = floor((ustc_amount * 10^12) / current_rate)
-    let adjusted_ustc = ustc_amount.checked_mul(Uint128::from(DECIMAL_ADJUSTMENT))?;
-    let ustc_decimal = Decimal::from_ratio(adjusted_ustc, 1u128);
+    // base_ustr = floor((ustc_amount / current_rate) * 10^12)
+    //
+    // IMPORTANT: We divide first, then multiply by DECIMAL_ADJUSTMENT to avoid overflow.
+    // The previous approach (multiply by 10^12 first, then use Decimal::from_ratio)
+    // caused overflow because Decimal::from_ratio(n, 1) internally multiplies n by 10^18,
+    // and (ustc * 10^12 * 10^18) overflows Uint128 for amounts as small as 340 USTC.
+    let ustc_decimal = Decimal::from_ratio(ustc_amount, 1u128);
     let ustr_decimal = ustc_decimal / rate;
-    let base_ustr_amount = ustr_decimal * Uint128::one();
+    let base_ustr_unscaled = ustr_decimal * Uint128::one();
+    let base_ustr_amount = base_ustr_unscaled
+        .checked_mul(Uint128::from(DECIMAL_ADJUSTMENT))?;
 
     // Check if referral code is valid
     let (referral_valid, user_bonus, referrer_bonus) = if let Some(ref code) = referral_code {
@@ -3820,7 +3856,11 @@ mod tests {
     fn test_decimal_conversion_1_ustc() {
         // 1 USTC = 1,000,000 uusd (6 decimals)
         // At rate 1.5, 1 USTC should give 1/1.5 = 0.666... USTR
-        // In 18-decimal: 666,666,666,666,666,666 atomic units
+        //
+        // Note: Due to order of operations (divide first, then multiply by 10^12),
+        // we lose some precision. This is acceptable as it results in slightly less
+        // USTR minted (conservative direction).
+        // Calculation: floor(1_000_000 / 1.5) * 10^12 = 666_666 * 10^12
         let mut deps = mock_dependencies();
         let env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
@@ -3837,8 +3877,8 @@ mod tests {
         .unwrap();
         let sim: SimulationResponse = from_json(res).unwrap();
 
-        // 1 USTC / 1.5 = 0.666... USTR = 666,666,666,666,666,666 atomic units (truncated)
-        let expected = Uint128::from(666_666_666_666_666_666u128);
+        // 1 USTC / 1.5 = 0.666666 USTR (with precision loss from divide-first approach)
+        let expected = Uint128::from(666_666_000_000_000_000u128);
         assert_eq!(sim.base_ustr_amount, expected);
         assert_eq!(sim.total_ustr_to_user, expected);
     }
@@ -3847,7 +3887,11 @@ mod tests {
     fn test_decimal_conversion_100_ustc() {
         // 100 USTC = 100,000,000 uusd
         // At rate 1.5: 100 / 1.5 = 66.666... USTR
-        // In 18-decimal: 66,666,666,666,666,666,666 atomic units
+        //
+        // Note: Due to order of operations (divide first, then multiply by 10^12),
+        // we lose some precision. This is acceptable as it results in slightly less
+        // USTR minted (conservative direction).
+        // Calculation: floor(100_000_000 / 1.5) * 10^12 = 66_666_666 * 10^12
         let mut deps = mock_dependencies();
         let env = mock_env();
         setup_contract(deps.as_mut(), env.block.time.seconds());
@@ -3864,8 +3908,8 @@ mod tests {
         .unwrap();
         let sim: SimulationResponse = from_json(res).unwrap();
 
-        // 100 USTC / 1.5 = 66.666... USTR in 18-decimal
-        let expected = Uint128::from(66_666_666_666_666_666_666u128);
+        // 100 USTC / 1.5 = 66.666666 USTR (with precision loss from divide-first approach)
+        let expected = Uint128::from(66_666_666_000_000_000_000u128);
         assert_eq!(sim.base_ustr_amount, expected);
     }
 
@@ -3980,6 +4024,73 @@ mod tests {
         // In 18-decimal: 100 * 10^18 = 100,000,000,000,000,000,000 atomic units
         let expected = Uint128::from(100_000_000_000_000_000_000u128);
         assert_eq!(sim.base_ustr_amount, expected);
+    }
+
+    #[test]
+    fn test_no_overflow_for_large_amounts() {
+        // Test amounts that would have caused overflow with the old approach
+        // (multiply by 10^12 first, then Decimal::from_ratio which multiplies by 10^18)
+        // The old approach overflowed for amounts >= 340 USTC
+        // The new approach (divide first, then multiply) avoids this overflow
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Test 555 USTC (one of the failing tx amounts from mainnet)
+        let ustc_amount = Uint128::from(555_000_000u128); // 555 USTC
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        );
+        assert!(res.is_ok(), "555 USTC should not overflow");
+        let sim: SimulationResponse = from_json(res.unwrap()).unwrap();
+        // 555 USTC / 1.5 = 370 USTR
+        let expected = Uint128::from(370_000_000_000_000_000_000u128);
+        assert_eq!(sim.base_ustr_amount, expected);
+
+        // Test 1000 USTC (another failing tx amount)
+        let ustc_amount = Uint128::from(1_000_000_000u128); // 1000 USTC
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        );
+        assert!(res.is_ok(), "1000 USTC should not overflow");
+        let sim: SimulationResponse = from_json(res.unwrap()).unwrap();
+        // 1000 USTC / 1.5 = 666.666... USTR (with precision loss)
+        let expected = Uint128::from(666_666_666_000_000_000_000u128);
+        assert_eq!(sim.base_ustr_amount, expected);
+
+        // Test 3487 USTC (largest failing tx amount from mainnet)
+        let ustc_amount = Uint128::from(3_487_415_669u128); // ~3487.42 USTC
+        let res = query(
+            deps.as_ref(),
+            env.clone(),
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        );
+        assert!(res.is_ok(), "3487 USTC should not overflow");
+
+        // Test 1 million USTC (extreme case)
+        let ustc_amount = Uint128::from(1_000_000_000_000u128); // 1,000,000 USTC
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::SwapSimulation {
+                ustc_amount,
+                referral_code: None,
+            },
+        );
+        assert!(res.is_ok(), "1 million USTC should not overflow");
     }
 
     #[test]
