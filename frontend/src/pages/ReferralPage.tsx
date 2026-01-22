@@ -13,9 +13,81 @@ import { contractService } from '../services/contract';
 import { Card, CardContent, CardHeader } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { CharacterParticles } from '../components/common/CharacterParticles';
+import { Leaderboard } from '../components/referral/Leaderboard';
 import { formatAddress, getAddressScannerUrl, getTxScannerUrl } from '../utils/format';
-import { REFERRAL_CODE, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
-import type { CodeInfo, CodesResponse, ValidateResponse } from '../types/contracts';
+import { REFERRAL_CODE, CONTRACTS, DEFAULT_NETWORK, DECIMALS } from '../utils/constants';
+import type { CodeInfo, ValidateResponse, LeaderboardEntry } from '../types/contracts';
+
+// ============================================
+// USTR Formatting Helper
+// ============================================
+
+/**
+ * Format USTR amount with fixed decimal places using BigInt for precision.
+ * Truncates (rounds down) to 2 decimal places.
+ */
+function formatUstrAmount(microAmount: string): string {
+  if (!microAmount || microAmount === '0') return '0.00';
+  
+  const amount = BigInt(microAmount);
+  const divisor = BigInt(10 ** DECIMALS.USTR);
+  const integerPart = amount / divisor;
+  const fractionalPart = amount % divisor;
+  
+  // Truncate to first 2 decimal places (no rounding, just floor)
+  const twoDecimalDivisor = BigInt(10 ** (DECIMALS.USTR - 2));
+  const truncatedFraction = Number(fractionalPart / twoDecimalDivisor);
+  
+  // Format with thousand separators and 2 decimal places
+  const formatted = integerPart.toLocaleString('en-US');
+  const decimals = truncatedFraction.toString().padStart(2, '0');
+  
+  return `${formatted}.${decimals}`;
+}
+
+/**
+ * Get rewards for a specific code from the leaderboard.
+ * Returns '0' if code is not in the leaderboard.
+ */
+async function getCodeRewards(code: string): Promise<string> {
+  try {
+    const leaderboard = await contractService.getReferralLeaderboard(undefined, 50);
+    const entry = leaderboard.entries.find(
+      (e: LeaderboardEntry) => e.code.toLowerCase() === code.toLowerCase()
+    );
+    return entry?.total_rewards_earned || '0';
+  } catch (error) {
+    console.error('Failed to get code rewards:', error);
+    return '0';
+  }
+}
+
+/**
+ * Get rewards for multiple codes from the leaderboard.
+ * Returns a map of code -> rewards.
+ */
+async function getCodesRewards(codes: string[]): Promise<Map<string, string>> {
+  const rewardsMap = new Map<string, string>();
+  
+  // Initialize all codes with 0 rewards
+  codes.forEach(code => rewardsMap.set(code.toLowerCase(), '0'));
+  
+  try {
+    const leaderboard = await contractService.getReferralLeaderboard(undefined, 50);
+    
+    // Match codes from leaderboard
+    for (const entry of leaderboard.entries) {
+      const normalizedCode = entry.code.toLowerCase();
+      if (codes.some(c => c.toLowerCase() === normalizedCode)) {
+        rewardsMap.set(normalizedCode, entry.total_rewards_earned);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to get codes rewards:', error);
+  }
+  
+  return rewardsMap;
+}
 
 // ============================================
 // Referral URL Helper
@@ -435,6 +507,7 @@ function LookupCodeSection() {
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<CodeInfo | null>(null);
+  const [rewards, setRewards] = useState<string>('0');
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -442,6 +515,7 @@ function LookupCodeSection() {
     const value = e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, REFERRAL_CODE.maxLength);
     setCode(value);
     setResult(null);
+    setRewards('0');
     setNotFound(false);
     setError(null);
   };
@@ -452,12 +526,16 @@ function LookupCodeSection() {
     setIsLoading(true);
     setError(null);
     setResult(null);
+    setRewards('0');
     setNotFound(false);
     
     try {
       const codeInfo = await contractService.getCodeInfo(code.toLowerCase());
       if (codeInfo) {
         setResult(codeInfo);
+        // Fetch rewards from leaderboard
+        const codeRewards = await getCodeRewards(code.toLowerCase());
+        setRewards(codeRewards);
       } else {
         setNotFound(true);
       }
@@ -527,6 +605,12 @@ function LookupCodeSection() {
                 </a>
               </div>
             </div>
+            <div className="flex items-center justify-between py-3 border-t border-white/5">
+              <div>
+                <p className="text-xs text-gray-500 mb-1">Rewards Earned</p>
+                <p className="text-lg font-mono font-semibold text-green-400">{formatUstrAmount(rewards)} USTR</p>
+              </div>
+            </div>
             <div className="pt-3 border-t border-white/5">
               <p className="text-xs text-gray-500 mb-2">Referral Link</p>
               <CopyReferralLink code={result.code} />
@@ -562,11 +646,16 @@ function LookupCodeSection() {
 // Lookup by Owner Section
 // ============================================
 
+interface CodeWithRewards {
+  code: string;
+  rewards: string;
+}
+
 function LookupByOwnerSection() {
   const { address: connectedAddress } = useWallet();
   const [owner, setOwner] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<CodesResponse | null>(null);
+  const [result, setResult] = useState<CodeWithRewards[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   // Auto-fill with connected wallet address
@@ -590,8 +679,22 @@ function LookupByOwnerSection() {
     setResult(null);
     
     try {
-      const codes = await contractService.getCodesByOwner(addressToLookup.trim());
-      setResult(codes);
+      const codesResponse = await contractService.getCodesByOwner(addressToLookup.trim());
+      
+      if (codesResponse.codes.length > 0) {
+        // Fetch rewards for all codes
+        const rewardsMap = await getCodesRewards(codesResponse.codes);
+        
+        // Build result with rewards
+        const codesWithRewards: CodeWithRewards[] = codesResponse.codes.map(code => ({
+          code,
+          rewards: rewardsMap.get(code.toLowerCase()) || '0',
+        }));
+        
+        setResult(codesWithRewards);
+      } else {
+        setResult([]);
+      }
     } catch (err) {
       setError('Failed to lookup codes. Please try again.');
       console.error('Lookup error:', err);
@@ -658,21 +761,27 @@ function LookupByOwnerSection() {
         {/* Result */}
         {result && (
           <div className="p-4 bg-surface-800/50 border border-white/5 rounded-xl">
-            {result.codes.length > 0 ? (
+            {result.length > 0 ? (
               <>
                 <p className="text-xs text-gray-500 mb-3">
-                  {result.codes.length} code{result.codes.length !== 1 ? 's' : ''} registered
+                  {result.length} code{result.length !== 1 ? 's' : ''} registered
                 </p>
                 <div className="space-y-3">
-                  {result.codes.map((code) => (
+                  {result.map(({ code, rewards }) => (
                     <div key={code} className="p-3 bg-surface-700/50 border border-white/5 rounded-lg">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center">
-                          <svg className="w-3 h-3 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                          </svg>
-                        </span>
-                        <span className="text-sm font-semibold text-white font-mono">{code}</span>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center">
+                            <svg className="w-3 h-3 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                            </svg>
+                          </span>
+                          <span className="text-sm font-semibold text-white font-mono">{code}</span>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-gray-500">Rewards</p>
+                          <p className="text-sm font-mono font-semibold text-green-400">{formatUstrAmount(rewards)} USTR</p>
+                        </div>
                       </div>
                       <CopyReferralLink code={code} />
                     </div>
@@ -746,6 +855,9 @@ export function ReferralPage() {
         <div className="space-y-6 animate-fade-in-up stagger-1">
           {/* Register Section */}
           <RegisterCodeSection />
+          
+          {/* Leaderboard Section */}
+          <Leaderboard />
           
           {/* Lookup Sections */}
           <div className="grid md:grid-cols-2 gap-6">

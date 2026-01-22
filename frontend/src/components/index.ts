@@ -10,3 +10,6 @@ export * from './swap';
 // Dashboard components
 export * from './dashboard';
 
+// Referral components
+export * from './referral';
+
