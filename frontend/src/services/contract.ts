@@ -24,6 +24,8 @@ import type {
   CodeInfo,
   CodesResponse,
   ValidateResponse,
+  LeaderboardHint,
+  ReferralLeaderboardResponse,
 } from '../types/contracts';
 
 /** Dev mode flag - enables mock responses for UX testing */
@@ -376,6 +378,117 @@ class ContractService {
     }
   }
 
+  /**
+   * Query referral leaderboard for hint computation
+   */
+  async getReferralLeaderboard(startAfter?: string, limit: number = 50): Promise<ReferralLeaderboardResponse> {
+    const contracts = this.getContracts();
+    
+    if (!contracts.ustcSwap) {
+      console.warn('Swap contract address not configured');
+      return { entries: [], has_more: false };
+    }
+    
+    try {
+      interface ContractLeaderboardEntry {
+        code: string;
+        owner: string;
+        total_rewards_earned: string;
+        total_user_bonuses: string;
+        total_swaps: number;
+        rank: number;
+      }
+      
+      interface ContractLeaderboardResponse {
+        entries: ContractLeaderboardEntry[];
+        has_more: boolean;
+      }
+      
+      const query: { referral_leaderboard: { start_after?: string; limit?: number } } = {
+        referral_leaderboard: { limit }
+      };
+      if (startAfter) {
+        query.referral_leaderboard.start_after = startAfter;
+      }
+      
+      const result = await this.queryContract<{ data: ContractLeaderboardResponse }>(
+        contracts.ustcSwap,
+        query
+      );
+      
+      return {
+        entries: result.data.entries.map(e => ({
+          code: e.code,
+          owner: e.owner,
+          total_rewards_earned: e.total_rewards_earned,
+          total_user_bonuses: e.total_user_bonuses,
+          total_swaps: e.total_swaps,
+          rank: e.rank,
+        })),
+        has_more: result.data.has_more,
+      };
+    } catch (error) {
+      console.error('Failed to get referral leaderboard:', error);
+      return { entries: [], has_more: false };
+    }
+  }
+
+  /**
+   * Compute leaderboard hint for O(1) insertion
+   * 
+   * Given a referral code and its new total rewards after a swap,
+   * this finds the correct position and returns the hint.
+   * 
+   * @param code - The referral code being used
+   * @param newTotalRewards - The code's total rewards AFTER the swap completes
+   * @returns LeaderboardHint for O(1) insertion, or undefined if not computable
+   */
+  async computeLeaderboardHint(code: string, additionalRewards: string): Promise<LeaderboardHint | undefined> {
+    try {
+      // Fetch the full leaderboard (up to 50 entries)
+      const leaderboard = await this.getReferralLeaderboard(undefined, 50);
+      
+      if (leaderboard.entries.length === 0) {
+        // Empty leaderboard - we'll be the new head
+        return { insert_after: undefined };
+      }
+      
+      // Find if this code is already in the leaderboard
+      const existingEntry = leaderboard.entries.find(e => e.code.toLowerCase() === code.toLowerCase());
+      
+      // Calculate new total rewards
+      const currentRewards = existingEntry ? BigInt(existingEntry.total_rewards_earned) : BigInt(0);
+      const newTotalRewards = currentRewards + BigInt(additionalRewards);
+      
+      // Find where we should be inserted (position after the first code with >= our rewards)
+      // Leaderboard is sorted descending by rewards
+      let insertAfter: string | undefined = undefined;
+      
+      for (const entry of leaderboard.entries) {
+        // Skip ourselves if we're already in the leaderboard
+        if (entry.code.toLowerCase() === code.toLowerCase()) {
+          continue;
+        }
+        
+        const entryRewards = BigInt(entry.total_rewards_earned);
+        
+        if (entryRewards >= newTotalRewards) {
+          // This entry has more or equal rewards, we should be after them
+          insertAfter = entry.code;
+        } else {
+          // We found our position - we have more rewards than this entry
+          break;
+        }
+      }
+      
+      return { insert_after: insertAfter };
+    } catch (error) {
+      console.error('Failed to compute leaderboard hint:', error);
+      // Return undefined to fall back to O(n) search on-chain
+      return undefined;
+    }
+  }
+
   // ============================================
   // Treasury Contract Queries
   // ============================================
@@ -559,7 +672,12 @@ class ContractService {
   // Execute Messages
   // ============================================
 
-  async executeSwap(senderAddress: string, ustcAmount: string, referralCode?: string): Promise<string> {
+  async executeSwap(
+    senderAddress: string,
+    ustcAmount: string,
+    referralCode?: string,
+    leaderboardHint?: LeaderboardHint
+  ): Promise<string> {
     const contracts = this.getContracts();
     
     if (!contracts.ustcSwap) {
@@ -576,7 +694,14 @@ class ContractService {
     if (referralCode) {
       swapInner.referral_code = referralCode;
     }
-    // leaderboard_hint is omitted when None (TODO: implement hints for O(1) insertion)
+    
+    // Include leaderboard_hint for O(1) insertion if provided
+    // The hint tells the contract where to insert the referral code in the leaderboard
+    if (leaderboardHint) {
+      swapInner.leaderboard_hint = {
+        insert_after: leaderboardHint.insert_after ?? null,
+      };
+    }
     
     const swapMsg: Record<string, unknown> = {
       swap: swapInner,

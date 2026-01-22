@@ -108,6 +108,40 @@ export interface SwapStats {
   swap_count: number;
 }
 
+/**
+ * Hint for O(1) leaderboard insertion
+ * Frontend queries current leaderboard and provides the position hint
+ */
+export interface LeaderboardHint {
+  /** Code that should be immediately before us in the leaderboard (higher rewards)
+   * undefined means we claim to be the new head (highest rewards) */
+  insert_after?: string;
+}
+
+/** Single entry in the referral leaderboard */
+export interface LeaderboardEntry {
+  /** The referral code */
+  code: string;
+  /** Code owner address */
+  owner: string;
+  /** Total USTR earned by the code owner from referrals */
+  total_rewards_earned: string;
+  /** Total USTR bonuses given to users who used this code */
+  total_user_bonuses: string;
+  /** Number of swaps that used this referral code */
+  total_swaps: number;
+  /** Position on the leaderboard (1-indexed) */
+  rank: number;
+}
+
+/** Response for ReferralLeaderboard query */
+export interface ReferralLeaderboardResponse {
+  /** Leaderboard entries sorted by total_rewards_earned (descending) */
+  entries: LeaderboardEntry[];
+  /** Whether more entries exist after this page */
+  has_more: boolean;
+}
+
 // ============================================
 // Query Messages
 // ============================================

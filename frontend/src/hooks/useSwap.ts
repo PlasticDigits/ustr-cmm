@@ -77,7 +77,23 @@ export function useSwap() {
       
       // Convert to micro units
       const microAmount = Math.floor(parseFloat(ustcAmount) * 1_000_000).toString();
-      return contractService.executeSwap(address, microAmount, referralCode || undefined);
+      
+      // Compute leaderboard hint for O(1) insertion if using a referral code
+      let leaderboardHint = undefined;
+      if (referralCode && simulation?.bonus_amount) {
+        // The referrer bonus is equal to the user bonus (10% each)
+        // bonus_amount in simulation is the user's bonus, referrer gets the same
+        const referrerBonus = simulation.bonus_amount;
+        leaderboardHint = await contractService.computeLeaderboardHint(referralCode, referrerBonus);
+        if (leaderboardHint) {
+          console.log('📊 Leaderboard hint computed:', {
+            code: referralCode,
+            insertAfter: leaderboardHint.insert_after ?? '(new head)',
+          });
+        }
+      }
+      
+      return contractService.executeSwap(address, microAmount, referralCode || undefined, leaderboardHint);
     },
     onSuccess: async () => {
       // Refresh all relevant data
