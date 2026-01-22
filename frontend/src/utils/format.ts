@@ -39,10 +39,12 @@ export function parseAmount(
 
 /**
  * Format an exchange rate
+ * @param rate The rate value
+ * @param decimals Number of decimal places (default 4, use 8 for ticking display)
  */
-export function formatRate(rate: string | number): string {
+export function formatRate(rate: string | number, decimals: number = 4): string {
   const rateNum = typeof rate === 'string' ? parseFloat(rate) : rate;
-  return rateNum.toFixed(4);
+  return rateNum.toFixed(decimals);
 }
 
 /**

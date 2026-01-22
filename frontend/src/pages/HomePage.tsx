@@ -11,8 +11,11 @@
 import { SwapCard, RateChart } from '../components/swap';
 import { StatsCard, BalanceCard } from '../components/dashboard';
 import { CountdownTimer } from '../components/common';
+import { useTickingRate } from '../hooks/useTickingRate';
 
 export function HomePage() {
+  // Ticking rate based on fixed launch time (Jan 22, 2026 13:00 UTC)
+  const { tickingRate, elapsedSeconds, isLaunched } = useTickingRate();
   return (
     <>
       {/* Countdown Timer */}
@@ -45,7 +48,10 @@ export function HomePage() {
 
         {/* Right: Rate Chart */}
         <div className="lg:order-2 animate-fade-in-up stagger-3">
-          <RateChart currentDay={0} />
+          <RateChart 
+            tickingRate={isLaunched ? tickingRate : undefined}
+            elapsedSeconds={isLaunched ? elapsedSeconds : undefined}
+          />
         </div>
       </div>
 

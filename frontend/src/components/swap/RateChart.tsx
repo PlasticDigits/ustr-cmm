@@ -6,21 +6,32 @@
  * - Gradient area fill
  * - Animated progress indicator
  * - Glass morphism styling
+ * - Ticking rate display (8 decimals)
  */
 
 import { Card, CardHeader, CardContent } from '../common/Card';
 import { SWAP_CONFIG } from '../../utils/constants';
+import { formatRate } from '../../utils/format';
 
 interface RateChartProps {
+  /** Current day (0-100) for chart position */
   currentDay?: number;
+  /** Ticking rate from useTickingRate hook (updates 20x/sec) */
+  tickingRate?: number;
+  /** Ticking elapsed seconds for day display */
+  elapsedSeconds?: number;
 }
 
-export function RateChart({ currentDay = 0 }: RateChartProps) {
-  // Calculate current rate position
-  const currentRate = SWAP_CONFIG.startRate + 
-    ((SWAP_CONFIG.endRate - SWAP_CONFIG.startRate) * Math.min(currentDay, 100) / SWAP_CONFIG.durationDays);
+export function RateChart({ currentDay = 0, tickingRate, elapsedSeconds }: RateChartProps) {
+  // Use ticking values if provided, otherwise calculate from currentDay
+  const effectiveDay = elapsedSeconds !== undefined 
+    ? elapsedSeconds / (SWAP_CONFIG.durationSeconds / SWAP_CONFIG.durationDays)
+    : currentDay;
   
-  const progressPercent = Math.min((currentDay / SWAP_CONFIG.durationDays) * 100, 100);
+  const effectiveRate = tickingRate ?? (SWAP_CONFIG.startRate + 
+    ((SWAP_CONFIG.endRate - SWAP_CONFIG.startRate) * Math.min(effectiveDay, 100) / SWAP_CONFIG.durationDays));
+  
+  const progressPercent = Math.min((effectiveDay / SWAP_CONFIG.durationDays) * 100, 100);
 
   return (
     <Card className="h-full">
@@ -129,8 +140,12 @@ export function RateChart({ currentDay = 0 }: RateChartProps) {
 
         {/* Current stats */}
         <div className="grid grid-cols-3 gap-3 mt-6 pt-5 border-t border-white/5">
-          <StatBox label="Current Day" value={Math.floor(currentDay).toString()} />
-          <StatBox label="Current Rate" value={currentRate.toFixed(4)} highlight />
+          <StatBox label="Current Day" value={Math.floor(effectiveDay).toString()} />
+          <StatBox 
+            label="Current Rate" 
+            value={tickingRate !== undefined ? formatRate(effectiveRate, 8) : formatRate(effectiveRate, 4)} 
+            highlight 
+          />
           <StatBox label="End Rate" value={SWAP_CONFIG.endRate.toString()} />
         </div>
       </CardContent>

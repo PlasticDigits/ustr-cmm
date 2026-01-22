@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import { useSwap } from '../../hooks/useSwap';
 import { useWallet } from '../../hooks/useWallet';
 import { useLaunchStatus } from '../../hooks/useLaunchStatus';
+import { useTickingRate } from '../../hooks/useTickingRate';
 import { Card, CardContent } from '../common/Card';
 import { Button } from '../common/Button';
 import { formatAmount, formatRate, formatDuration } from '../../utils/format';
@@ -54,6 +55,11 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
     isActive,
     timeRemaining,
   } = useSwap();
+
+  // Smooth ticking rate that updates 20x per second (based on fixed launch time)
+  const { tickingRate, isLaunched: tickingLaunched } = useTickingRate({
+    enabled: isActive,
+  });
 
   // Countdown timer state
   const [countdown, setCountdown] = useState<{
@@ -182,7 +188,7 @@ export function SwapCard({ referralCode: initialReferralCode, referralLocked = f
             <div>
               <p className="text-xs text-gray-500 mb-0.5">Current Rate</p>
               <p className="text-lg font-mono-numbers font-semibold text-white">
-                {currentRate ? `${formatRate(currentRate.rate)} USTC` : '—'}
+                {tickingLaunched ? `${formatRate(tickingRate, 8)} USTC` : currentRate ? `${formatRate(currentRate.rate)} USTC` : '—'}
               </p>
               <p className="text-xs text-gray-500">per USTR</p>
             </div>
