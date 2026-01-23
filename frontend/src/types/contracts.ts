@@ -142,6 +142,20 @@ export interface ReferralLeaderboardResponse {
   has_more: boolean;
 }
 
+/** Response for ReferralCodeStats query */
+export interface ReferralCodeStats {
+  /** The referral code */
+  code: string;
+  /** Code owner address */
+  owner: string;
+  /** Total USTR earned by the code owner from referrals */
+  total_rewards_earned: string;
+  /** Total USTR bonuses given to users who used this code */
+  total_user_bonuses: string;
+  /** Number of swaps that used this referral code */
+  total_swaps: number;
+}
+
 // ============================================
 // Query Messages
 // ============================================

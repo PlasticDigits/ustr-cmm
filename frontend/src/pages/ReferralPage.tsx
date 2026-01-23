@@ -16,7 +16,7 @@ import { CharacterParticles } from '../components/common/CharacterParticles';
 import { Leaderboard } from '../components/referral/Leaderboard';
 import { formatAddress, getAddressScannerUrl, getTxScannerUrl } from '../utils/format';
 import { REFERRAL_CODE, CONTRACTS, DEFAULT_NETWORK, DECIMALS } from '../utils/constants';
-import type { CodeInfo, ValidateResponse, LeaderboardEntry } from '../types/contracts';
+import type { CodeInfo, ValidateResponse } from '../types/contracts';
 
 // ============================================
 // USTR Formatting Helper
@@ -43,50 +43,6 @@ function formatUstrAmount(microAmount: string): string {
   const decimals = truncatedFraction.toString().padStart(2, '0');
   
   return `${formatted}.${decimals}`;
-}
-
-/**
- * Get rewards for a specific code from the leaderboard.
- * Returns '0' if code is not in the leaderboard.
- */
-async function getCodeRewards(code: string): Promise<string> {
-  try {
-    const leaderboard = await contractService.getReferralLeaderboard(undefined, 50);
-    const entry = leaderboard.entries.find(
-      (e: LeaderboardEntry) => e.code.toLowerCase() === code.toLowerCase()
-    );
-    return entry?.total_rewards_earned || '0';
-  } catch (error) {
-    console.error('Failed to get code rewards:', error);
-    return '0';
-  }
-}
-
-/**
- * Get rewards for multiple codes from the leaderboard.
- * Returns a map of code -> rewards.
- */
-async function getCodesRewards(codes: string[]): Promise<Map<string, string>> {
-  const rewardsMap = new Map<string, string>();
-  
-  // Initialize all codes with 0 rewards
-  codes.forEach(code => rewardsMap.set(code.toLowerCase(), '0'));
-  
-  try {
-    const leaderboard = await contractService.getReferralLeaderboard(undefined, 50);
-    
-    // Match codes from leaderboard
-    for (const entry of leaderboard.entries) {
-      const normalizedCode = entry.code.toLowerCase();
-      if (codes.some(c => c.toLowerCase() === normalizedCode)) {
-        rewardsMap.set(normalizedCode, entry.total_rewards_earned);
-      }
-    }
-  } catch (error) {
-    console.error('Failed to get codes rewards:', error);
-  }
-  
-  return rewardsMap;
 }
 
 // ============================================
@@ -503,11 +459,16 @@ function RegisterCodeSection() {
 // Lookup Code Section
 // ============================================
 
+interface CodeStats {
+  rewards: string;
+  swaps: number;
+}
+
 function LookupCodeSection() {
   const [code, setCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<CodeInfo | null>(null);
-  const [rewards, setRewards] = useState<string>('0');
+  const [stats, setStats] = useState<CodeStats>({ rewards: '0', swaps: 0 });
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
@@ -515,7 +476,7 @@ function LookupCodeSection() {
     const value = e.target.value.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, REFERRAL_CODE.maxLength);
     setCode(value);
     setResult(null);
-    setRewards('0');
+    setStats({ rewards: '0', swaps: 0 });
     setNotFound(false);
     setError(null);
   };
@@ -526,16 +487,21 @@ function LookupCodeSection() {
     setIsLoading(true);
     setError(null);
     setResult(null);
-    setRewards('0');
+    setStats({ rewards: '0', swaps: 0 });
     setNotFound(false);
     
     try {
       const codeInfo = await contractService.getCodeInfo(code.toLowerCase());
       if (codeInfo) {
         setResult(codeInfo);
-        // Fetch rewards from leaderboard
-        const codeRewards = await getCodeRewards(code.toLowerCase());
-        setRewards(codeRewards);
+        // Fetch stats from ustc-swap contract (includes swaps count)
+        const codeStats = await contractService.getReferralCodeStats(code.toLowerCase());
+        if (codeStats) {
+          setStats({
+            rewards: codeStats.total_rewards_earned,
+            swaps: codeStats.total_swaps,
+          });
+        }
       } else {
         setNotFound(true);
       }
@@ -607,8 +573,12 @@ function LookupCodeSection() {
             </div>
             <div className="flex items-center justify-between py-3 border-t border-white/5">
               <div>
-                <p className="text-xs text-gray-500 mb-1">Rewards Earned</p>
-                <p className="text-lg font-mono font-semibold text-green-400">{formatUstrAmount(rewards)} USTR</p>
+                <p className="text-xs text-gray-500 mb-1">Rewards</p>
+                <p className="text-lg font-mono font-semibold text-green-400">{formatUstrAmount(stats.rewards)} USTR</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs text-gray-500 mb-1">Swaps</p>
+                <p className="text-lg font-mono font-semibold text-amber-400">{stats.swaps}</p>
               </div>
             </div>
             <div className="pt-3 border-t border-white/5">
@@ -646,16 +616,17 @@ function LookupCodeSection() {
 // Lookup by Owner Section
 // ============================================
 
-interface CodeWithRewards {
+interface CodeWithStats {
   code: string;
   rewards: string;
+  swaps: number;
 }
 
 function LookupByOwnerSection() {
   const { address: connectedAddress } = useWallet();
   const [owner, setOwner] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [result, setResult] = useState<CodeWithRewards[] | null>(null);
+  const [result, setResult] = useState<CodeWithStats[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   // Auto-fill with connected wallet address
@@ -682,16 +653,19 @@ function LookupByOwnerSection() {
       const codesResponse = await contractService.getCodesByOwner(addressToLookup.trim());
       
       if (codesResponse.codes.length > 0) {
-        // Fetch rewards for all codes
-        const rewardsMap = await getCodesRewards(codesResponse.codes);
+        // Fetch stats for all codes from ustc-swap contract
+        const codesWithStats: CodeWithStats[] = await Promise.all(
+          codesResponse.codes.map(async (code) => {
+            const stats = await contractService.getReferralCodeStats(code.toLowerCase());
+            return {
+              code,
+              rewards: stats?.total_rewards_earned || '0',
+              swaps: stats?.total_swaps || 0,
+            };
+          })
+        );
         
-        // Build result with rewards
-        const codesWithRewards: CodeWithRewards[] = codesResponse.codes.map(code => ({
-          code,
-          rewards: rewardsMap.get(code.toLowerCase()) || '0',
-        }));
-        
-        setResult(codesWithRewards);
+        setResult(codesWithStats);
       } else {
         setResult([]);
       }
@@ -767,7 +741,7 @@ function LookupByOwnerSection() {
                   {result.length} code{result.length !== 1 ? 's' : ''} registered
                 </p>
                 <div className="space-y-3">
-                  {result.map(({ code, rewards }) => (
+                  {result.map(({ code, rewards, swaps }) => (
                     <div key={code} className="p-3 bg-surface-700/50 border border-white/5 rounded-lg">
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
@@ -778,9 +752,15 @@ function LookupByOwnerSection() {
                           </span>
                           <span className="text-sm font-semibold text-white font-mono">{code}</span>
                         </div>
-                        <div className="text-right">
-                          <p className="text-xs text-gray-500">Rewards</p>
-                          <p className="text-sm font-mono font-semibold text-green-400">{formatUstrAmount(rewards)} USTR</p>
+                        <div className="flex gap-4">
+                          <div className="text-right">
+                            <p className="text-xs text-gray-500">Swaps</p>
+                            <p className="text-sm font-mono font-semibold text-amber-400">{swaps}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs text-gray-500">Rewards</p>
+                            <p className="text-sm font-mono font-semibold text-green-400">{formatUstrAmount(rewards)} USTR</p>
+                          </div>
                         </div>
                       </div>
                       <CopyReferralLink code={code} />

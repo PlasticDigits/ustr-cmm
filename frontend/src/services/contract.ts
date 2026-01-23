@@ -26,6 +26,7 @@ import type {
   ValidateResponse,
   LeaderboardHint,
   ReferralLeaderboardResponse,
+  ReferralCodeStats,
 } from '../types/contracts';
 
 /** Dev mode flag - enables mock responses for UX testing */
@@ -430,6 +431,47 @@ class ContractService {
     } catch (error) {
       console.error('Failed to get referral leaderboard:', error);
       return { entries: [], has_more: false };
+    }
+  }
+
+  /**
+   * Get referral code stats from the ustc-swap contract.
+   * Returns rewards and swap count for a specific code.
+   * Works for all codes, not just those in the top 50 leaderboard.
+   */
+  async getReferralCodeStats(code: string): Promise<ReferralCodeStats | null> {
+    const contracts = this.getContracts();
+    
+    if (!contracts.ustcSwap) {
+      console.warn('Swap contract address not configured');
+      return null;
+    }
+    
+    try {
+      interface ContractStatsResponse {
+        code: string;
+        owner: string;
+        total_rewards_earned: string;
+        total_user_bonuses: string;
+        total_swaps: number;
+      }
+      
+      const result = await this.queryContract<{ data: ContractStatsResponse }>(
+        contracts.ustcSwap,
+        { referral_code_stats: { code: code.toLowerCase() } }
+      );
+      
+      return {
+        code: result.data.code,
+        owner: result.data.owner,
+        total_rewards_earned: result.data.total_rewards_earned,
+        total_user_bonuses: result.data.total_user_bonuses,
+        total_swaps: result.data.total_swaps,
+      };
+    } catch (error) {
+      // Code may not exist in stats (never used in a swap)
+      console.log(`No stats found for code "${code}":`, error);
+      return null;
     }
   }
 
