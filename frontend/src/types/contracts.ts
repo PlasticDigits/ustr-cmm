@@ -37,6 +37,10 @@ export interface Cw20Minters {
   minters: string[];
 }
 
+export interface Cw20AllAccountsResponse {
+  accounts: string[];
+}
+
 // ============================================
 // Treasury Contract Types
 // ============================================

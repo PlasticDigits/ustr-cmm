@@ -515,6 +515,55 @@ class ContractService {
     }
   }
 
+  /**
+   * Get the total number of token holders by paginating through all accounts
+   * Note: This may be slow for tokens with many holders. Consider caching the result.
+   */
+  async getTokenHolderCount(tokenAddress: string): Promise<number> {
+    if (!tokenAddress) {
+      console.warn('Token address not configured, returning 0 holder count');
+      return 0;
+    }
+
+    try {
+      let holderCount = 0;
+      let startAfter: string | undefined = undefined;
+      const limit = 30; // Max limit per query
+      let hasMore = true;
+
+      while (hasMore) {
+        const query: { all_accounts: { start_after?: string; limit: number } } = {
+          all_accounts: { limit },
+        };
+        if (startAfter) {
+          query.all_accounts.start_after = startAfter;
+        }
+
+        const result = await this.queryContract<{ data: { accounts: string[] } }>(
+          tokenAddress,
+          query
+        );
+
+        const accounts = result.data.accounts;
+        holderCount += accounts.length;
+
+        // If we got fewer accounts than the limit, we've reached the end
+        if (accounts.length < limit) {
+          hasMore = false;
+        } else {
+          // Set start_after to the last account for next iteration
+          startAfter = accounts[accounts.length - 1];
+        }
+      }
+
+      return holderCount;
+    } catch (error) {
+      console.error('Failed to get token holder count:', error);
+      // If the contract doesn't support all_accounts query, return 0
+      return 0;
+    }
+  }
+
   async getNativeBalance(walletAddress: string, denom: string): Promise<string> {
     try {
       interface BankBalanceResponse {
