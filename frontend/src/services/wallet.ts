@@ -24,7 +24,7 @@ import { NETWORKS, DEFAULT_NETWORK } from '../utils/constants';
 // so we use fixed gas limits
 const GAS_PRICE_ULUNA = '28.325'; // uluna per gas unit
 const CW20_SEND_GAS_LIMIT = 350000; // Gas for CW20 Send with embedded message
-const SWAP_GAS_LIMIT = 700000; // Gas for swap transaction (includes minting, leaderboard updates, referral bonuses)
+const SWAP_GAS_LIMIT = 950000; // Gas for swap transaction (includes minting, leaderboard updates, referral bonuses)
 
 const networkConfig = NETWORKS[DEFAULT_NETWORK];
 const TERRA_CLASSIC_CHAIN_ID = networkConfig.chainId;
