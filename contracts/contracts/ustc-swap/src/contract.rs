@@ -46,8 +46,6 @@ pub struct LeaderboardChange {
     pub action: LeaderboardAction,
     /// The new position in the leaderboard (1-indexed), if code is in leaderboard
     pub position: Option<u32>,
-    /// The code that was displaced from the leaderboard (if any)
-    pub displaced_code: Option<String>,
 }
 
 /// Type of leaderboard change that occurred
@@ -430,10 +428,6 @@ fn execute_swap(
         if let Some(position) = change.position {
             response = response.add_attribute("leaderboard_position", position.to_string());
         }
-        
-        if let Some(displaced) = change.displaced_code {
-            response = response.add_attribute("leaderboard_displaced", displaced);
-        }
     }
 
     Ok(response)
@@ -630,34 +624,62 @@ fn update_leaderboard(
     new_rewards: Uint128,
     hint: Option<&crate::msg::LeaderboardHint>,
 ) -> Result<Option<LeaderboardChange>, ContractError> {
-    let is_in_leaderboard = LEADERBOARD_LINKS.may_load(storage, code)?.is_some();
+    // Step 1: Remove from leaderboard if already present
+    // This unifies the logic - after removal, we always use the same insertion path
+    let was_in_leaderboard = if let Some(link) = LEADERBOARD_LINKS.may_load(storage, code)? {
+        // Check if we even need to move (optimization: skip remove+insert if position unchanged)
+        let needs_move = match &link.prev {
+            Some(prev) => {
+                let prev_stats = REFERRAL_CODE_STATS.load(storage, prev)?;
+                new_rewards > prev_stats.total_rewards_earned
+            }
+            None => false, // Already at head, no movement needed
+        };
 
-    let change = if is_in_leaderboard {
-        // Code is already in leaderboard - check if it needs to move up
-        let moved = reposition_in_leaderboard(storage, code, new_rewards)?;
-        let position = get_leaderboard_position(storage, code)?;
-        Some(LeaderboardChange {
-            action: if moved { LeaderboardAction::PositionUp } else { LeaderboardAction::NoChange },
-            position,
-            displaced_code: None, // Repositioning doesn't displace anyone
-        })
-    } else {
-        // Code is not in leaderboard - check if it qualifies
-        let insert_result = try_insert_into_leaderboard(storage, code, new_rewards, hint)?;
-        if let Some(displaced) = insert_result {
+        if !needs_move {
+            // Position unchanged - return early with current position
             let position = get_leaderboard_position(storage, code)?;
-            Some(LeaderboardChange {
-                action: LeaderboardAction::NewEntry,
+            return Ok(Some(LeaderboardChange {
+                action: LeaderboardAction::NoChange,
                 position,
-                displaced_code: displaced,
-            })
-        } else {
-            // Code didn't qualify for the leaderboard
-            None
+            }));
         }
+
+        // Remove from current position
+        remove_from_leaderboard_internal(storage, code, &link)?;
+
+        // Decrement size (will be incremented back during insertion)
+        let size = LEADERBOARD_SIZE.load(storage)?;
+        LEADERBOARD_SIZE.save(storage, &(size.saturating_sub(1)))?;
+
+        true
+    } else {
+        false
     };
 
-    Ok(change)
+    // Step 2: Insert using hint (same logic for new entries and repositioning)
+    // try_insert_into_leaderboard handles: room check, hint-based O(1) insertion, tail displacement
+    let inserted = try_insert_into_leaderboard(storage, code, new_rewards, hint)?;
+
+    // Step 3: Build result based on what happened
+    if inserted {
+        // Successfully inserted (possibly displacing someone from tail)
+        let position = get_leaderboard_position(storage, code)?;
+        Ok(Some(LeaderboardChange {
+            action: if was_in_leaderboard {
+                LeaderboardAction::PositionUp
+            } else {
+                LeaderboardAction::NewEntry
+            },
+            position,
+        }))
+    } else {
+        // Didn't qualify for leaderboard
+        // This should only happen for new entries when leaderboard is full
+        // and rewards are below the tail. For repositioning (was_in_leaderboard=true),
+        // this would be a logic error since rewards only increase.
+        Ok(None)
+    }
 }
 
 /// Get the position of a code in the leaderboard (1-indexed)
@@ -691,22 +713,21 @@ fn get_leaderboard_position(
 /// - If wrong: searches up or down from hint position (still often faster than from tail)
 /// 
 /// Returns:
-/// - None if the code didn't qualify for the leaderboard
-/// - Some(None) if inserted without displacing anyone (room in leaderboard)
-/// - Some(Some(code)) if inserted and displaced another code
+/// - true if inserted (possibly displacing tail when leaderboard is full)
+/// - false if didn't qualify (leaderboard full and rewards below tail)
 fn try_insert_into_leaderboard(
     storage: &mut dyn cosmwasm_std::Storage,
     code: &str,
     rewards: Uint128,
     hint: Option<&crate::msg::LeaderboardHint>,
-) -> Result<Option<Option<String>>, ContractError> {
+) -> Result<bool, ContractError> {
     let size = LEADERBOARD_SIZE.load(storage)?;
 
     if size < MAX_LEADERBOARD_SIZE {
         // Room in leaderboard - insert at correct position
         insert_into_leaderboard_with_hint(storage, code, rewards, hint)?;
         LEADERBOARD_SIZE.save(storage, &(size + 1))?;
-        Ok(Some(None)) // Inserted without displacing
+        Ok(true)
     } else {
         // Leaderboard is full - check if we beat the tail
         let tail = LEADERBOARD_TAIL.load(storage)?;
@@ -714,19 +735,33 @@ fn try_insert_into_leaderboard(
             let tail_stats = REFERRAL_CODE_STATS.load(storage, tail_code)?;
             if rewards > tail_stats.total_rewards_earned {
                 // We beat the tail - remove tail and insert ourselves
-                // Use internal remove that doesn't decrement size (we'll add one right after)
-                let displaced = tail_code.clone();
                 let tail_link = LEADERBOARD_LINKS.load(storage, tail_code)?;
+                let tail_prev = tail_link.prev.clone();
                 remove_from_leaderboard_internal(storage, tail_code, &tail_link)?;
-                insert_into_leaderboard_with_hint(storage, code, rewards, hint)?;
+                
+                // Update tail pointer to the previous entry (new tail after removal)
+                LEADERBOARD_TAIL.save(storage, &tail_prev)?;
+                
+                // If the hint points to the displaced tail, it's now invalid.
+                // Use the tail's predecessor as a better starting point for insertion.
+                let effective_hint = if hint.map(|h| h.insert_after.as_ref() == Some(tail_code)).unwrap_or(false) {
+                    // Hint was the displaced tail - use predecessor instead
+                    tail_prev.as_ref().map(|prev| crate::msg::LeaderboardHint {
+                        insert_after: Some(prev.clone()),
+                    })
+                } else {
+                    hint.cloned()
+                };
+                
+                insert_into_leaderboard_with_hint(storage, code, rewards, effective_hint.as_ref())?;
                 // Size stays the same (removed one, added one)
-                Ok(Some(Some(displaced))) // Inserted and displaced tail
+                Ok(true)
             } else {
                 // We don't qualify
-                Ok(None)
+                Ok(false)
             }
         } else {
-            Ok(None)
+            Ok(false)
         }
     }
 }
@@ -891,6 +926,10 @@ fn insert_at_position(
 /// Optimized to only walk upward from current position since rewards only increase
 /// 
 /// Returns true if the code moved to a higher position, false if it stayed in place
+/// 
+/// NOTE: This function is no longer used by update_leaderboard (which now uses
+/// the unified remove-then-insert approach), but is kept for potential test usage.
+#[allow(dead_code)]
 fn reposition_in_leaderboard(
     storage: &mut dyn cosmwasm_std::Storage,
     code: &str,
@@ -2908,6 +2947,86 @@ mod tests {
         assert!(delta_link.next.is_none()); // Delta is the new tail
     }
 
+    #[test]
+    fn test_leaderboard_hint_points_to_displaced_tail() {
+        // Regression test: when the hint points to the tail that gets displaced,
+        // the insertion should still work correctly using the tail's predecessor
+        let mut deps = mock_dependencies();
+        let env = mock_env();
+        setup_contract(deps.as_mut(), env.block.time.seconds());
+
+        // Fill leaderboard to capacity (50 entries)
+        // code00 has highest rewards (5000), code49 has lowest (100)
+        for i in 0..50 {
+            let code = format!("code{:02}", i);
+            let rewards = Uint128::from((50 - i) as u128 * 100);
+            let code_stats = ReferralCodeStats {
+                total_rewards_earned: rewards,
+                total_user_bonuses: rewards,
+                total_swaps: 1,
+            };
+            REFERRAL_CODE_STATS
+                .save(&mut deps.storage, &code, &code_stats)
+                .unwrap();
+            try_insert_into_leaderboard(&mut deps.storage, &code, rewards, None).unwrap();
+        }
+
+        // Verify initial state
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 50);
+        let tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(tail, Some("code49".to_string())); // tail has 100 rewards
+
+        // Now insert "newcode" with 150 rewards, but with a hint pointing to the tail
+        // This simulates a stale hint where the frontend computed insert_after = tail
+        // before the tail was displaced
+        let new_rewards = Uint128::from(150u128);
+        let code_stats = ReferralCodeStats {
+            total_rewards_earned: new_rewards,
+            total_user_bonuses: new_rewards,
+            total_swaps: 1,
+        };
+        REFERRAL_CODE_STATS
+            .save(&mut deps.storage, "newcode", &code_stats)
+            .unwrap();
+
+        // Hint points to tail (code49) which will be displaced
+        let hint = crate::msg::LeaderboardHint {
+            insert_after: Some("code49".to_string()),
+        };
+        let inserted = try_insert_into_leaderboard(
+            &mut deps.storage,
+            "newcode",
+            new_rewards,
+            Some(&hint),
+        )
+        .unwrap();
+
+        // Should successfully insert
+        assert!(inserted);
+
+        // Size should still be 50
+        let size = LEADERBOARD_SIZE.load(&deps.storage).unwrap();
+        assert_eq!(size, 50);
+
+        // code49 should be displaced (no longer in leaderboard)
+        assert!(LEADERBOARD_LINKS
+            .may_load(&deps.storage, "code49")
+            .unwrap()
+            .is_none());
+
+        // newcode should be in leaderboard
+        let newcode_link = LEADERBOARD_LINKS.load(&deps.storage, "newcode").unwrap();
+        
+        // newcode (150) should be after code48 (200) and be the new tail
+        assert_eq!(newcode_link.prev, Some("code48".to_string()));
+        assert!(newcode_link.next.is_none());
+
+        // Tail pointer should be updated to newcode
+        let new_tail = LEADERBOARD_TAIL.load(&deps.storage).unwrap();
+        assert_eq!(new_tail, Some("newcode".to_string()));
+    }
+
     // ============ LEADERBOARD EVENT EMISSION TESTS ============
 
     #[test]
@@ -2942,7 +3061,6 @@ mod tests {
         let change = change.unwrap();
         assert_eq!(change.action, LeaderboardAction::NewEntry);
         assert_eq!(change.position, Some(1)); // First entry is position 1
-        assert!(change.displaced_code.is_none()); // No displacement
     }
 
     #[test]
@@ -2997,7 +3115,6 @@ mod tests {
         let change = change.unwrap();
         assert_eq!(change.action, LeaderboardAction::PositionUp);
         assert_eq!(change.position, Some(1)); // Alpha is now #1
-        assert!(change.displaced_code.is_none());
 
         // Verify new order: alpha (300) -> beta (200)
         let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
@@ -3052,7 +3169,6 @@ mod tests {
         let change = change.unwrap();
         assert_eq!(change.action, LeaderboardAction::NoChange);
         assert_eq!(change.position, Some(2)); // Alpha stays at #2
-        assert!(change.displaced_code.is_none());
 
         // Verify order unchanged: beta (200) -> alpha (150)
         let head = LEADERBOARD_HEAD.load(&deps.storage).unwrap();
@@ -3113,9 +3229,8 @@ mod tests {
         let change = change.unwrap();
         assert_eq!(change.action, LeaderboardAction::NewEntry);
         assert!(change.position.is_some());
-        assert_eq!(change.displaced_code, Some("code0".to_string())); // code0 was displaced
 
-        // Verify code0 is no longer in leaderboard
+        // Verify code0 was displaced (no longer in leaderboard)
         assert!(LEADERBOARD_LINKS
             .may_load(&deps.storage, "code0")
             .unwrap()
