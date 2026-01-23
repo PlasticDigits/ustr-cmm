@@ -30,6 +30,15 @@ export function useTreasuryBalances() {
   });
 }
 
+export function useTreasuryUstcBalance() {
+  return useQuery({
+    queryKey: ['treasuryUstcBalance'],
+    queryFn: () => contractService.getTreasuryUstcBalance(),
+    refetchInterval: POLLING_INTERVAL * 3,
+    staleTime: POLLING_INTERVAL,
+  });
+}
+
 // ============================================
 // Token Queries
 // ============================================

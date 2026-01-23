@@ -38,6 +38,29 @@ export interface Cw20Minters {
 }
 
 // ============================================
+// CW20 Holder / Accounts Types
+// ============================================
+
+export interface AllAccountsResponse {
+  accounts: string[];
+}
+
+export interface AllAccountsQueryParams {
+  start_after?: string;
+  limit?: number;
+}
+
+export interface HolderCountResponse {
+  count: number;
+  isVerified: boolean;
+}
+
+export interface HolderWithBalance {
+  address: string;
+  balance: string;
+}
+
+// ============================================
 // Treasury Contract Types
 // ============================================
 
@@ -60,6 +83,12 @@ export interface TreasuryBalance {
 export interface TreasuryAllBalances {
   native: Array<{ denom: string; amount: string }>;
   cw20: Array<{ contract_addr: string; amount: string }>;
+}
+
+export interface TreasuryUstcBalance {
+  amount: string;
+  formatted: string;
+  denom: string;
 }
 
 // ============================================

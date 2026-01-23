@@ -4,6 +4,7 @@ export { useLaunchStatus } from './useLaunchStatus';
 export { 
   useTreasuryConfig,
   useTreasuryBalances,
+  useTreasuryUstcBalance,
   useTokenInfo,
   useTokenBalance,
   useNativeBalance,
@@ -11,4 +12,10 @@ export {
   useContractQuery,
   useInvalidateQueries,
 } from './useContract';
+
+export {
+  useTokenHolders,
+  useTokenHoldersCount,
+  useTokenAccounts,
+} from './useTokenHolders';
 

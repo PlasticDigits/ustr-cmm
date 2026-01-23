@@ -60,6 +60,13 @@ export const DECIMALS = {
   UST1: 6,
 } as const;
 
+// CW20 enumerable pagination (for holder/account enumeration)
+export const CW20_ENUM = {
+  MAX_LIMIT: 30,
+  DEFAULT_LIMIT: 10,
+  PAGINATION_DELAY: 150,
+} as const;
+
 // Swap parameters
 export const SWAP_CONFIG = {
   startRate: 1.5,
