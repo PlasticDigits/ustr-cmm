@@ -96,17 +96,24 @@ interface UserCode {
   inTop50: boolean;
 }
 
+/** Batch size for pagination (limited by LCD gas constraints - 25 works, 50 exceeds gas) */
+const BATCH_SIZE = 25;
+/** Maximum entries to fetch (top 50) */
+const MAX_ENTRIES = 50;
+
 export function Leaderboard() {
   const { connected, address } = useWallet();
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [userCodes, setUserCodes] = useState<UserCode[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch leaderboard and user's codes
+  // Fetch leaderboard in batches and user's codes
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+    setLoadingProgress('Loading...');
 
     try {
       // In dev mode, use mock data
@@ -138,17 +145,42 @@ export function Leaderboard() {
         return;
       }
 
-      // Fetch top 50 leaderboard
-      const leaderboard = await contractService.getReferralLeaderboard(undefined, 50);
-      setEntries(leaderboard.entries);
+      // Fetch top 50 leaderboard in batches of 10 (LCD gas limit prevents fetching 50 at once)
+      const allEntries: LeaderboardEntry[] = [];
+      let startAfter: string | undefined = undefined;
+      let hasMore = true;
+      let batchNum = 0;
+
+      while (hasMore && allEntries.length < MAX_ENTRIES) {
+        batchNum++;
+        setLoadingProgress(`Loading batch ${batchNum}...`);
+        
+        const batch = await contractService.getReferralLeaderboard(startAfter, BATCH_SIZE);
+        
+        if (batch.entries.length === 0) {
+          break;
+        }
+        
+        allEntries.push(...batch.entries);
+        hasMore = batch.has_more;
+        
+        // Set cursor for next batch (last code in current batch)
+        if (batch.entries.length > 0) {
+          startAfter = batch.entries[batch.entries.length - 1].code;
+        }
+        
+        // Update entries progressively so user sees results as they load
+        setEntries([...allEntries]);
+      }
 
       // If wallet connected, get user's codes and check which are not in top 50
       if (connected && address) {
+        setLoadingProgress('Loading your codes...');
         const codesResponse = await contractService.getCodesByOwner(address);
         const userOwnedCodes = codesResponse.codes;
 
         // Find which of user's codes are in top 50
-        const top50Codes = new Set(leaderboard.entries.map(e => e.code.toLowerCase()));
+        const top50Codes = new Set(allEntries.map(e => e.code.toLowerCase()));
         
         // For codes not in top 50, we need to get their rewards
         const userCodeDetails: UserCode[] = [];
@@ -159,19 +191,18 @@ export function Leaderboard() {
           
           if (inTop50) {
             // Already in leaderboard, get rewards from there
-            const entry = leaderboard.entries.find(e => e.code.toLowerCase() === normalizedCode);
+            const entry = allEntries.find(e => e.code.toLowerCase() === normalizedCode);
             userCodeDetails.push({
               code,
               rewards: entry?.total_rewards_earned || '0',
               inTop50: true,
             });
           } else {
-            // Not in top 50, we need to query the code's stats separately
-            // For now, show as 0 rewards since we don't have a direct query
-            // The contract's leaderboard only returns ranked codes with > 0 rewards
+            // Not in top 50, query the code's stats from the contract
+            const stats = await contractService.getReferralCodeStats(code);
             userCodeDetails.push({
               code,
-              rewards: '0',
+              rewards: stats?.total_rewards_earned || '0',
               inTop50: false,
             });
           }
@@ -186,6 +217,7 @@ export function Leaderboard() {
       setError('Failed to load leaderboard. Please try again.');
     } finally {
       setIsLoading(false);
+      setLoadingProgress('');
     }
   }, [connected, address]);
 
@@ -253,15 +285,15 @@ export function Leaderboard() {
           </div>
         )}
 
-        {/* Loading state */}
-        {isLoading && !error && (
+        {/* Loading state - only show full loading overlay when no entries yet */}
+        {isLoading && !error && entries.length === 0 && (
           <div className="p-5 md:p-6">
             <div className="flex items-center justify-center gap-3 py-8">
               <svg className="w-5 h-5 animate-spin text-amber-400" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
               </svg>
-              <span className="text-gray-400">Loading leaderboard...</span>
+              <span className="text-gray-400">{loadingProgress || 'Loading leaderboard...'}</span>
             </div>
           </div>
         )}

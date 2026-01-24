@@ -487,16 +487,43 @@ class ContractService {
    */
   async computeLeaderboardHint(code: string, additionalRewards: string): Promise<LeaderboardHint | undefined> {
     try {
-      // Fetch the full leaderboard (up to 50 entries)
-      const leaderboard = await this.getReferralLeaderboard(undefined, 50);
+      // Fetch the full leaderboard in batches (LCD gas limit prevents fetching 50 at once)
+      const BATCH_SIZE = 25;
+      const MAX_ENTRIES = 50;
+      const allEntries: Array<{
+        code: string;
+        owner: string;
+        total_rewards_earned: string;
+        total_user_bonuses: string;
+        total_swaps: number;
+        rank: number;
+      }> = [];
       
-      if (leaderboard.entries.length === 0) {
+      let startAfter: string | undefined = undefined;
+      let hasMore = true;
+      
+      while (hasMore && allEntries.length < MAX_ENTRIES) {
+        const batch = await this.getReferralLeaderboard(startAfter, BATCH_SIZE);
+        
+        if (batch.entries.length === 0) {
+          break;
+        }
+        
+        allEntries.push(...batch.entries);
+        hasMore = batch.has_more;
+        
+        if (batch.entries.length > 0) {
+          startAfter = batch.entries[batch.entries.length - 1].code;
+        }
+      }
+      
+      if (allEntries.length === 0) {
         // Empty leaderboard - we'll be the new head
         return { insert_after: undefined };
       }
       
       // Find if this code is already in the leaderboard
-      const existingEntry = leaderboard.entries.find(e => e.code.toLowerCase() === code.toLowerCase());
+      const existingEntry = allEntries.find(e => e.code.toLowerCase() === code.toLowerCase());
       
       // Calculate new total rewards
       const currentRewards = existingEntry ? BigInt(existingEntry.total_rewards_earned) : BigInt(0);
@@ -506,7 +533,7 @@ class ContractService {
       // Leaderboard is sorted descending by rewards
       let insertAfter: string | undefined = undefined;
       
-      for (const entry of leaderboard.entries) {
+      for (const entry of allEntries) {
         // Skip ourselves if we're already in the leaderboard
         if (entry.code.toLowerCase() === code.toLowerCase()) {
           continue;
