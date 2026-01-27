@@ -8,8 +8,9 @@
  * to simulate post-launch state for UX testing.
  */
 
-import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, DECIMALS } from '../utils/constants';
+import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, DECIMALS, CW20_ENUM } from '../utils/constants';
 import { executeCw20Send, executeContractWithCoins } from './wallet';
+import { formatAmount } from '../utils/format';
 import type {
   SwapConfig,
   SwapRate,
@@ -18,6 +19,7 @@ import type {
   SwapStats,
   TreasuryConfig,
   TreasuryAllBalances,
+  TreasuryUstcBalance,
   Cw20Balance,
   Cw20TokenInfo,
   ReferralConfig,
@@ -27,6 +29,9 @@ import type {
   LeaderboardHint,
   ReferralLeaderboardResponse,
   ReferralCodeStats,
+  AllAccountsResponse,
+  HolderCountResponse,
+  HolderWithBalance,
 } from '../types/contracts';
 
 /** Dev mode flag - enables mock responses for UX testing */
@@ -658,6 +663,48 @@ class ContractService {
     }
   }
 
+  async getTreasuryUstcBalance(): Promise<TreasuryUstcBalance> {
+    const contracts = this.getContracts();
+    
+    if (!contracts.treasury) {
+      console.warn('Treasury contract address not configured');
+      return {
+        amount: '0',
+        formatted: formatAmount('0', DECIMALS.USTC),
+        denom: 'uusd',
+      };
+    }
+
+    try {
+      // Use specific balance query instead of fetching all balances
+      // This is more efficient as it only queries for USTC (uusd denom)
+      interface TreasuryBalanceResponse {
+        amount: string;
+      }
+
+      const result = await this.queryContract<{ data: TreasuryBalanceResponse }>(
+        contracts.treasury,
+        { balance: { asset: { native: { denom: 'uusd' } } } }
+      );
+
+      const amount = result.data.amount ?? '0';
+      const formatted = formatAmount(amount, DECIMALS.USTC);
+
+      return {
+        amount,
+        formatted,
+        denom: 'uusd',
+      };
+    } catch (error) {
+      console.error('Failed to get treasury USTC balance:', error);
+      return {
+        amount: '0',
+        formatted: formatAmount('0', DECIMALS.USTC),
+        denom: 'uusd',
+      };
+    }
+  }
+
   // ============================================
   // Token Queries
   // ============================================
@@ -695,6 +742,262 @@ class ContractService {
       console.error('Failed to get token balance:', error);
       return { balance: '0' };
     }
+  }
+
+  // ============================================
+  // CW20 Holders / Accounts (Enumerable Extension)
+  // ============================================
+
+  /**
+   * Get a single page of CW20 accounts using the enumerable `all_accounts` query.
+   */
+  async getTokenAccounts(
+    tokenAddress: string,
+    startAfter?: string,
+    limit: number = CW20_ENUM.MAX_LIMIT,
+    signal?: AbortSignal
+  ): Promise<AllAccountsResponse> {
+    if (!tokenAddress) {
+      console.warn('Token address not configured, returning empty accounts');
+      return { accounts: [] };
+    }
+
+    // Clamp limit to CW20_ENUM.MAX_LIMIT
+    const pageLimit = Math.min(limit, CW20_ENUM.MAX_LIMIT);
+
+    const query: { all_accounts: { start_after?: string; limit?: number } } = {
+      all_accounts: {},
+    };
+    if (startAfter) {
+      query.all_accounts.start_after = startAfter;
+    }
+    if (pageLimit > 0) {
+      query.all_accounts.limit = pageLimit;
+    }
+
+    const controller = signal ? undefined : new AbortController();
+    const finalSignal = signal ?? controller?.signal;
+
+    if (finalSignal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
+    const queryPromise = this.queryContract<{ data: AllAccountsResponse }>(
+      tokenAddress,
+      query
+    );
+
+    if (!finalSignal) {
+      const result = await queryPromise;
+      return result.data;
+    }
+
+    const abortPromise = new Promise<never>((_, reject) => {
+      finalSignal.addEventListener('abort', () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      });
+    });
+
+    const result = await Promise.race([queryPromise, abortPromise]);
+    return (result as { data: AllAccountsResponse }).data;
+  }
+
+  /**
+   * Get all CW20 token accounts (enumerated), optionally verifying balances.
+   *
+   * When verifyBalances is true, only addresses with balance > 0 are returned.
+   */
+  async getAllTokenAccounts(
+    tokenAddress: string,
+    signal?: AbortSignal,
+    verifyBalances: boolean = false
+  ): Promise<string[]> {
+    if (!tokenAddress) {
+      console.warn('Token address not configured, returning empty accounts');
+      return [];
+    }
+
+    const accounts = new Set<string>();
+    let startAfter: string | undefined;
+
+    try {
+      while (true) {
+        if (signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
+        const page = await this.getTokenAccounts(
+          tokenAddress,
+          startAfter,
+          CW20_ENUM.MAX_LIMIT,
+          signal
+        );
+
+        if (!page.accounts.length) {
+          break;
+        }
+
+        for (const addr of page.accounts) {
+          accounts.add(addr);
+        }
+
+        if (page.accounts.length < CW20_ENUM.MAX_LIMIT) {
+          break;
+        }
+
+        startAfter = page.accounts[page.accounts.length - 1];
+
+        // Simple delay between paginated requests
+        if (CW20_ENUM.PAGINATION_DELAY > 0) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, CW20_ENUM.PAGINATION_DELAY)
+          );
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        console.warn('getAllTokenAccounts aborted');
+      } else {
+        console.warn('Partial failure in getAllTokenAccounts, returning partial results:', error);
+      }
+    }
+
+    let result = Array.from(accounts);
+
+    if (verifyBalances && result.length > 0) {
+      const holdersWithBalance = await this.getHolderBalances(result, signal);
+      result = holdersWithBalance.map((h) => h.address);
+    }
+
+    return result;
+  }
+
+  /**
+   * Optimized method to count token holders.
+   *
+   * When verifyBalances is true, only addresses with balance > 0 are counted.
+   */
+  async getTokenHoldersCount(
+    tokenAddress: string,
+    signal?: AbortSignal,
+    verifyBalances: boolean = true
+  ): Promise<HolderCountResponse> {
+    if (!tokenAddress) {
+      console.warn('Token address not configured, returning zero holders');
+      return { count: 0, isVerified: verifyBalances };
+    }
+
+    let count = 0;
+    let startAfter: string | undefined;
+
+    try {
+      while (true) {
+        if (signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
+        const page = await this.getTokenAccounts(
+          tokenAddress,
+          startAfter,
+          CW20_ENUM.MAX_LIMIT,
+          signal
+        );
+
+        if (!page.accounts.length) {
+          break;
+        }
+
+        if (!verifyBalances) {
+          count += page.accounts.length;
+        } else {
+          const balances = await this.getHolderBalances(page.accounts, signal);
+          count += balances.length;
+        }
+
+        if (page.accounts.length < CW20_ENUM.MAX_LIMIT) {
+          break;
+        }
+
+        startAfter = page.accounts[page.accounts.length - 1];
+
+        if (CW20_ENUM.PAGINATION_DELAY > 0) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, CW20_ENUM.PAGINATION_DELAY)
+          );
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        console.warn('getTokenHoldersCount aborted');
+      } else {
+        console.warn('Partial failure in getTokenHoldersCount, returning partial count:', error);
+      }
+    }
+
+    return { count, isVerified: verifyBalances };
+  }
+
+  /**
+   * Convenience method to return verified token holders (balance > 0).
+   */
+  async getTokenHolders(
+    tokenAddress: string,
+    signal?: AbortSignal
+  ): Promise<string[]> {
+    return this.getAllTokenAccounts(tokenAddress, signal, true);
+  }
+
+  /**
+   * Get balances for a list of holder addresses, filtering out zero balances.
+   */
+  async getHolderBalances(
+    addresses: string[],
+    signal?: AbortSignal
+  ): Promise<HolderWithBalance[]> {
+    if (!addresses.length) {
+      return [];
+    }
+
+    // Use the cached USTR token address since holders are for USTR
+    const tokenAddress = await this.getUstrTokenAddress();
+    if (!tokenAddress) {
+      console.warn('USTR token address not found, cannot get holder balances');
+      return [];
+    }
+
+    const concurrency = 5;
+    const results: HolderWithBalance[] = [];
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < addresses.length; i += concurrency) {
+      chunks.push(addresses.slice(i, i + concurrency));
+    }
+
+    for (const chunk of chunks) {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      const balances = await Promise.all(
+        chunk.map(async (address) => {
+          try {
+            const balance = await this.getTokenBalance(tokenAddress, address);
+            return { address, balance: balance.balance };
+          } catch (error) {
+            console.warn('Failed to fetch balance for holder', address, error);
+            return { address, balance: '0' };
+          }
+        })
+      );
+
+      for (const b of balances) {
+        if (b.balance !== '0') {
+          results.push(b);
+        }
+      }
+    }
+
+    return results;
   }
 
   async getNativeBalance(walletAddress: string, denom: string): Promise<string> {
