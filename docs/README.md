@@ -103,7 +103,7 @@ For the complete project proposal including specifications, development phases, 
 
 ### External References
 
-- **TerraClassic Documentation**: [terra-classic.io/docs](https://terra-classic.io/docs)
+- **TerraClassic Documentation**: [docs.terra-classic.io](https://docs.terra-classic.io)
 - **CW20 Mintable**: [PlasticDigits/cw20-mintable](https://github.com/PlasticDigits/cw20-mintable)
 - **Pre-registration System**: [cmm-ustc-preregister](https://github.com/PlasticDigits/cmm-ustc-preregister)
 

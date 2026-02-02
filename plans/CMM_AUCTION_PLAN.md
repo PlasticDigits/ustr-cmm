@@ -1171,7 +1171,7 @@ All system parameters are controlled through the existing CMM Governance framewo
 - [Venus Protocol Documentation](https://docs.venus.io/)
 - [FDUSD Official Site](https://firstdigitallabs.com/)
 - [CosmWasm Smart Contracts](https://docs.cosmwasm.com/)
-- [TerraClassic Documentation](https://terra-classic.io/docs)
+- [TerraClassic Documentation](https://docs.terra-classic.io)
 
 ---
 

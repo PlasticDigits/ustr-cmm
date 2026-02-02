@@ -4,11 +4,16 @@
  * Handles all smart contract interactions for the USTR CMM frontend.
  * Provides type-safe methods for querying and executing contract messages.
  * 
+ * Features:
+ * - Multiple LCD endpoint fallbacks for resilience
+ * - Response caching to prevent flickering on transient errors
+ * - Rate limiting to avoid overwhelming endpoints
+ * 
  * In dev mode (VITE_DEV_MODE=true), certain methods return mock data
  * to simulate post-launch state for UX testing.
  */
 
-import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, DECIMALS } from '../utils/constants';
+import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, DECIMALS, LCD_CONFIG } from '../utils/constants';
 import { executeCw20Send, executeContractWithCoins } from './wallet';
 import type {
   SwapConfig,
@@ -34,8 +39,42 @@ const DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true';
 
 type NetworkKey = keyof typeof NETWORKS;
 
+/**
+ * Cache entry with TTL tracking
+ */
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+  expiresAt: number;
+}
+
+/**
+ * Endpoint health tracking
+ */
+interface EndpointHealth {
+  lastFailure: number;
+  consecutiveFailures: number;
+}
+
+/**
+ * Rate limiting tracker
+ */
+interface RateLimitEntry {
+  lastRequest: number;
+  pending: Promise<unknown> | null;
+}
+
 class ContractService {
   private network: NetworkKey = DEFAULT_NETWORK;
+  
+  // Response cache: path -> cached response
+  private cache: Map<string, CacheEntry<unknown>> = new Map();
+  
+  // Endpoint health tracking: endpoint URL -> health status
+  private endpointHealth: Map<string, EndpointHealth> = new Map();
+  
+  // Rate limiting: path -> last request info
+  private rateLimiter: Map<string, RateLimitEntry> = new Map();
 
   constructor() {
     console.log('ContractService initialized for:', NETWORKS[this.network].name);
@@ -43,6 +82,10 @@ class ContractService {
 
   setNetwork(network: NetworkKey) {
     this.network = network;
+    // Clear cache and health on network switch
+    this.cache.clear();
+    this.endpointHealth.clear();
+    this.rateLimiter.clear();
     console.log('ContractService switched to:', NETWORKS[this.network].name);
   }
 
@@ -50,20 +93,186 @@ class ContractService {
     return CONTRACTS[this.network];
   }
 
-  private getLcdUrl() {
-    return NETWORKS[this.network].lcd;
+  private getLcdEndpoints(): readonly string[] {
+    return NETWORKS[this.network].lcdFallbacks;
   }
 
   /**
-   * Fetch data from LCD endpoint
+   * Check if an endpoint is currently healthy (not in cooldown)
+   */
+  private isEndpointHealthy(endpoint: string): boolean {
+    const health = this.endpointHealth.get(endpoint);
+    if (!health) return true;
+    
+    const now = Date.now();
+    const cooldownExpired = now - health.lastFailure > LCD_CONFIG.endpointCooldown;
+    
+    if (cooldownExpired) {
+      // Reset health status after cooldown
+      this.endpointHealth.delete(endpoint);
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Mark an endpoint as failed
+   */
+  private markEndpointFailed(endpoint: string): void {
+    const health = this.endpointHealth.get(endpoint) || { lastFailure: 0, consecutiveFailures: 0 };
+    health.lastFailure = Date.now();
+    health.consecutiveFailures++;
+    this.endpointHealth.set(endpoint, health);
+  }
+
+  /**
+   * Mark an endpoint as successful (reset failure count)
+   */
+  private markEndpointSuccess(endpoint: string): void {
+    this.endpointHealth.delete(endpoint);
+  }
+
+  /**
+   * Get cached response if valid
+   */
+  private getCached<T>(path: string, allowStale: boolean = false): T | null {
+    const entry = this.cache.get(path) as CacheEntry<T> | undefined;
+    if (!entry) return null;
+    
+    const now = Date.now();
+    const maxAge = allowStale ? LCD_CONFIG.staleCacheTtl : LCD_CONFIG.cacheTtl;
+    
+    if (now - entry.timestamp < maxAge) {
+      return entry.data;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Store response in cache
+   */
+  private setCache<T>(path: string, data: T): void {
+    this.cache.set(path, {
+      data,
+      timestamp: Date.now(),
+      expiresAt: Date.now() + LCD_CONFIG.cacheTtl,
+    });
+  }
+
+  /**
+   * Rate-limited fetch - prevents hammering the same endpoint
+   */
+  private async rateLimitedFetch<T>(path: string, fetchFn: () => Promise<T>): Promise<T> {
+    const entry = this.rateLimiter.get(path);
+    const now = Date.now();
+    
+    // If there's a pending request for this path, wait for it
+    if (entry?.pending) {
+      return entry.pending as Promise<T>;
+    }
+    
+    // Check if we need to wait before making another request
+    if (entry && now - entry.lastRequest < LCD_CONFIG.minRequestInterval) {
+      // Return cached value if available
+      const cached = this.getCached<T>(path);
+      if (cached !== null) {
+        return cached;
+      }
+      // Otherwise wait for the minimum interval
+      await new Promise(resolve => 
+        setTimeout(resolve, LCD_CONFIG.minRequestInterval - (now - entry.lastRequest))
+      );
+    }
+    
+    // Create the pending promise
+    const pending = fetchFn();
+    this.rateLimiter.set(path, { lastRequest: Date.now(), pending });
+    
+    try {
+      const result = await pending;
+      return result;
+    } finally {
+      // Clear pending status
+      const current = this.rateLimiter.get(path);
+      if (current) {
+        current.pending = null;
+      }
+    }
+  }
+
+  /**
+   * Fetch with timeout
+   */
+  private async fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      return response;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Fetch data from LCD endpoint with fallbacks, caching, and rate limiting
    */
   private async fetchLcd<T>(path: string): Promise<T> {
-    const url = `${this.getLcdUrl()}${path}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`LCD request failed: ${response.status} ${response.statusText}`);
+    // Check fresh cache first
+    const cached = this.getCached<T>(path);
+    if (cached !== null) {
+      return cached;
     }
-    return response.json();
+    
+    return this.rateLimitedFetch(path, async () => {
+      const endpoints = this.getLcdEndpoints();
+      const errors: string[] = [];
+      
+      // Try each endpoint in order, preferring healthy ones
+      const healthyEndpoints = endpoints.filter(ep => this.isEndpointHealthy(ep));
+      const unhealthyEndpoints = endpoints.filter(ep => !this.isEndpointHealthy(ep));
+      const orderedEndpoints = [...healthyEndpoints, ...unhealthyEndpoints];
+      
+      for (const endpoint of orderedEndpoints) {
+        const url = `${endpoint}${path}`;
+        
+        try {
+          const response = await this.fetchWithTimeout(url, LCD_CONFIG.requestTimeout);
+          
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status} ${response.statusText}`);
+          }
+          
+          const data = await response.json() as T;
+          
+          // Success - cache and mark endpoint healthy
+          this.setCache(path, data);
+          this.markEndpointSuccess(endpoint);
+          
+          return data;
+        } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          errors.push(`${endpoint}: ${errorMsg}`);
+          this.markEndpointFailed(endpoint);
+          
+          // Continue to next endpoint
+          continue;
+        }
+      }
+      
+      // All endpoints failed - try returning stale cache
+      const staleCache = this.getCached<T>(path, true);
+      if (staleCache !== null) {
+        console.warn(`All LCD endpoints failed, using stale cache for ${path}`);
+        return staleCache;
+      }
+      
+      // No cache available - throw error
+      throw new Error(`All LCD endpoints failed for ${path}: ${errors.join('; ')}`);
+    });
   }
 
   /**

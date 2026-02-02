@@ -6,7 +6,7 @@
 
 import { TreasuryAssetsCard, IssuanceCard, RatiosCard } from '../components/treasury';
 import { useTreasury } from '../hooks/useTreasury';
-import { DECIMALS } from '../utils/constants';
+import { DECIMALS, NETWORKS, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
 
 export function TreasuryPage() {
   const { treasuryData, isLoading, error } = useTreasury();
@@ -38,7 +38,8 @@ export function TreasuryPage() {
       <div className="mb-8 md:mb-10 animate-fade-in-up stagger-2">
         <TreasuryAssetsCard 
           assets={treasuryData?.assets ?? {}} 
-          isLoading={isLoading} 
+          isLoading={isLoading}
+          explorerUrl={`${NETWORKS[DEFAULT_NETWORK].scanner}/address/${CONTRACTS[DEFAULT_NETWORK].treasury}`}
         />
       </div>
 
@@ -63,6 +64,7 @@ export function TreasuryPage() {
             decimals={DECIMALS.USTR}
             gradient="from-amber-500/20 to-orange-500/20"
             isLoading={isLoading}
+            explorerUrl={`${NETWORKS[DEFAULT_NETWORK].scanner}/address/${CONTRACTS[DEFAULT_NETWORK].ustrToken}`}
           />
         </div>
       </div>

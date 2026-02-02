@@ -27,6 +27,10 @@ export function useTreasuryBalances() {
     queryFn: () => contractService.getTreasuryBalances(),
     refetchInterval: POLLING_INTERVAL * 3,
     staleTime: POLLING_INTERVAL,
+    // Prevent flickering - keep previous data while refetching
+    placeholderData: (previousData) => previousData,
+    retry: false, // Contract service handles fallbacks
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -53,6 +57,10 @@ export function useTokenBalance(
     enabled: !!tokenAddress && !!walletAddress,
     refetchInterval: POLLING_INTERVAL,
     staleTime: POLLING_INTERVAL / 2,
+    // Prevent flickering - keep previous data while refetching
+    placeholderData: (previousData) => previousData,
+    retry: false, // Contract service handles fallbacks
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -66,6 +74,10 @@ export function useNativeBalance(
     enabled: !!walletAddress,
     refetchInterval: POLLING_INTERVAL,
     staleTime: POLLING_INTERVAL / 2,
+    // Prevent flickering - keep previous data while refetching
+    placeholderData: (previousData) => previousData,
+    retry: false, // Contract service handles fallbacks
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -102,6 +114,8 @@ export function useContractQuery<T>({
     queryFn,
     refetchInterval: autoRefresh ? POLLING_INTERVAL : undefined,
     staleTime: autoRefresh ? POLLING_INTERVAL / 2 : POLLING_INTERVAL * 6,
+    retry: false, // Contract service handles fallbacks
+    refetchOnWindowFocus: false,
     ...options,
   });
 }

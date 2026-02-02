@@ -2,7 +2,7 @@
 
 This document provides an overview of all USTR CMM smart contracts with links to their source code and key development decisions.
 
-> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
+> **📖 Official Documentation**: For TerraClassic network documentation, see [docs.terra-classic.io](https://docs.terra-classic.io).
 >
 > **Development Reference**: For working examples of TerraClassic contract patterns, see the 
 > git submodules in `contracts/external/`. The `cw20-mintable` submodule demonstrates CosmWasm 

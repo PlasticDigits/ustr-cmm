@@ -14,9 +14,10 @@ import { usePrices } from '../../hooks/usePrices';
 interface TreasuryAssetsCardProps {
   assets: Record<string, TreasuryAsset>;
   isLoading?: boolean;
+  explorerUrl?: string;
 }
 
-export function TreasuryAssetsCard({ assets, isLoading = false }: TreasuryAssetsCardProps) {
+export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: TreasuryAssetsCardProps) {
   const assetEntries = Object.entries(assets);
   const { prices } = usePrices();
   
@@ -99,6 +100,19 @@ export function TreasuryAssetsCard({ assets, isLoading = false }: TreasuryAssets
             </svg>
           </div>
           <h3 className="text-lg font-semibold text-white">Treasury Assets</h3>
+          {explorerUrl && (
+            <a
+              href={explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-amber-500/50 hover:bg-amber-500/10 text-gray-400 hover:text-amber-400 transition-all text-xs"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              View Contract
+            </a>
+          )}
         </div>
         
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -110,10 +124,10 @@ export function TreasuryAssetsCard({ assets, isLoading = false }: TreasuryAssets
             return (
               <div 
                 key={denom}
-                className="flex items-center justify-between p-4 rounded-xl bg-gradient-to-r from-white/5 to-white/5 border border-white/5 hover:border-white/10 transition-colors group"
+                className="flex items-center justify-between gap-2 p-4 rounded-xl bg-gradient-to-r from-white/5 to-white/5 border border-white/5 hover:border-white/10 transition-colors group min-w-0"
                 style={{ animationDelay: `${index * 100}ms` }}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-shrink-0">
                   <TokenIcon 
                     symbol={asset.displayName} 
                     size="md" 
@@ -122,12 +136,12 @@ export function TreasuryAssetsCard({ assets, isLoading = false }: TreasuryAssets
                   />
                   <span className="font-medium text-white">{asset.displayName}</span>
                 </div>
-                <div className="text-right">
-                  <div className={`text-lg font-mono-numbers font-semibold ${asset.iconColor}`}>
+                <div className="text-right min-w-0 flex-1">
+                  <div className={`text-sm sm:text-base lg:text-lg font-mono-numbers font-semibold truncate ${asset.iconColor}`}>
                     {formatAmount(asset.balance, asset.decimals)}
                   </div>
                   {priceUsd > 0 && (
-                    <div className="text-xs text-gray-400">
+                    <div className="text-xs text-gray-400 truncate">
                       {formatUsd(valueUsd)}
                     </div>
                   )}

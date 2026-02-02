@@ -142,17 +142,24 @@ async function fetchTreasuryData(): Promise<TreasuryData> {
 }
 
 export function useTreasury() {
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['treasury', 'fullData'],
     queryFn: fetchTreasuryData,
     refetchInterval: POLLING_INTERVAL * 3, // Every 30 seconds
     staleTime: POLLING_INTERVAL,
+    // Keep previous data while refetching to prevent UI flickering
+    placeholderData: (previousData) => previousData,
+    // Don't retry at React Query level - contract service handles fallbacks
+    retry: false,
+    // Don't refetch on window focus to reduce unnecessary requests
+    refetchOnWindowFocus: false,
   });
 
   return {
     treasuryData: data ?? null,
-    isLoading,
-    error: error ? (error as Error).message : null,
+    isLoading: isLoading && !data, // Only show loading if no data at all
+    isFetching, // True when refetching in background
+    error: error && !data ? (error as Error).message : null, // Only show error if no data
     refetch,
   };
 }

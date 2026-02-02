@@ -1,6 +1,6 @@
 # USTR CMM Architecture
 
-> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
+> **📖 Official Documentation**: For TerraClassic network documentation, see [docs.terra-classic.io](https://docs.terra-classic.io).
 
 ## System Overview
 

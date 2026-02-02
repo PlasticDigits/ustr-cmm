@@ -3,23 +3,49 @@
  */
 
 // Network configuration
+// Endpoints from official docs: https://docs.terra-classic.io
 export const NETWORKS = {
   testnet: {
     chainId: 'rebel-2',
     name: 'TerraClassic Testnet',
-    rpc: 'https://terra-classic-testnet-rpc.publicnode.com:443',
-    lcd: 'https://terra-classic-testnet-lcd.publicnode.com',
+    rpc: 'https://rpc.luncblaze.com',
+    lcd: 'https://lcd.luncblaze.com',
+    // Fallback LCD endpoints (tried in order)
+    lcdFallbacks: [
+      'https://lcd.luncblaze.com',
+      'https://lcd.terra-classic.hexxagon.dev',
+    ],
     cw20CodeId: 1641,
     scanner: 'https://finder.terraclassic.community/testnet',
   },
   mainnet: {
     chainId: 'columbus-5',
     name: 'TerraClassic Mainnet',
-    rpc: 'https://terra-classic-rpc.publicnode.com:443',
+    rpc: 'https://terra-classic-rpc.publicnode.com',
     lcd: 'https://terra-classic-lcd.publicnode.com',
+    // Fallback LCD endpoints (tried in order)
+    lcdFallbacks: [
+      'https://terra-classic-lcd.publicnode.com',
+      'https://api-lunc-lcd.binodes.com',
+      'https://lcd.terra-classic.hexxagon.io',
+    ],
     cw20CodeId: 10184,
     scanner: 'https://finder.terraclassic.community/mainnet',
   },
+} as const;
+
+// LCD request configuration
+export const LCD_CONFIG = {
+  // Rate limiting: minimum ms between requests to the same endpoint
+  minRequestInterval: 500,
+  // Cache TTL for successful responses (ms)
+  cacheTtl: 10000,
+  // How long to keep stale cache if all endpoints fail (ms)
+  staleCacheTtl: 60000,
+  // Request timeout (ms)
+  requestTimeout: 8000,
+  // How long to mark an endpoint as unhealthy after failure (ms)
+  endpointCooldown: 30000,
 } as const;
 
 // Default to mainnet for production (referral contract deployed on mainnet)

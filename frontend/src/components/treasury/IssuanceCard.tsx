@@ -20,9 +20,10 @@ interface IssuanceCardProps {
   gradient: string;
   isLoading?: boolean;
   notLaunched?: boolean;
+  explorerUrl?: string;
 }
 
-export function IssuanceCard({ tokenName, tokenSymbol, issuance, decimals, gradient, isLoading = false, notLaunched = false }: IssuanceCardProps) {
+export function IssuanceCard({ tokenName, tokenSymbol, issuance, decimals, gradient, isLoading = false, notLaunched = false, explorerUrl }: IssuanceCardProps) {
   const mintedFormatted = formatAmount(issuance.minted, decimals, 0);
   const burnedFormatted = formatAmount(issuance.burned, decimals, 0);
   const supplyFormatted = formatAmount(issuance.supply, decimals, 0);
@@ -36,10 +37,22 @@ export function IssuanceCard({ tokenName, tokenSymbol, issuance, decimals, gradi
             <h3 className="text-lg font-semibold text-white">{tokenName} Issuance</h3>
             <p className="text-sm text-gray-400">{tokenSymbol}</p>
           </div>
-          {notLaunched && (
+          {notLaunched ? (
             <span className="ml-auto px-2 py-0.5 text-xs rounded-full bg-gray-500/20 text-gray-400 border border-gray-500/30">
               Coming Soon
             </span>
+          ) : explorerUrl && (
+            <a
+              href={explorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 hover:border-amber-500/50 hover:bg-amber-500/10 text-gray-400 hover:text-amber-400 transition-all text-xs"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+              View Token
+            </a>
           )}
         </div>
         
