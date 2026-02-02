@@ -14,7 +14,8 @@ interface RatiosCardProps {
  */
 function getStatusColor(ratio: number, type: 'collateral' | 'general'): string {
   if (type === 'collateral') {
-    if (ratio >= 100) return 'text-emerald-400';
+    // Infinite collateralization (no liabilities) is the best state
+    if (!isFinite(ratio) || ratio >= 100) return 'text-emerald-400';
     if (ratio >= 50) return 'text-amber-400';
     return 'text-red-400';
   }
@@ -25,11 +26,15 @@ function getStatusColor(ratio: number, type: 'collateral' | 'general'): string {
  * Formats a ratio value with specified decimal places
  * @param value - The ratio value to format
  * @param decimals - Number of decimal places to show
- * @returns Formatted string or 'N/A' if value is invalid
+ * @returns Formatted string, '∞' for infinite, or 'N/A' if value is invalid
  */
 function formatRatio(value: number | undefined, decimals: number = 2): string {
-  if (value === undefined || isNaN(value) || !isFinite(value)) {
+  if (value === undefined || isNaN(value)) {
     return 'N/A';
+  }
+  // Display infinity symbol when ratio is infinite (e.g., no liabilities)
+  if (!isFinite(value)) {
+    return '∞';
   }
   return value.toFixed(decimals);
 }

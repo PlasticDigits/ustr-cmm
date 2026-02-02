@@ -119,12 +119,17 @@ async function fetchTreasuryData(): Promise<TreasuryData> {
     ustrBacking = Number(ustcInUstrDecimals * 100n / ustrTotalSupply) / 100;
   }
   
+  // When UST1 supply is 0, ratios that divide by liabilities are infinite
+  // (assets / 0 liabilities = infinite collateralization)
+  const ust1Supply = BigInt(0); // Currently no UST1 issued
+  const hasUst1Issued = ust1Supply > 0n;
+  
   return {
     assets,
     ust1Issuance: {
       minted: BigInt(0),
       burned: BigInt(0),
-      supply: BigInt(0),
+      supply: ust1Supply,
     },
     ustrIssuance: {
       minted: ustrTotalSupply,
@@ -132,9 +137,12 @@ async function fetchTreasuryData(): Promise<TreasuryData> {
       supply: ustrTotalSupply,
     },
     ratios: {
-      collateralization: 0, // No UST1 issued yet
-      ustcPerUst1: 0,
-      assetsToLiabilities: 0,
+      // With no UST1 liabilities, collateralization is infinite
+      collateralization: hasUst1Issued ? 0 : Infinity,
+      // USTC backing per UST1 is infinite when no UST1 exists
+      ustcPerUst1: hasUst1Issued ? 0 : Infinity,
+      // Assets / Liabilities is infinite when liabilities = 0
+      assetsToLiabilities: hasUst1Issued ? 0 : Infinity,
       ustrBacking,
     },
     lastUpdated: new Date(),
