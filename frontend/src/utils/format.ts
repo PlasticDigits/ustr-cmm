@@ -6,25 +6,35 @@ import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
 
 /**
  * Format a micro-denominated amount to human-readable
- * @param microAmount The amount in micro units
+ * @param microAmount The amount in micro units (accepts string, number, or bigint)
  * @param decimals The number of decimal places for conversion (default: USTC = 6)
  * @param displayDecimals Optional max decimal places for display (default: same as decimals)
  */
 export function formatAmount(
-  microAmount: string | number,
+  microAmount: string | number | bigint,
   decimals: number = DECIMALS.USTC,
   displayDecimals?: number
 ): string {
-  const amount = typeof microAmount === 'string' 
-    ? parseFloat(microAmount) 
-    : microAmount;
+  let amount: number;
   
-  const formatted = amount / Math.pow(10, decimals);
+  if (typeof microAmount === 'bigint') {
+    // For bigint, convert to string first to preserve precision
+    const divisor = BigInt(10 ** decimals);
+    const wholePart = microAmount / divisor;
+    const fractionalPart = microAmount % divisor;
+    const fractionalStr = fractionalPart.toString().padStart(decimals, '0');
+    amount = parseFloat(`${wholePart}.${fractionalStr}`);
+  } else if (typeof microAmount === 'string') {
+    amount = parseFloat(microAmount) / Math.pow(10, decimals);
+  } else {
+    amount = microAmount / Math.pow(10, decimals);
+  }
   
-  const maxDecimals = displayDecimals ?? decimals;
+  const maxDecimals = displayDecimals ?? Math.min(decimals, 6);
+  const minDecimals = Math.min(2, maxDecimals);
   
-  return formatted.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
+  return amount.toLocaleString('en-US', {
+    minimumFractionDigits: minDecimals,
     maximumFractionDigits: maxDecimals,
   });
 }

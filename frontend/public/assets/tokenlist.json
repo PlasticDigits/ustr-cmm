@@ -1,0 +1,43 @@
+{
+  "name": "USTR CMM Token List",
+  "version": "1.0.0",
+  "tokens": [
+    {
+      "symbol": "USTC",
+      "name": "TerraClassicUSD",
+      "denom": "uusd",
+      "type": "native",
+      "decimals": 6,
+      "gradient": "from-blue-500 to-cyan-500",
+      "iconColor": "text-blue-400"
+    },
+    {
+      "symbol": "LUNC",
+      "name": "Terra Luna Classic",
+      "denom": "uluna",
+      "type": "native",
+      "decimals": 6,
+      "gradient": "from-yellow-500 to-orange-500",
+      "iconColor": "text-yellow-400"
+    },
+    {
+      "symbol": "USTR",
+      "name": "USTR Token",
+      "address": "terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv",
+      "type": "cw20",
+      "decimals": 18,
+      "gradient": "from-amber-500 to-orange-500",
+      "iconColor": "text-amber-400"
+    },
+    {
+      "symbol": "ALPHA",
+      "name": "Alpha Token",
+      "address": "terra1x6e64es6yhauhvs3prvpdg2gkqdtfru840wgnhs935x8axr7zxkqzysuxz",
+      "type": "cw20",
+      "decimals": 6,
+      "gradient": "from-purple-500 to-pink-500",
+      "iconColor": "text-purple-400"
+    }
+  ],
+  "treasuryAssets": ["USTC", "ALPHA"]
+}

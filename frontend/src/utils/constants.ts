@@ -41,6 +41,9 @@ export const CONTRACTS = {
   },
 } as const;
 
+// Token list URL - contains token metadata (decimals, addresses, etc.)
+export const TOKEN_LIST_URL = '/assets/tokenlist.json';
+
 // Referral code validation rules
 export const REFERRAL_CODE = {
   minLength: 1,
@@ -74,3 +77,31 @@ export const SWAP_CONFIG = {
 export const POLLING_INTERVAL = 10000; // 10 seconds
 export const TOAST_DURATION = 5000; // 5 seconds
 
+// DEX router configurations
+export const DEX_ROUTERS = {
+  // Priority order for price fallback: custom -> garuda -> terraswap
+  custom: null, // Placeholder for future USTR DEX
+  garuda: {
+    factory: 'terra1ypwj6sw25g0qcykv7mzmcvsndvx56r3yrgkaw3fds7yzwl7fwwcsnxkeh7',
+    router: 'terra1frvfffkpdluzdj8lel4nyyjl2u0p6zuenhfeveulrlg6r2w4tdqqx2zr68',
+  },
+  terraswap: {
+    factory: null,
+    router: 'terra1g3zc8lwwmkrm0cz9wkgl849pdqaw6cq8lh7872',
+  },
+} as const;
+
+// Price API configuration
+export const PRICE_API = {
+  binance: 'https://api.binance.com/api/v3/ticker/price',
+  // Symbols to fetch from Binance
+  symbols: ['LUNCUSDT', 'USTCUSDT'],
+} as const;
+
+// Price cache configuration
+export const PRICE_CACHE = {
+  // Cache durations in milliseconds
+  basePrices: 60000,    // 60 seconds for CEX prices
+  dexRates: 120000,     // 120 seconds for DEX rates
+  staleTime: 30000,     // 30 seconds before considered stale
+} as const;

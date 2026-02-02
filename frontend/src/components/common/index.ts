@@ -4,4 +4,5 @@ export { Button } from './Button';
 export { CountdownTimer } from './CountdownTimer';
 export { UnderConstruction } from './UnderConstruction';
 export { CharacterParticles } from './CharacterParticles';
+export { TokenIcon } from './TokenIcon';
 

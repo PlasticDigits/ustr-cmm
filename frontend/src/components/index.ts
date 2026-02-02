@@ -13,3 +13,6 @@ export * from './dashboard';
 // Referral components
 export * from './referral';
 
+// Treasury components
+export * from './treasury';
+
