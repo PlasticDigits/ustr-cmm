@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { priceService } from '../services/price';
 import { PRICE_CACHE, TOKEN_LIST_URL } from '../utils/constants';
@@ -42,12 +43,17 @@ export function usePrices(): {
   error: string | null;
   refetch: () => void;
 } {
+  // Ref to store last successful prices for fallback
+  const lastPricesRef = useRef<Record<string, number>>({});
+
   // Fetch base prices (LUNC, USTC) from Binance
   const baseQuery = useQuery({
     queryKey: ['prices', 'base'],
     queryFn: () => priceService.fetchBasePrices(),
     staleTime: PRICE_CACHE.staleTime,
     refetchInterval: PRICE_CACHE.basePrices,
+    // Keep previous data to prevent flickering when refetch fails
+    placeholderData: (prev) => prev,
   });
 
   // Fetch token prices for all CW20 tokens in tokenlist
@@ -55,9 +61,10 @@ export function usePrices(): {
     queryKey: ['prices', 'tokens', baseQuery.data?.lunc, baseQuery.data?.ustc],
     queryFn: async () => {
       const basePrices = baseQuery.data!;
-      const prices: Record<string, number> = {};
+      // Start with previous prices as fallback
+      const prices: Record<string, number> = { ...lastPricesRef.current };
 
-      // Include LUNC and USTC in prices
+      // Include LUNC and USTC in prices (always update from fresh data)
       prices['LUNC'] = basePrices.lunc;
       prices['USTC'] = basePrices.ustc;
 
@@ -70,14 +77,24 @@ export function usePrices(): {
         // Pass pool address if available for direct querying
         const poolAddress = token.pool?.address;
         const price = await priceService.getTokenPriceUsd(token.address!, basePrices.lunc, poolAddress);
-        prices[token.symbol] = price ?? 0;
+        // Only update price if we got a valid response
+        // null means query failed - we preserve the previous price from lastPricesRef
+        if (price !== null) {
+          prices[token.symbol] = price;
+        }
+        // If price is null and we have a previous price, it's already in prices from spread
       }
+
+      // Update the ref with latest successful prices
+      lastPricesRef.current = prices;
 
       return prices;
     },
     staleTime: PRICE_CACHE.staleTime,
     // Only run when base prices are available
     enabled: baseQuery.isSuccess && !!baseQuery.data,
+    // Keep previous data to prevent flickering when refetch fails
+    placeholderData: (prev) => prev,
   });
 
   // Determine loading state (true if either query is loading)

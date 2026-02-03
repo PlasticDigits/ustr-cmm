@@ -1,16 +1,45 @@
-import { NETWORKS, DEX_ROUTERS, PRICE_API } from '../utils/constants';
+import { NETWORKS, DEX_ROUTERS, PRICE_API, LCD_CONFIG } from '../utils/constants';
 
 /**
  * Service for fetching token prices with DEX fallback chain
  * 
  * This service fetches base prices from CEX (Binance) and
  * calculates token prices in USD using DEX rates with fallback.
+ * Uses LCD endpoint fallbacks to ensure reliability.
  */
 class PriceService {
-  private lcdUrl: string;
+  private lcdEndpoints: readonly string[];
+  /** Track unhealthy endpoints with cooldown timestamps */
+  private unhealthyEndpoints: Map<string, number> = new Map();
 
   constructor() {
-    this.lcdUrl = NETWORKS.mainnet.lcd;
+    // Use fallback list from constants, with primary endpoint first
+    this.lcdEndpoints = NETWORKS.mainnet.lcdFallbacks;
+  }
+
+  /**
+   * Get healthy endpoints (not in cooldown)
+   */
+  private getHealthyEndpoints(): string[] {
+    const now = Date.now();
+    return this.lcdEndpoints.filter(endpoint => {
+      const cooldownUntil = this.unhealthyEndpoints.get(endpoint);
+      if (cooldownUntil && now < cooldownUntil) {
+        return false; // Still in cooldown
+      }
+      // Cooldown expired, remove from unhealthy list
+      if (cooldownUntil) {
+        this.unhealthyEndpoints.delete(endpoint);
+      }
+      return true;
+    });
+  }
+
+  /**
+   * Mark an endpoint as unhealthy for the cooldown period
+   */
+  private markEndpointUnhealthy(endpoint: string): void {
+    this.unhealthyEndpoints.set(endpoint, Date.now() + LCD_CONFIG.endpointCooldown);
   }
 
   /**
@@ -255,11 +284,30 @@ class PriceService {
   }
 
   /**
-   * Helper to query smart contract via LCD
+   * Fetch with timeout support
+   */
+  private async fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      return response;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Helper to query smart contract via LCD with endpoint fallback
+   * 
+   * Tries each healthy endpoint in order until one succeeds.
+   * Failed endpoints are marked unhealthy and skipped for a cooldown period.
    * 
    * @param contractAddress - The contract address to query
    * @param query - The query payload
    * @returns Parsed response data
+   * @throws Error if all endpoints fail
    */
   private async queryContract<T>(
     contractAddress: string,
@@ -267,17 +315,39 @@ class PriceService {
   ): Promise<T> {
     // Terra Classic LCD uses GET with base64 encoded query
     const queryBase64 = btoa(JSON.stringify(query));
-    const url = `${this.lcdUrl}/cosmwasm/wasm/v1/contract/${contractAddress}/smart/${queryBase64}`;
     
-    const response = await fetch(url);
-
-    if (!response.ok) {
-      throw new Error(`LCD query error: ${response.statusText}`);
+    // Get healthy endpoints first, fall back to all endpoints if all are unhealthy
+    let endpoints: readonly string[] = this.getHealthyEndpoints();
+    if (endpoints.length === 0) {
+      // All endpoints in cooldown, try them all anyway
+      endpoints = this.lcdEndpoints;
     }
+    
+    let lastError: Error | null = null;
+    
+    for (const endpoint of endpoints) {
+      const url = `${endpoint}/cosmwasm/wasm/v1/contract/${contractAddress}/smart/${queryBase64}`;
+      
+      try {
+        const response = await this.fetchWithTimeout(url, LCD_CONFIG.requestTimeout);
 
-    const result = await response.json();
-    // LCD response wraps data in { data: ... }
-    return result.data as T;
+        if (!response.ok) {
+          throw new Error(`LCD query error: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        // LCD response wraps data in { data: ... }
+        return result.data as T;
+      } catch (error) {
+        // Mark endpoint as unhealthy and try next
+        this.markEndpointUnhealthy(endpoint);
+        lastError = error instanceof Error ? error : new Error(String(error));
+        // Continue to next endpoint
+      }
+    }
+    
+    // All endpoints failed
+    throw lastError ?? new Error('All LCD endpoints failed');
   }
 }
 
