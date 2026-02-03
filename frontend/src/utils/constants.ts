@@ -16,7 +16,7 @@ export const NETWORKS = {
       'https://lcd.terra-classic.hexxagon.dev',
     ],
     cw20CodeId: 1641,
-    scanner: 'https://finder.terraclassic.community/testnet',
+    scanner: 'https://finder.terraclassic.community/rebel-2',
   },
   mainnet: {
     chainId: 'columbus-5',
@@ -30,7 +30,7 @@ export const NETWORKS = {
       'https://lcd.terra-classic.hexxagon.io',
     ],
     cw20CodeId: 10184,
-    scanner: 'https://finder.terraclassic.community/mainnet',
+    scanner: 'https://finder.terraclassic.community/columbus-5',
   },
 } as const;
 
