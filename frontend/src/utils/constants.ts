@@ -81,14 +81,6 @@ export const REFERRAL_CODE = {
   maxCodesPerOwner: 10,
 } as const;
 
-// Token decimals
-export const DECIMALS = {
-  USTC: 6,
-  LUNC: 6,
-  USTR: 18, // USTR CW20 token has 18 decimals
-  UST1: 6,
-} as const;
-
 // Swap parameters
 export const SWAP_CONFIG = {
   startRate: 1.5,

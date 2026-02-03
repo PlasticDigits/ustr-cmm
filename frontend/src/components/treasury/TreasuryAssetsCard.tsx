@@ -18,8 +18,15 @@ interface TreasuryAssetsCardProps {
 }
 
 export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: TreasuryAssetsCardProps) {
-  const assetEntries = Object.entries(assets);
   const { prices } = usePrices();
+  
+  // Filter out assets with USD value less than $1
+  const assetEntries = Object.entries(assets).filter(([, asset]) => {
+    const displayBalance = Number(asset.balance) / Math.pow(10, asset.decimals);
+    const priceUsd = prices[asset.displayName] ?? 0;
+    const valueUsd = displayBalance * priceUsd;
+    return valueUsd >= 1;
+  });
   
   // Helper function to format USD values
   const formatUsd = (value: number): string => {

@@ -11,8 +11,10 @@ import { useWallet } from '../../hooks/useWallet';
 import { contractService } from '../../services/contract';
 import { Card, CardContent, CardHeader } from '../common/Card';
 import { formatAddress, getAddressScannerUrl } from '../../utils/format';
-import { DECIMALS } from '../../utils/constants';
 import type { LeaderboardEntry, ReferralLeaderboardResponse, CodesResponse } from '../../types/contracts';
+
+/** USTR token decimals */
+const USTR_DECIMALS = 18;
 
 /**
  * Format USTR amount with fixed decimal places to avoid floating point precision issues.
@@ -21,13 +23,13 @@ import type { LeaderboardEntry, ReferralLeaderboardResponse, CodesResponse } fro
 function formatUstrAmount(microAmount: string): string {
   // For very large numbers (18 decimals), we use BigInt for precision
   const amount = BigInt(microAmount);
-  const divisor = BigInt(10 ** DECIMALS.USTR);
+  const divisor = BigInt(10 ** USTR_DECIMALS);
   const integerPart = amount / divisor;
   const fractionalPart = amount % divisor;
   
   // Truncate to first 2 decimal places (no rounding, just floor)
   // Multiply by 100, divide by full divisor to get 2 decimal digits
-  const twoDecimalDivisor = BigInt(10 ** (DECIMALS.USTR - 2));
+  const twoDecimalDivisor = BigInt(10 ** (USTR_DECIMALS - 2));
   const truncatedFraction = Number(fractionalPart / twoDecimalDivisor);
   
   // Format with thousand separators and 2 decimal places

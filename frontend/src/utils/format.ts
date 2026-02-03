@@ -2,17 +2,17 @@
  * Formatting utilities for USTR CMM
  */
 
-import { DECIMALS, NETWORKS, DEFAULT_NETWORK } from './constants';
+import { NETWORKS, DEFAULT_NETWORK } from './constants';
 
 /**
  * Format a micro-denominated amount to human-readable
  * @param microAmount The amount in micro units (accepts string, number, or bigint)
- * @param decimals The number of decimal places for conversion (default: USTC = 6)
+ * @param decimals The number of decimal places for conversion (default: 6 for native tokens)
  * @param displayDecimals Optional max decimal places for display (default: same as decimals)
  */
 export function formatAmount(
   microAmount: string | number | bigint,
-  decimals: number = DECIMALS.USTC,
+  decimals: number = 6,
   displayDecimals?: number
 ): string {
   let amount: number;
@@ -44,7 +44,7 @@ export function formatAmount(
  */
 export function parseAmount(
   humanAmount: string | number,
-  decimals: number = DECIMALS.USTC
+  decimals: number = 6
 ): string {
   const amount = typeof humanAmount === 'string' 
     ? parseFloat(humanAmount) 

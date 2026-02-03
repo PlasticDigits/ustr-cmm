@@ -6,7 +6,7 @@
 
 import { TreasuryAssetsCard, IssuanceCard, RatiosCard } from '../components/treasury';
 import { useTreasury } from '../hooks/useTreasury';
-import { DECIMALS, NETWORKS, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
+import { NETWORKS, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
 
 export function TreasuryPage() {
   const { treasuryData, isLoading, error } = useTreasury();
@@ -50,7 +50,7 @@ export function TreasuryPage() {
             tokenName="UST1"
             tokenSymbol="UST1"
             issuance={treasuryData?.ust1Issuance ?? { minted: BigInt(0), burned: BigInt(0), supply: BigInt(0) }}
-            decimals={DECIMALS.UST1}
+            decimals={6}
             gradient="from-emerald-500/20 to-teal-500/20"
             isLoading={isLoading}
             notLaunched={true}
@@ -61,7 +61,7 @@ export function TreasuryPage() {
             tokenName="USTR"
             tokenSymbol="USTR"
             issuance={treasuryData?.ustrIssuance ?? { minted: BigInt(0), burned: BigInt(0), supply: BigInt(0) }}
-            decimals={DECIMALS.USTR}
+            decimals={18}
             gradient="from-amber-500/20 to-orange-500/20"
             isLoading={isLoading}
             explorerUrl={`${NETWORKS[DEFAULT_NETWORK].scanner}/address/${CONTRACTS[DEFAULT_NETWORK].ustrToken}`}

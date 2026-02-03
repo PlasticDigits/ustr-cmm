@@ -13,7 +13,7 @@
  * to simulate post-launch state for UX testing.
  */
 
-import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, DECIMALS, LCD_CONFIG } from '../utils/constants';
+import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, LCD_CONFIG } from '../utils/constants';
 import { executeCw20Send, executeContractWithCoins } from './wallet';
 import type {
   SwapConfig,
@@ -461,7 +461,7 @@ class ContractService {
     
     // Convert from USTC decimals (6) to USTR decimals (18)
     // Multiply by 10^12 to adjust for the decimal difference
-    const decimalAdjustment = Math.pow(10, DECIMALS.USTR - DECIMALS.USTC);
+    const decimalAdjustment = Math.pow(10, 18 - 6);
     const ustrAmount = Math.floor(totalUstr * decimalAdjustment);
     const bonusAmount = Math.floor(bonus * decimalAdjustment);
     
@@ -873,7 +873,7 @@ class ContractService {
 
   async getTokenInfo(tokenAddress: string): Promise<Cw20TokenInfo> {
     if (!tokenAddress) {
-      return { name: 'USTR', symbol: 'USTR', decimals: DECIMALS.USTR, total_supply: '0' };
+      return { name: 'USTR', symbol: 'USTR', decimals: 18, total_supply: '0' };
     }
     
     try {
@@ -884,7 +884,7 @@ class ContractService {
       return result.data;
     } catch (error) {
       console.error('Failed to get token info:', error);
-      return { name: 'USTR', symbol: 'USTR', decimals: DECIMALS.USTR, total_supply: '0' };
+      return { name: 'USTR', symbol: 'USTR', decimals: 18, total_supply: '0' };
     }
   }
 

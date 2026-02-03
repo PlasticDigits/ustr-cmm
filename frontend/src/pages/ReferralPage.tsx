@@ -15,8 +15,11 @@ import { Button } from '../components/common/Button';
 import { CharacterParticles } from '../components/common/CharacterParticles';
 import { Leaderboard } from '../components/referral/Leaderboard';
 import { formatAddress, getAddressScannerUrl, getTxScannerUrl } from '../utils/format';
-import { REFERRAL_CODE, CONTRACTS, DEFAULT_NETWORK, DECIMALS } from '../utils/constants';
+import { REFERRAL_CODE, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
 import type { CodeInfo, ValidateResponse } from '../types/contracts';
+
+/** USTR token decimals */
+const USTR_DECIMALS = 18;
 
 // ============================================
 // USTR Formatting Helper
@@ -30,12 +33,12 @@ function formatUstrAmount(microAmount: string): string {
   if (!microAmount || microAmount === '0') return '0.00';
   
   const amount = BigInt(microAmount);
-  const divisor = BigInt(10 ** DECIMALS.USTR);
+  const divisor = BigInt(10 ** USTR_DECIMALS);
   const integerPart = amount / divisor;
   const fractionalPart = amount % divisor;
   
   // Truncate to first 2 decimal places (no rounding, just floor)
-  const twoDecimalDivisor = BigInt(10 ** (DECIMALS.USTR - 2));
+  const twoDecimalDivisor = BigInt(10 ** (USTR_DECIMALS - 2));
   const truncatedFraction = Number(fractionalPart / twoDecimalDivisor);
   
   // Format with thousand separators and 2 decimal places

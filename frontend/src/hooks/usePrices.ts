@@ -1,28 +1,40 @@
 import { useQuery } from '@tanstack/react-query';
 import { priceService } from '../services/price';
-import { PRICE_CACHE } from '../utils/constants';
+import { PRICE_CACHE, TOKEN_LIST_URL } from '../utils/constants';
 
-/**
- * Known token address to symbol mapping
- */
-const TOKEN_ADDRESS_TO_SYMBOL: Record<string, string> = {
-  'terra1x6e64es6yhauhvs3prvpdg2gkqdtfru840wgnhs935x8axr7zxkqzysuxz': 'ALPHA',
-};
+/** Token entry from tokenlist.json */
+interface TokenListEntry {
+  symbol: string;
+  address?: string;
+  type: 'native' | 'cw20';
+  pool?: {
+    address: string;
+    dex: string;
+    name: string;
+  };
+}
 
-/**
- * Default token addresses to fetch prices for
- */
-const DEFAULT_TOKEN_ADDRESSES = Object.keys(TOKEN_ADDRESS_TO_SYMBOL);
+/** Cached token list data */
+let tokenListCache: { tokens: TokenListEntry[] } | null = null;
+
+/** Fetch tokenlist for address-to-symbol mapping */
+async function fetchTokenList(): Promise<{ tokens: TokenListEntry[] }> {
+  if (tokenListCache) return tokenListCache;
+  const response = await fetch(TOKEN_LIST_URL);
+  if (!response.ok) throw new Error('Failed to fetch token list');
+  tokenListCache = await response.json();
+  return tokenListCache!;
+}
 
 /**
  * usePrices Hook
  * 
  * Fetches and caches token prices from CEX and DEX with fallback chain.
+ * Dynamically reads token addresses from tokenlist.json.
  * 
- * @param tokenAddresses - Optional array of CW20 token addresses to fetch prices for
  * @returns Object containing prices, LUNC/USTC prices, loading state, error, and refetch function
  */
-export function usePrices(tokenAddresses?: string[]): {
+export function usePrices(): {
   prices: Record<string, number>;
   luncUsd: number;
   ustcUsd: number;
@@ -30,9 +42,6 @@ export function usePrices(tokenAddresses?: string[]): {
   error: string | null;
   refetch: () => void;
 } {
-  // Use provided addresses or default to known tokens
-  const addresses = tokenAddresses ?? DEFAULT_TOKEN_ADDRESSES;
-
   // Fetch base prices (LUNC, USTC) from Binance
   const baseQuery = useQuery({
     queryKey: ['prices', 'base'],
@@ -41,9 +50,9 @@ export function usePrices(tokenAddresses?: string[]): {
     refetchInterval: PRICE_CACHE.basePrices,
   });
 
-  // Fetch token prices for each address (waits for base prices to load first)
+  // Fetch token prices for all CW20 tokens in tokenlist
   const tokensQuery = useQuery({
-    queryKey: ['prices', 'tokens', baseQuery.data?.lunc, baseQuery.data?.ustc, ...addresses],
+    queryKey: ['prices', 'tokens', baseQuery.data?.lunc, baseQuery.data?.ustc],
     queryFn: async () => {
       const basePrices = baseQuery.data!;
       const prices: Record<string, number> = {};
@@ -52,20 +61,23 @@ export function usePrices(tokenAddresses?: string[]): {
       prices['LUNC'] = basePrices.lunc;
       prices['USTC'] = basePrices.ustc;
 
-      // Fetch prices for each token address
-      for (const address of addresses) {
-        const price = await priceService.getTokenPriceUsd(address, basePrices.lunc);
-        
-        // Map address to symbol using known mapping
-        const symbol = TOKEN_ADDRESS_TO_SYMBOL[address] ?? address.slice(0, 10);
-        prices[symbol] = price ?? 0;
+      // Fetch tokenlist to get all CW20 tokens
+      const tokenList = await fetchTokenList();
+      const cw20Tokens = tokenList.tokens.filter(t => t.type === 'cw20' && t.address);
+
+      // Fetch prices for each CW20 token
+      for (const token of cw20Tokens) {
+        // Pass pool address if available for direct querying
+        const poolAddress = token.pool?.address;
+        const price = await priceService.getTokenPriceUsd(token.address!, basePrices.lunc, poolAddress);
+        prices[token.symbol] = price ?? 0;
       }
 
       return prices;
     },
     staleTime: PRICE_CACHE.staleTime,
     // Only run when base prices are available
-    enabled: addresses.length > 0 && baseQuery.isSuccess && !!baseQuery.data,
+    enabled: baseQuery.isSuccess && !!baseQuery.data,
   });
 
   // Determine loading state (true if either query is loading)

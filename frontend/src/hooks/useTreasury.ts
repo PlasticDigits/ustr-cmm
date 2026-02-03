@@ -10,7 +10,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { contractService } from '../services/contract';
-import { CONTRACTS, DEFAULT_NETWORK, DECIMALS, POLLING_INTERVAL, TOKEN_LIST_URL } from '../utils/constants';
+import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL, TOKEN_LIST_URL } from '../utils/constants';
 import type { TreasuryData, TreasuryAsset } from '../types/treasury';
 
 const contracts = CONTRACTS[DEFAULT_NETWORK];
@@ -31,7 +31,6 @@ interface TokenList {
   name: string;
   version: string;
   tokens: TokenListEntry[];
-  treasuryAssets: string[];  // Symbols of assets to show in treasury
 }
 
 /** Cached token list */
@@ -64,13 +63,10 @@ async function fetchTreasuryData(): Promise<TreasuryData> {
   
   const assets: Record<string, TreasuryAsset> = {};
   
-  // Fetch balances for each treasury asset defined in tokenlist
-  for (const symbol of tokenList.treasuryAssets) {
-    const token = tokenMap.get(symbol);
-    if (!token) {
-      console.warn(`Token ${symbol} not found in tokenlist`);
-      continue;
-    }
+  // Fetch balances for all tokens in tokenlist (except USTR which is handled separately)
+  for (const token of tokenList.tokens) {
+    // Skip USTR - it's handled separately for issuance tracking
+    if (token.symbol === 'USTR') continue;
     
     try {
       let balance = BigInt(0);
@@ -85,16 +81,16 @@ async function fetchTreasuryData(): Promise<TreasuryData> {
         balance = BigInt(result.balance || '0');
       }
       
-      assets[symbol.toLowerCase()] = {
-        denom: token.denom || token.address || symbol.toLowerCase(),
+      assets[token.symbol.toLowerCase()] = {
+        denom: token.denom || token.address || token.symbol.toLowerCase(),
         balance,
         decimals: token.decimals,
-        displayName: symbol,
+        displayName: token.symbol,
         gradient: token.gradient,
         iconColor: token.iconColor,
       };
     } catch (error) {
-      console.error(`Failed to fetch ${symbol} balance:`, error);
+      console.error(`Failed to fetch ${token.symbol} balance:`, error);
     }
   }
   
@@ -114,7 +110,7 @@ async function fetchTreasuryData(): Promise<TreasuryData> {
   const ustcAsset = assets.ustc;
   if (ustrTotalSupply > 0n && ustcAsset) {
     // Convert USTC to comparable decimals (6 -> 18)
-    const ustrDecimals = ustrToken?.decimals || DECIMALS.USTR;
+    const ustrDecimals = ustrToken?.decimals || 18;
     const ustcInUstrDecimals = ustcAsset.balance * BigInt(10 ** (ustrDecimals - ustcAsset.decimals));
     ustrBacking = Number(ustcInUstrDecimals * 100n / ustrTotalSupply) / 100;
   }

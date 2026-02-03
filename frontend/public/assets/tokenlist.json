@@ -37,7 +37,20 @@
       "decimals": 6,
       "gradient": "from-purple-500 to-pink-500",
       "iconColor": "text-purple-400"
+    },
+    {
+      "symbol": "USTRIX",
+      "name": "USTRIX Token",
+      "address": "terra1r3eaa2tucjr3es88wzuqpgxvssqflk9cghrjmf9uneds8wljyapqwtrcp5",
+      "type": "cw20",
+      "decimals": 6,
+      "pool": {
+        "address": "terra1rvrywq2wxmzve8dm7sae2zx6er5969qnsl68pnh2xu2y6atdwq6qq9zq05",
+        "dex": "garuda",
+        "name": "GARUDA DEFI USTRIX/LUNC"
+      },
+      "gradient": "from-red-500 to-blue-500",
+      "iconColor": "text-red-400"
     }
-  ],
-  "treasuryAssets": ["USTC", "ALPHA"]
+  ]
 }

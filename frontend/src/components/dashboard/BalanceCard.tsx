@@ -10,7 +10,6 @@
 import { Card, CardContent } from '../common/Card';
 import { useWallet } from '../../hooks/useWallet';
 import { formatAmount } from '../../utils/format';
-import { DECIMALS } from '../../utils/constants';
 
 export function BalanceCard() {
   const { connected, ustcBalance, ustrBalance, luncBalance } = useWallet();
@@ -19,7 +18,7 @@ export function BalanceCard() {
     {
       token: 'USTC',
       amount: ustcBalance,
-      decimals: DECIMALS.USTC,
+      decimals: 6,
       gradient: 'from-blue-500 to-cyan-500',
       bgGradient: 'from-blue-500/20 to-cyan-500/20',
       textColor: 'text-blue-400',
@@ -27,7 +26,7 @@ export function BalanceCard() {
     {
       token: 'USTR',
       amount: ustrBalance,
-      decimals: DECIMALS.USTR,
+      decimals: 18,
       gradient: 'from-amber-500 to-orange-500',
       bgGradient: 'from-amber-500/20 to-orange-500/20',
       textColor: 'text-amber-400',
@@ -35,7 +34,7 @@ export function BalanceCard() {
     {
       token: 'LUNC',
       amount: luncBalance,
-      decimals: DECIMALS.LUNC,
+      decimals: 6,
       gradient: 'from-yellow-500 to-orange-500',
       bgGradient: 'from-yellow-500/20 to-orange-500/20',
       textColor: 'text-yellow-400',

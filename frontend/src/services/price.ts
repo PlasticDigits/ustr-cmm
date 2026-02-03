@@ -51,17 +51,28 @@ class PriceService {
   /**
    * Get token price in USD with DEX fallback
  * 
- * Tries DEXes in priority order: custom -> garuda -> terraswap
+ * If poolAddress is provided, queries that pool directly.
+ * Otherwise tries DEXes in priority order: custom -> garuda -> terraswap
  * Each returns LUNC amount per 1M token units
  * 
  * @param tokenAddress - The CW20 token contract address
  * @param luncUsd - LUNC price in USD
+ * @param poolAddress - Optional pool contract address to query directly
  * @returns Token price in USD, or null if all DEX queries fail
  */
   async getTokenPriceUsd(
     tokenAddress: string,
-    luncUsd: number
+    luncUsd: number,
+    poolAddress?: string
   ): Promise<number | null> {
+    // If pool address provided, query it directly
+    if (poolAddress) {
+      const directPrice = await this.queryPoolDirectly(tokenAddress, poolAddress);
+      if (directPrice !== null) {
+        return this.calculateUsdPrice(directPrice, luncUsd);
+      }
+    }
+
     // Try DEXes in priority order
     const customPrice = await this.queryCustomDexPrice(tokenAddress);
     if (customPrice !== null) {
@@ -79,6 +90,39 @@ class PriceService {
     }
 
     return null;
+  }
+
+  /**
+   * Query a pool contract directly for token/LUNC rate
+   * 
+   * @param tokenAddress - The CW20 token contract address
+   * @param poolAddress - The pool contract address
+   * @returns LUNC amount per 1M token units, or null on error
+   */
+  private async queryPoolDirectly(tokenAddress: string, poolAddress: string): Promise<number | null> {
+    try {
+      // Simulate swap on pair contract (Garuda format)
+      const simulateQuery = {
+        simulate_swap: {
+          offer_asset: { cw20: tokenAddress },
+          offer_amount: '1000000',
+        },
+      };
+
+      const simulateResult = await this.queryContract<{ return_amount: string }>(
+        poolAddress,
+        simulateQuery
+      );
+
+      if (!simulateResult || !simulateResult.return_amount) {
+        return null;
+      }
+
+      return parseFloat(simulateResult.return_amount) || 0;
+    } catch (error) {
+      console.error('Direct pool query failed:', error);
+      return null;
+    }
   }
 
   /**
