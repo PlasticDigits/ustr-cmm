@@ -131,6 +131,17 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
             const valueUsd = getUsdValue(asset);
             const rank = index + 1;
             
+            // Badge styles: gold, silver, bronze for top 3; dark circle for the rest
+            const badgeStyle = rank === 1
+              ? 'bg-gradient-to-br from-yellow-300 via-amber-400 to-yellow-500 text-yellow-950 ring-yellow-400/40 shadow-[0_0_6px_rgba(251,191,36,0.5)]'
+              : rank === 2
+              ? 'bg-gradient-to-br from-gray-200 via-slate-300 to-gray-400 text-slate-800 ring-gray-300/40 shadow-[0_0_6px_rgba(148,163,184,0.4)]'
+              : rank === 3
+              ? 'bg-gradient-to-br from-orange-300 via-amber-600 to-orange-700 text-orange-950 ring-orange-500/40 shadow-[0_0_6px_rgba(234,88,12,0.35)]'
+              : 'bg-gray-800/90 text-gray-400 ring-gray-700/50';
+            
+            const isTopThree = rank <= 3;
+
             return (
               <div 
                 key={denom}
@@ -145,7 +156,7 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                       gradient={asset.gradient}
                       className="group-hover:scale-105 transition-transform"
                     />
-                    <span className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-amber-500/90 text-[10px] font-bold text-black flex items-center justify-center ring-1 ring-black/20">
+                    <span className={`absolute -top-1.5 -left-1.5 flex items-center justify-center rounded-full ring-1 font-bold ${badgeStyle} ${isTopThree ? 'w-[22px] h-[22px] text-[10px]' : 'w-[18px] h-[18px] text-[9px]'}`}>
                       {rank}
                     </span>
                   </div>
