@@ -129,9 +129,17 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {assetEntries.map(([denom, asset], index) => {
             const valueUsd = getUsdValue(asset);
-            const rank = index + 1;
+            const isUstc = asset.displayName === 'USTC';
             
-            // Badge styles: gold, silver, bronze for top 3; dark circle for the rest
+            // USTC is excluded from ranking; compute rank for remaining assets
+            // by counting how many non-USTC assets appear before this one
+            const competitiveIndex = isUstc ? -1 : assetEntries
+              .slice(0, index)
+              .filter(([, a]) => a.displayName !== 'USTC')
+              .length;
+            const rank = isUstc ? 0 : competitiveIndex + 1;
+            
+            // Badge styles: gold, silver, bronze for top 3; dark circle for the rest; no badge for USTC
             const badgeStyle = rank === 1
               ? 'bg-gradient-to-br from-yellow-300 via-amber-400 to-yellow-500 text-yellow-950 ring-yellow-400/40 shadow-[0_0_6px_rgba(251,191,36,0.5)]'
               : rank === 2
@@ -140,7 +148,7 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
               ? 'bg-gradient-to-br from-orange-300 via-amber-600 to-orange-700 text-orange-950 ring-orange-500/40 shadow-[0_0_6px_rgba(234,88,12,0.35)]'
               : 'bg-gray-800/90 text-gray-400 ring-gray-700/50';
             
-            const isTopThree = rank <= 3;
+            const isTopThree = rank >= 1 && rank <= 3;
 
             return (
               <div 
@@ -156,9 +164,11 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                       gradient={asset.gradient}
                       className="group-hover:scale-105 transition-transform"
                     />
-                    <span className={`absolute -top-1.5 -left-1.5 flex items-center justify-center rounded-full ring-1 font-bold ${badgeStyle} ${isTopThree ? 'w-[22px] h-[22px] text-[10px]' : 'w-[18px] h-[18px] text-[9px]'}`}>
-                      {rank}
-                    </span>
+                    {rank > 0 && (
+                      <span className={`absolute -top-1.5 -left-1.5 flex items-center justify-center rounded-full ring-1 font-bold ${badgeStyle} ${isTopThree ? 'w-[22px] h-[22px] text-[10px]' : 'w-[18px] h-[18px] text-[9px]'}`}>
+                        {rank}
+                      </span>
+                    )}
                   </div>
                   <span className="font-medium text-white">{asset.displayName}</span>
                 </div>
