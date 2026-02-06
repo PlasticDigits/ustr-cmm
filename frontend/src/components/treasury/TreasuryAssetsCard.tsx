@@ -20,13 +20,17 @@ interface TreasuryAssetsCardProps {
 export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: TreasuryAssetsCardProps) {
   const { prices } = usePrices();
   
-  // Filter out assets with USD value less than $1
-  const assetEntries = Object.entries(assets).filter(([, asset]) => {
+  // Helper to compute USD value for an asset
+  const getUsdValue = (asset: TreasuryAsset): number => {
     const displayBalance = Number(asset.balance) / Math.pow(10, asset.decimals);
     const priceUsd = prices[asset.displayName] ?? 0;
-    const valueUsd = displayBalance * priceUsd;
-    return valueUsd >= 1;
-  });
+    return displayBalance * priceUsd;
+  };
+
+  // Filter out assets with USD value less than $1, then sort by USD value descending
+  const assetEntries = Object.entries(assets)
+    .filter(([, asset]) => getUsdValue(asset) >= 1)
+    .sort(([, a], [, b]) => getUsdValue(b) - getUsdValue(a));
   
   // Helper function to format USD values
   const formatUsd = (value: number): string => {
@@ -124,9 +128,8 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
         
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {assetEntries.map(([denom, asset], index) => {
-            const displayBalance = Number(asset.balance) / Math.pow(10, asset.decimals);
-            const priceUsd = prices[asset.displayName] ?? 0;
-            const valueUsd = displayBalance * priceUsd;
+            const valueUsd = getUsdValue(asset);
+            const rank = index + 1;
             
             return (
               <div 
@@ -135,19 +138,24 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                 style={{ animationDelay: `${index * 100}ms` }}
               >
                 <div className="flex items-center gap-3 flex-shrink-0">
-                  <TokenIcon 
-                    symbol={asset.displayName} 
-                    size="md" 
-                    gradient={asset.gradient}
-                    className="group-hover:scale-105 transition-transform"
-                  />
+                  <div className="relative">
+                    <TokenIcon 
+                      symbol={asset.displayName} 
+                      size="md" 
+                      gradient={asset.gradient}
+                      className="group-hover:scale-105 transition-transform"
+                    />
+                    <span className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-amber-500/90 text-[10px] font-bold text-black flex items-center justify-center ring-1 ring-black/20">
+                      {rank}
+                    </span>
+                  </div>
                   <span className="font-medium text-white">{asset.displayName}</span>
                 </div>
                 <div className="text-right min-w-0 flex-1">
                   <div className={`text-sm sm:text-base lg:text-lg font-mono-numbers font-semibold truncate ${asset.iconColor}`}>
                     {formatAmount(asset.balance, asset.decimals)}
                   </div>
-                  {priceUsd > 0 && (
+                  {valueUsd > 0 && (
                     <div className="text-xs text-gray-400 truncate">
                       {formatUsd(valueUsd)}
                     </div>
