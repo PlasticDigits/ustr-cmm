@@ -58,6 +58,12 @@
       "address": "terra1cvd5cgrs8rrl96hte34n57497u5f9cwuv3e6ztxgetkx4uzmcdyswv79zl",
       "type": "cw20",
       "decimals": 6,
+      "pool": {
+        "address": "terra1r6fvrss6na4wv3w6d0v3akpfrykuvycd65nfm4q0g02xccqcnr2shl5fmc",
+        "dex": "terraport",
+        "name": "Terraport SpaceUSD/USTC",
+        "quoteAsset": "ustc"
+      },
       "gradient": "from-orange-500 to-slate-700",
       "iconColor": "text-orange-400"
     }

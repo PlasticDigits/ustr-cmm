@@ -80,25 +80,28 @@ class PriceService {
   /**
    * Get token price in USD with DEX fallback
  * 
- * If poolAddress is provided, queries that pool directly.
+ * If pool config is provided, queries that pool directly.
  * Otherwise tries DEXes in priority order: custom -> garuda -> terraswap
- * Each returns LUNC amount per 1M token units
+ * Each returns quote asset amount per 1M token units
  * 
  * @param tokenAddress - The CW20 token contract address
  * @param luncUsd - LUNC price in USD
- * @param poolAddress - Optional pool contract address to query directly
+ * @param ustcUsd - USTC price in USD
+ * @param pool - Optional pool config with address, dex type, and quote asset
  * @returns Token price in USD, or null if all DEX queries fail
  */
   async getTokenPriceUsd(
     tokenAddress: string,
     luncUsd: number,
-    poolAddress?: string
+    ustcUsd: number,
+    pool?: { address: string; dex: string; quoteAsset?: string }
   ): Promise<number | null> {
-    // If pool address provided, query it directly
-    if (poolAddress) {
-      const directPrice = await this.queryPoolDirectly(tokenAddress, poolAddress);
+    // If pool config provided, query it directly
+    if (pool) {
+      const directPrice = await this.queryPoolDirectly(tokenAddress, pool.address, pool.dex);
       if (directPrice !== null) {
-        return this.calculateUsdPrice(directPrice, luncUsd);
+        const baseUsd = pool.quoteAsset === 'ustc' ? ustcUsd : luncUsd;
+        return this.calculateUsdPrice(directPrice, baseUsd);
       }
     }
 
@@ -122,26 +125,48 @@ class PriceService {
   }
 
   /**
-   * Query a pool contract directly for token/LUNC rate
+   * Query a pool contract directly for token price
+   * 
+   * Supports both Garuda (simulate_swap) and TerraSwap/Terraport (simulation) formats.
    * 
    * @param tokenAddress - The CW20 token contract address
    * @param poolAddress - The pool contract address
-   * @returns LUNC amount per 1M token units, or null on error
+   * @param dexType - The DEX type ('garuda', 'terraport', 'terraswap')
+   * @returns Quote asset amount per 1M token units, or null on error
    */
-  private async queryPoolDirectly(tokenAddress: string, poolAddress: string): Promise<number | null> {
+  private async queryPoolDirectly(tokenAddress: string, poolAddress: string, dexType: string): Promise<number | null> {
     try {
-      // Simulate swap on pair contract (Garuda format)
-      const simulateQuery = {
-        simulate_swap: {
-          offer_asset: { cw20: tokenAddress },
-          offer_amount: '1000000',
-        },
-      };
+      let simulateResult: { return_amount: string } | null = null;
 
-      const simulateResult = await this.queryContract<{ return_amount: string }>(
-        poolAddress,
-        simulateQuery
-      );
+      if (dexType === 'terraport' || dexType === 'terraswap') {
+        // TerraSwap/Terraport simulation format
+        const simulateQuery = {
+          simulation: {
+            offer_asset: {
+              info: { token: { contract_addr: tokenAddress } },
+              amount: '1000000',
+            },
+          },
+        };
+
+        simulateResult = await this.queryContract<{ return_amount: string }>(
+          poolAddress,
+          simulateQuery
+        );
+      } else {
+        // Garuda simulate_swap format (default)
+        const simulateQuery = {
+          simulate_swap: {
+            offer_asset: { cw20: tokenAddress },
+            offer_amount: '1000000',
+          },
+        };
+
+        simulateResult = await this.queryContract<{ return_amount: string }>(
+          poolAddress,
+          simulateQuery
+        );
+      }
 
       if (!simulateResult || !simulateResult.return_amount) {
         return null;
@@ -155,15 +180,15 @@ class PriceService {
   }
 
   /**
-   * Calculate USD price from LUNC amount
+   * Calculate USD price from quote asset amount
  * 
- * @param luncAmount - LUNC amount per 1M token units
- * @param luncUsd - LUNC price in USD
+ * @param quoteAmount - Quote asset amount per 1M token units (LUNC or USTC)
+ * @param quoteUsd - Quote asset price in USD (LUNC or USTC USD price)
  * @returns Token price in USD
  */
-  private calculateUsdPrice(luncAmount: number, luncUsd: number): number {
-    // LUNC amount is per 1M token units
-    const tokenUsd = (luncAmount / 1_000_000) * luncUsd;
+  private calculateUsdPrice(quoteAmount: number, quoteUsd: number): number {
+    // Quote amount is per 1M token units
+    const tokenUsd = (quoteAmount / 1_000_000) * quoteUsd;
     return tokenUsd;
   }
 

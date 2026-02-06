@@ -12,6 +12,7 @@ interface TokenListEntry {
     address: string;
     dex: string;
     name: string;
+    quoteAsset?: string;
   };
 }
 
@@ -74,9 +75,9 @@ export function usePrices(): {
 
       // Fetch prices for each CW20 token
       for (const token of cw20Tokens) {
-        // Pass pool address if available for direct querying
-        const poolAddress = token.pool?.address;
-        const price = await priceService.getTokenPriceUsd(token.address!, basePrices.lunc, poolAddress);
+        // Pass pool config if available for direct querying
+        const pool = token.pool ? { address: token.pool.address, dex: token.pool.dex, quoteAsset: token.pool.quoteAsset } : undefined;
+        const price = await priceService.getTokenPriceUsd(token.address!, basePrices.lunc, basePrices.ustc, pool);
         // Only update price if we got a valid response
         // null means query failed - we preserve the previous price from lastPricesRef
         if (price !== null) {
