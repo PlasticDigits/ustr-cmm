@@ -1,8 +1,7 @@
-import { useEffect } from 'react';
 import { useQuery, UseQueryResult } from '@tanstack/react-query';
 import { contractService } from '../services/contract';
 import type { HolderCountResponse } from '../types/contracts';
-import { CW20_ENUM, POLLING_INTERVAL } from '../utils/constants';
+import { POLLING_INTERVAL } from '../utils/constants';
 
 interface BaseOptions {
   enabled?: boolean;
@@ -18,21 +17,21 @@ export function useTokenHolders(
 ): UseQueryResult<string[], Error> {
   const { enabled = true, verifyBalances = true } = options;
 
-  const query = useQuery<string[], Error>({
+  const staleTime = verifyBalances
+    ? POLLING_INTERVAL * 30
+    : POLLING_INTERVAL * 60;
+
+  const refetchInterval = verifyBalances
+    ? POLLING_INTERVAL * 60
+    : POLLING_INTERVAL * 120;
+
+  return useQuery<string[], Error>({
     queryKey: ['tokenHolders', tokenAddress, verifyBalances],
     queryFn: () => contractService.getAllTokenAccounts(tokenAddress!, undefined, verifyBalances),
     enabled: !!tokenAddress && enabled,
-    staleTime: POLLING_INTERVAL,
-    refetchInterval: POLLING_INTERVAL * 3,
+    staleTime,
+    refetchInterval,
   });
-
-  useEffect(() => {
-    return () => {
-      // Nothing special to clean up, but kept for potential AbortController wiring
-    };
-  }, []);
-
-  return query;
 }
 
 export function useTokenHoldersCount(
@@ -41,17 +40,13 @@ export function useTokenHoldersCount(
 ): UseQueryResult<HolderCountResponse, Error> {
   const { enabled = true, verifyBalances = true } = options;
 
-  // Optimize caching: holder counts don't change frequently
-  // - Longer staleTime for fast dashboard loads (5 minutes)
-  // - Longer refetchInterval to reduce unnecessary recomputation (10 minutes)
-  // - If verifyBalances is false, it's even cheaper, so we can cache longer
   const staleTime = verifyBalances 
-    ? POLLING_INTERVAL * 30  // 5 minutes for verified (more expensive)
-    : POLLING_INTERVAL * 60; // 10 minutes for enumerated (cheaper)
+    ? POLLING_INTERVAL * 30
+    : POLLING_INTERVAL * 60;
   
   const refetchInterval = verifyBalances
-    ? POLLING_INTERVAL * 60  // 10 minutes for verified
-    : POLLING_INTERVAL * 120; // 20 minutes for enumerated
+    ? POLLING_INTERVAL * 60
+    : POLLING_INTERVAL * 120;
 
   return useQuery<HolderCountResponse, Error>({
     queryKey: ['tokenHoldersCount', tokenAddress, verifyBalances],
@@ -72,7 +67,6 @@ export function useTokenAccounts(
     queryKey: ['tokenAccounts', tokenAddress],
     queryFn: () => contractService.getAllTokenAccounts(tokenAddress!, undefined, false),
     enabled: !!tokenAddress && enabled,
-    staleTime: CW20_ENUM.PAGINATION_DELAY * 10 || POLLING_INTERVAL,
+    staleTime: POLLING_INTERVAL,
   });
 }
-

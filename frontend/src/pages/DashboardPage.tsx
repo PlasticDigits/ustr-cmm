@@ -35,8 +35,10 @@ export function DashboardPage() {
   const stats = [
     {
       label: 'Enumerated Accounts',
+      tooltip: 'Count of all CW20 accounts returned by the enumerable indexer, including zero-balance addresses.',
       value: enumeratedAccounts > 0 ? enumeratedAccounts.toLocaleString('en-US') : '—',
-      suffix: '',
+      suffix: holderCount?.partial ? '(partial)' : '',
+      errorMessage: 'Failed to load account count',
       isLoading: holdersLoading,
       error: holdersError,
       icon: (
@@ -54,8 +56,10 @@ export function DashboardPage() {
     },
     {
       label: 'Total USTR Supply',
+      tooltip: undefined as string | undefined,
       value: tokenInfo ? formatAmount(tokenInfo.total_supply, DECIMALS.USTR) : '—',
       suffix: 'USTR',
+      errorMessage: 'Failed to load supply',
       isLoading: tokenInfoLoading,
       error: tokenInfoError,
       icon: (
@@ -68,8 +72,10 @@ export function DashboardPage() {
     },
     {
       label: 'Treasury USTC Reserve',
+      tooltip: undefined as string | undefined,
       value: ustcTreasuryBalance ? ustcTreasuryBalance.formatted : '—',
       suffix: 'USTC',
+      errorMessage: 'Failed to load treasury balance',
       isLoading: ustcLoading,
       error: ustcError,
       icon: (
@@ -108,20 +114,12 @@ export function DashboardPage() {
                   <div className="flex-1 min-w-0">
                     <p
                       className="text-sm text-gray-300"
-                      title={
-                        stat.label === 'Enumerated Accounts'
-                          ? 'Count of all CW20 accounts returned by the enumerable indexer, including zero-balance addresses.'
-                          : undefined
-                      }
+                      title={stat.tooltip}
                     >
                       {stat.label}
                     </p>
                     {stat.error && (
-                      <p className="text-xs text-red-400 mt-1">
-                        {stat.label === 'Enumerated Accounts' && 'Failed to load account count'}
-                        {stat.label === 'Total USTR Supply' && 'Failed to load supply'}
-                        {stat.label === 'Treasury USTC Reserve' && 'Failed to load treasury balance'}
-                      </p>
+                      <p className="text-xs text-red-400 mt-1">{stat.errorMessage}</p>
                     )}
                   </div>
                 </div>

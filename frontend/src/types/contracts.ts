@@ -45,19 +45,19 @@ export interface AllAccountsResponse {
   accounts: string[];
 }
 
-export interface AllAccountsQueryParams {
-  start_after?: string;
-  limit?: number;
-}
-
 export interface HolderCountResponse {
   count: number;
   isVerified: boolean;
+  partial: boolean;
 }
 
 export interface HolderWithBalance {
   address: string;
   balance: string;
+}
+
+export interface TreasuryBalanceResponse {
+  amount: string;
 }
 
 // ============================================
