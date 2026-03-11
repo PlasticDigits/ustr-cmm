@@ -1,0 +1,22 @@
+# WorkSplit Configuration for USTR CMM Frontend
+# TypeScript/React project
+
+[ollama]
+url = "http://localhost:11434"
+model = "worksplit-coder-glm-4.7:32k"
+timeout_seconds = 300
+
+[limits]
+max_output_lines = 900
+max_context_lines = 1000
+max_context_files = 5
+
+[build]
+build_command = "npx tsc --noEmit"
+lint_command = "npx eslint --max-warnings 0"
+verify_build = true
+verify_tests = false
+
+[behavior]
+stream_output = true
+create_output_dirs = true

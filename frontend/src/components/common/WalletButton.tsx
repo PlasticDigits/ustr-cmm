@@ -11,7 +11,6 @@ import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useWallet, WalletName, WalletType } from '../../hooks/useWallet';
 import { formatAddress, formatAmount } from '../../utils/format';
-import { DECIMALS } from '../../utils/constants';
 
 export function WalletButton() {
   const { 
@@ -80,7 +79,7 @@ export function WalletButton() {
         >
           <div className="text-right hidden sm:block">
             <p className="text-sm font-mono-numbers font-medium text-white">
-              {formatAmount(ustrBalance, DECIMALS.USTR)} <span className="text-amber-400">USTR</span>
+              {formatAmount(ustrBalance, 18)} <span className="text-amber-400">USTR</span>
             </p>
             <p className="text-xs text-gray-500">
               {formatAddress(address, 6)}
@@ -99,7 +98,7 @@ export function WalletButton() {
             <div className="absolute right-0 mt-2 w-48 glass border border-white/10 rounded-xl shadow-xl overflow-hidden z-50 animate-fade-in-up" style={{ animationDuration: '0.2s' }}>
               <div className="p-2">
                 <div className="px-3 py-2 sm:hidden">
-                  <p className="text-sm font-mono-numbers text-white">{formatAmount(ustrBalance, DECIMALS.USTR)} USTR</p>
+                  <p className="text-sm font-mono-numbers text-white">{formatAmount(ustrBalance, 18)} USTR</p>
                   <p className="text-xs text-gray-500">{formatAddress(address, 8)}</p>
                 </div>
                 <button

@@ -2,7 +2,7 @@
 
 > **A Comprehensive Guide to the Economics of the Collateralized Unstablecoin System**
 >
-> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
+> **📖 Official Documentation**: For TerraClassic network documentation, see [docs.terra-classic.io](https://docs.terra-classic.io).
 
 This document explains the economic theory, mechanisms, and rationale behind every component of the USTR CMM system. It is written for investors, developers, community members, and anyone seeking to understand why this system is designed the way it is.
 
@@ -1085,7 +1085,7 @@ Smith, A. (1776). *The Wealth of Nations*. W. Strahan and T. Cadell, London.
 
 Taleb, N. N. (2012). *Antifragile: how to live in a world we don't understand*. Random House.
 
-Terra Classic Docs. (2024). Terra Classic Documentation. https://classic-docs.terra.money/index.html
+Terra Classic Docs. (2024). Terra Classic Documentation. https://docs.terra-classic.io
 
 Zhao, Y., Zhang, M., Pei, Z., & Nan, J. (2023). The effects of quantitative easing on Bitcoin prices. *Finance Research Letters*, 57, 104232. https://doi.org/10.1016/j.frl.2023.104232
 

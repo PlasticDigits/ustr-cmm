@@ -6,7 +6,6 @@
 
 import { Card, CardContent } from '../components/common/Card';
 import { formatAmount } from '../utils/format';
-import { DECIMALS } from '../utils/constants';
 import { useSwapConfig, useTokenHoldersCount, useTokenInfo, useTreasuryUstcBalance } from '../hooks';
 
 export function DashboardPage() {
@@ -57,7 +56,7 @@ export function DashboardPage() {
     {
       label: 'Total USTR Supply',
       tooltip: undefined as string | undefined,
-      value: tokenInfo ? formatAmount(tokenInfo.total_supply, DECIMALS.USTR) : '—',
+      value: tokenInfo ? formatAmount(tokenInfo.total_supply, 18) : '—',
       suffix: 'USTR',
       errorMessage: 'Failed to load supply',
       isLoading: tokenInfoLoading,

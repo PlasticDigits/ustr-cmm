@@ -36,6 +36,7 @@ function App() {
         <Layout>
           <Routes>
             <Route path="/" element={<HomePage />} />
+            <Route path="/swap" element={<SwapPage />} />
             <Route path="/swap/:code" element={<SwapPage />} />
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/treasury" element={<TreasuryPage />} />

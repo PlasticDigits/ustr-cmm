@@ -4,6 +4,7 @@
  * Dedicated swap page for referral links at /swap/:code
  * Features:
  * - Extracts referral code from URL parameter
+ * - Saves referral code to local storage for persistence
  * - Displays swap card with locked referral code
  * - Shows countdown timer below overlay when not launched
  * - Referral bonus info banner
@@ -12,16 +13,20 @@
 import { useParams } from 'react-router-dom';
 import { SwapCard } from '../components/swap';
 import { useLaunchStatus } from '../hooks/useLaunchStatus';
+import { useReferralStorage } from '../hooks/useReferralStorage';
 import { CountdownTimer } from '../components/common';
 
 export function SwapPage() {
-  const { code } = useParams<{ code: string }>();
+  const { code: urlCode } = useParams<{ code: string }>();
   const isLaunched = useLaunchStatus();
+  
+  // Use referral storage - URL code gets saved and takes priority
+  const { referralCode, isLocked } = useReferralStorage(urlCode);
 
   return (
     <div className="max-w-2xl mx-auto">
       {/* Referral Banner */}
-      {code && (
+      {referralCode && (
         <div className="mb-6 animate-fade-in-up">
           <div className="flex items-start gap-3 p-4 bg-gradient-to-r from-emerald-500/10 via-emerald-500/5 to-teal-500/10 border border-emerald-500/20 rounded-xl">
             <div className="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
@@ -34,7 +39,7 @@ export function SwapPage() {
                 +10% Referral Bonus Applied
               </p>
               <p className="text-sm text-emerald-400/80 mt-1">
-                Using referral code <span className="font-mono font-semibold">"{code}"</span> — you'll receive 10% bonus USTR on your swap!
+                Using referral code <span className="font-mono font-semibold">"{referralCode}"</span> — you'll receive 10% bonus USTR on your swap!
               </p>
             </div>
           </div>
@@ -43,8 +48,8 @@ export function SwapPage() {
 
       {/* Swap Card with referral code locked */}
       <SwapCard 
-        referralCode={code} 
-        referralLocked={!!code}
+        referralCode={referralCode ?? undefined} 
+        referralLocked={isLocked}
         showCountdown={!isLaunched}
       />
 
@@ -60,7 +65,7 @@ export function SwapPage() {
         <p className="text-gray-400 text-sm max-w-md mx-auto">
           Swap your USTC for USTR at favorable rates. Early participants receive better exchange rates as the system builds its treasury reserves.
         </p>
-        {code && (
+        {referralCode && (
           <p className="text-gray-500 text-xs mt-3">
             Both you and the referrer earn a 10% bonus when using a referral code.
           </p>

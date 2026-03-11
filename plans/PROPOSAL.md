@@ -34,7 +34,7 @@
 
 > **📚 Economic Theory & Bibliography**: For comprehensive economic theory, design rationale, comparisons with other stablecoin systems, and academic references, see [docs/ECONOMICS.md](./docs/ECONOMICS.md).
 >
-> **📖 Official Documentation**: For TerraClassic network documentation, see [terra-classic.io/docs](https://terra-classic.io/docs).
+> **📖 Official Documentation**: For TerraClassic network documentation, see [docs.terra-classic.io](https://docs.terra-classic.io).
 
 ---
 

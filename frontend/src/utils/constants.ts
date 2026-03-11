@@ -3,23 +3,49 @@
  */
 
 // Network configuration
+// Endpoints from official docs: https://docs.terra-classic.io
 export const NETWORKS = {
   testnet: {
     chainId: 'rebel-2',
     name: 'TerraClassic Testnet',
-    rpc: 'https://terra-classic-testnet-rpc.publicnode.com:443',
-    lcd: 'https://terra-classic-testnet-lcd.publicnode.com',
+    rpc: 'https://rpc.luncblaze.com',
+    lcd: 'https://lcd.luncblaze.com',
+    // Fallback LCD endpoints (tried in order)
+    lcdFallbacks: [
+      'https://lcd.luncblaze.com',
+      'https://lcd.terra-classic.hexxagon.dev',
+    ],
     cw20CodeId: 1641,
-    scanner: 'https://finder.terraclassic.community/testnet',
+    scanner: 'https://finder.terraclassic.community/rebel-2',
   },
   mainnet: {
     chainId: 'columbus-5',
     name: 'TerraClassic Mainnet',
-    rpc: 'https://terra-classic-rpc.publicnode.com:443',
+    rpc: 'https://terra-classic-rpc.publicnode.com',
     lcd: 'https://terra-classic-lcd.publicnode.com',
+    // Fallback LCD endpoints (tried in order)
+    lcdFallbacks: [
+      'https://terra-classic-lcd.publicnode.com',
+      'https://api-lunc-lcd.binodes.com',
+      'https://lcd.terra-classic.hexxagon.io',
+    ],
     cw20CodeId: 10184,
-    scanner: 'https://finder.terraclassic.community/mainnet',
+    scanner: 'https://finder.terraclassic.community/columbus-5',
   },
+} as const;
+
+// LCD request configuration
+export const LCD_CONFIG = {
+  // Rate limiting: minimum ms between requests to the same endpoint
+  minRequestInterval: 500,
+  // Cache TTL for successful responses (ms)
+  cacheTtl: 10000,
+  // How long to keep stale cache if all endpoints fail (ms)
+  staleCacheTtl: 60000,
+  // Request timeout (ms)
+  requestTimeout: 8000,
+  // How long to mark an endpoint as unhealthy after failure (ms)
+  endpointCooldown: 30000,
 } as const;
 
 // Default to mainnet for production (referral contract deployed on mainnet)
@@ -41,6 +67,9 @@ export const CONTRACTS = {
   },
 } as const;
 
+// Token list URL - contains token metadata (decimals, addresses, etc.)
+export const TOKEN_LIST_URL = '/assets/tokenlist.json';
+
 // Referral code validation rules
 export const REFERRAL_CODE = {
   minLength: 1,
@@ -52,19 +81,12 @@ export const REFERRAL_CODE = {
   maxCodesPerOwner: 10,
 } as const;
 
-// Token decimals
-export const DECIMALS = {
-  USTC: 6,
-  LUNC: 6,
-  USTR: 18, // USTR CW20 token has 18 decimals
-  UST1: 6,
-} as const;
-
 // CW20 enumerable pagination (for holder/account enumeration)
 export const CW20_ENUM = {
   MAX_LIMIT: 30,
   PAGINATION_DELAY: 150,
 } as const;
+
 
 // Swap parameters
 export const SWAP_CONFIG = {
@@ -80,3 +102,31 @@ export const SWAP_CONFIG = {
 export const POLLING_INTERVAL = 10000; // 10 seconds
 export const TOAST_DURATION = 5000; // 5 seconds
 
+// DEX router configurations
+export const DEX_ROUTERS = {
+  // Priority order for price fallback: custom -> garuda -> terraswap
+  custom: null, // Placeholder for future USTR DEX
+  garuda: {
+    factory: 'terra1ypwj6sw25g0qcykv7mzmcvsndvx56r3yrgkaw3fds7yzwl7fwwcsnxkeh7',
+    router: 'terra1frvfffkpdluzdj8lel4nyyjl2u0p6zuenhfeveulrlg6r2w4tdqqx2zr68',
+  },
+  terraswap: {
+    factory: null,
+    router: 'terra1g3zc8lwwmkrm0cz9wkgl849pdqaw6cq8lh7872',
+  },
+} as const;
+
+// Price API configuration
+export const PRICE_API = {
+  binance: 'https://api.binance.com/api/v3/ticker/price',
+  // Symbols to fetch from Binance
+  symbols: ['LUNCUSDT', 'USTCUSDT'],
+} as const;
+
+// Price cache configuration
+export const PRICE_CACHE = {
+  // Cache durations in milliseconds
+  basePrices: 60000,    // 60 seconds for CEX prices
+  dexRates: 120000,     // 120 seconds for DEX rates
+  staleTime: 30000,     // 30 seconds before considered stale
+} as const;

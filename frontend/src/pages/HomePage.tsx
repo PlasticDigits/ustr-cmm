@@ -4,7 +4,7 @@
  * Main swap interface page with:
  * - Launch countdown timer
  * - Hero section
- * - Swap card and rate chart
+ * - Swap card and rate chart (with stored referral code auto-filled)
  * - Info cards with staggered animations
  */
 
@@ -12,10 +12,14 @@ import { SwapCard, RateChart } from '../components/swap';
 import { StatsCard, BalanceCard } from '../components/dashboard';
 import { CountdownTimer } from '../components/common';
 import { useTickingRate } from '../hooks/useTickingRate';
+import { useReferralStorage } from '../hooks/useReferralStorage';
 
 export function HomePage() {
   // Ticking rate based on fixed launch time (Jan 22, 2026 13:00 UTC)
   const { tickingRate, elapsedSeconds, isLaunched } = useTickingRate();
+  
+  // Get stored referral code (if any) - no URL code on homepage
+  const { referralCode, isLocked } = useReferralStorage();
   return (
     <>
       {/* Countdown Timer */}
@@ -43,7 +47,10 @@ export function HomePage() {
       <div className="grid lg:grid-cols-2 gap-6 md:gap-8 mb-10 md:mb-14">
         {/* Left: Swap Card */}
         <div className="lg:order-1">
-          <SwapCard />
+          <SwapCard 
+            referralCode={referralCode ?? undefined}
+            referralLocked={isLocked}
+          />
         </div>
 
         {/* Right: Rate Chart */}
