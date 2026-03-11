@@ -81,6 +81,13 @@ export const REFERRAL_CODE = {
   maxCodesPerOwner: 10,
 } as const;
 
+// CW20 enumerable pagination (for holder/account enumeration)
+export const CW20_ENUM = {
+  MAX_LIMIT: 30,
+  PAGINATION_DELAY: 150,
+} as const;
+
+
 // Swap parameters
 export const SWAP_CONFIG = {
   startRate: 1.5,

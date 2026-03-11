@@ -5,6 +5,7 @@ export { useReferralStorage, getStoredReferralCode, saveReferralCode, clearRefer
 export { 
   useTreasuryConfig,
   useTreasuryBalances,
+  useTreasuryUstcBalance,
   useTokenInfo,
   useTokenBalance,
   useNativeBalance,
@@ -14,3 +15,10 @@ export {
 } from './useContract';
 export { useTreasury } from './useTreasury';
 export { usePrices } from './usePrices';
+
+export {
+  useTokenHolders,
+  useTokenHoldersCount,
+  useTokenAccounts,
+} from './useTokenHolders';
+

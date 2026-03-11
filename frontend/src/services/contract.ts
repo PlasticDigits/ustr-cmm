@@ -13,8 +13,9 @@
  * to simulate post-launch state for UX testing.
  */
 
-import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, LCD_CONFIG } from '../utils/constants';
+import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, LCD_CONFIG, CW20_ENUM } from '../utils/constants';
 import { executeCw20Send, executeContractWithCoins } from './wallet';
+import { formatAmount } from '../utils/format';
 import type {
   SwapConfig,
   SwapRate,
@@ -23,6 +24,7 @@ import type {
   SwapStats,
   TreasuryConfig,
   TreasuryAllBalances,
+  TreasuryUstcBalance,
   Cw20Balance,
   Cw20TokenInfo,
   ReferralConfig,
@@ -32,6 +34,10 @@ import type {
   LeaderboardHint,
   ReferralLeaderboardResponse,
   ReferralCodeStats,
+  AllAccountsResponse,
+  HolderCountResponse,
+  HolderWithBalance,
+  TreasuryBalanceResponse,
 } from '../types/contracts';
 
 /** Dev mode flag - enables mock responses for UX testing */
@@ -867,6 +873,33 @@ class ContractService {
     }
   }
 
+  async getTreasuryUstcBalance(): Promise<TreasuryUstcBalance> {
+    const contracts = this.getContracts();
+    
+    if (!contracts.treasury) {
+      console.warn('Treasury contract address not configured');
+      return {
+        amount: '0',
+        formatted: formatAmount('0', 6),
+        denom: 'uusd',
+      };
+    }
+
+    const result = await this.queryContract<{ data: TreasuryBalanceResponse }>(
+      contracts.treasury,
+      { balance: { asset: { native: { denom: 'uusd' } } } }
+    );
+
+    const amount = result.data.amount ?? '0';
+    const formatted = formatAmount(amount, 6);
+
+    return {
+      amount,
+      formatted,
+      denom: 'uusd',
+    };
+  }
+
   // ============================================
   // Token Queries
   // ============================================
@@ -904,6 +937,237 @@ class ContractService {
       console.error('Failed to get token balance:', error);
       return { balance: '0' };
     }
+  }
+
+  // ============================================
+  // CW20 Holders / Accounts (Enumerable Extension)
+  // ============================================
+
+  /**
+   * Get a single page of CW20 accounts using the enumerable `all_accounts` query.
+   */
+  async getTokenAccounts(
+    tokenAddress: string,
+    startAfter?: string,
+    limit: number = CW20_ENUM.MAX_LIMIT,
+    signal?: AbortSignal
+  ): Promise<AllAccountsResponse> {
+    if (!tokenAddress) {
+      console.warn('Token address not configured, returning empty accounts');
+      return { accounts: [] };
+    }
+
+    // Clamp limit to CW20_ENUM.MAX_LIMIT
+    const pageLimit = Math.min(limit, CW20_ENUM.MAX_LIMIT);
+
+    const query: { all_accounts: { start_after?: string; limit?: number } } = {
+      all_accounts: {},
+    };
+    if (startAfter) {
+      query.all_accounts.start_after = startAfter;
+    }
+    if (pageLimit > 0) {
+      query.all_accounts.limit = pageLimit;
+    }
+
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
+    const queryPromise = this.queryContract<{ data: AllAccountsResponse }>(
+      tokenAddress,
+      query
+    );
+
+    if (!signal) {
+      const result = await queryPromise;
+      return result.data;
+    }
+
+    const abortPromise = new Promise<never>((_, reject) => {
+      const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+
+    const result = await Promise.race([queryPromise, abortPromise]);
+    return (result as { data: AllAccountsResponse }).data;
+  }
+
+  /**
+   * Paginate through all CW20 accounts, calling `onPage` for each page.
+   * Returns whether pagination completed fully or was partial (due to error).
+   */
+  private async paginateAccounts(
+    tokenAddress: string,
+    onPage: (accounts: string[]) => Promise<void> | void,
+    signal?: AbortSignal
+  ): Promise<{ partial: boolean }> {
+    let startAfter: string | undefined;
+    let partial = false;
+    let hasMore = true;
+
+    try {
+      while (hasMore) {
+        if (signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
+        const page = await this.getTokenAccounts(
+          tokenAddress,
+          startAfter,
+          CW20_ENUM.MAX_LIMIT,
+          signal
+        );
+
+        if (!page.accounts.length) break;
+
+        await onPage(page.accounts);
+
+        hasMore = page.accounts.length >= CW20_ENUM.MAX_LIMIT;
+        if (hasMore) {
+          startAfter = page.accounts[page.accounts.length - 1];
+
+          if (CW20_ENUM.PAGINATION_DELAY > 0) {
+            await new Promise((resolve) =>
+              setTimeout(resolve, CW20_ENUM.PAGINATION_DELAY)
+            );
+          }
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        throw error;
+      }
+      console.warn('Partial failure during account pagination:', error);
+      partial = true;
+    }
+
+    return { partial };
+  }
+
+  /**
+   * Get all CW20 token accounts (enumerated), optionally verifying balances.
+   *
+   * When verifyBalances is true, only addresses with balance > 0 are returned.
+   */
+  async getAllTokenAccounts(
+    tokenAddress: string,
+    signal?: AbortSignal,
+    verifyBalances: boolean = false
+  ): Promise<string[]> {
+    if (!tokenAddress) {
+      console.warn('Token address not configured, returning empty accounts');
+      return [];
+    }
+
+    const accounts = new Set<string>();
+
+    await this.paginateAccounts(
+      tokenAddress,
+      (pageAccounts) => {
+        for (const addr of pageAccounts) accounts.add(addr);
+      },
+      signal
+    );
+
+    let result = Array.from(accounts);
+
+    if (verifyBalances && result.length > 0) {
+      const holdersWithBalance = await this.getHolderBalances(tokenAddress, result, signal);
+      result = holdersWithBalance.map((h) => h.address);
+    }
+
+    return result;
+  }
+
+  /**
+   * Optimized method to count token holders.
+   *
+   * When verifyBalances is true, only addresses with balance > 0 are counted.
+   */
+  async getTokenHoldersCount(
+    tokenAddress: string,
+    signal?: AbortSignal,
+    verifyBalances: boolean = true
+  ): Promise<HolderCountResponse> {
+    if (!tokenAddress) {
+      console.warn('Token address not configured, returning zero holders');
+      return { count: 0, isVerified: verifyBalances, partial: false };
+    }
+
+    let count = 0;
+
+    const { partial } = await this.paginateAccounts(
+      tokenAddress,
+      async (pageAccounts) => {
+        if (!verifyBalances) {
+          count += pageAccounts.length;
+        } else {
+          const balances = await this.getHolderBalances(tokenAddress, pageAccounts, signal);
+          count += balances.length;
+        }
+      },
+      signal
+    );
+
+    return { count, isVerified: verifyBalances, partial };
+  }
+
+  /**
+   * Convenience method to return verified token holders (balance > 0).
+   */
+  async getTokenHolders(
+    tokenAddress: string,
+    signal?: AbortSignal
+  ): Promise<string[]> {
+    return this.getAllTokenAccounts(tokenAddress, signal, true);
+  }
+
+  /**
+   * Get balances for a list of holder addresses, filtering out zero balances.
+   */
+  async getHolderBalances(
+    tokenAddress: string,
+    addresses: string[],
+    signal?: AbortSignal
+  ): Promise<HolderWithBalance[]> {
+    if (!addresses.length) {
+      return [];
+    }
+
+    const concurrency = 5;
+    const results: HolderWithBalance[] = [];
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < addresses.length; i += concurrency) {
+      chunks.push(addresses.slice(i, i + concurrency));
+    }
+
+    for (const chunk of chunks) {
+      if (signal?.aborted) {
+        throw new DOMException('Aborted', 'AbortError');
+      }
+
+      const balances = await Promise.all(
+        chunk.map(async (address) => {
+          try {
+            const balance = await this.getTokenBalance(tokenAddress, address);
+            return { address, balance: balance.balance };
+          } catch (error) {
+            console.warn('Failed to fetch balance for holder', address, error);
+            return { address, balance: '0' };
+          }
+        })
+      );
+
+      for (const b of balances) {
+        if (b.balance !== '0') {
+          results.push(b);
+        }
+      }
+    }
+
+    return results;
   }
 
   async getNativeBalance(walletAddress: string, denom: string): Promise<string> {
