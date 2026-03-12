@@ -122,7 +122,7 @@ export function DashboardPage() {
                     )}
                   </div>
                 </div>
-                <p className="text-lg font-mono-numbers font-semibold text-white">
+                <p className="text-sm sm:text-lg font-mono-numbers font-semibold text-white text-right truncate max-w-[50%]">
                   {stat.isLoading ? (
                     <span className="inline-block w-16 h-5 bg-white/10 rounded animate-pulse" />
                   ) : stat.error ? (
