@@ -102,6 +102,73 @@ export function isCosmostationInstalled(): boolean {
 }
 
 /**
+ * Suggest Terra Classic chain to wallets that support experimentalSuggestChain.
+ * Ensures the wallet recognises columbus-5 even if it isn't built-in.
+ * Failures are non-fatal — the subsequent connect() call will surface the real error.
+ */
+async function suggestTerraClassicChain(walletName: WalletName): Promise<void> {
+  const supportedWallets: Set<WalletName> = new Set([
+    WalletName.STATION,
+    WalletName.KEPLR,
+    WalletName.LEAP,
+    WalletName.COSMOSTATION,
+  ]);
+  if (!supportedWallets.has(walletName)) return;
+
+  const config = NETWORKS[DEFAULT_NETWORK];
+  const chainInfo = {
+    chainId: config.chainId,
+    chainName: config.name,
+    rpc: config.rpc,
+    rest: config.lcd,
+    bip44: { coinType: 330 },
+    bech32Config: {
+      bech32PrefixAccAddr: 'terra',
+      bech32PrefixAccPub: 'terrapub',
+      bech32PrefixValAddr: 'terravaloper',
+      bech32PrefixValPub: 'terravaloperpub',
+      bech32PrefixConsAddr: 'terravalcons',
+      bech32PrefixConsPub: 'terravalconspub',
+    },
+    currencies: [
+      { coinDenom: 'LUNC', coinMinimalDenom: 'uluna', coinDecimals: 6 },
+      { coinDenom: 'USTC', coinMinimalDenom: 'uusd', coinDecimals: 6 },
+    ],
+    feeCurrencies: [
+      {
+        coinDenom: 'LUNC',
+        coinMinimalDenom: 'uluna',
+        coinDecimals: 6,
+        gasPriceStep: { low: 28.325, average: 28.325, high: 50 },
+      },
+    ],
+    stakeCurrency: { coinDenom: 'LUNC', coinMinimalDenom: 'uluna', coinDecimals: 6 },
+  };
+
+  type WalletExt = { experimentalSuggestChain?: (info: unknown) => Promise<void> };
+  type StationExt = { keplr?: WalletExt };
+
+  let ext: WalletExt | undefined;
+  if (walletName === WalletName.STATION) {
+    ext = (window.station as StationExt | undefined)?.keplr as WalletExt | undefined;
+  } else if (walletName === WalletName.KEPLR) {
+    ext = window.keplr as WalletExt | undefined;
+  } else if (walletName === WalletName.LEAP) {
+    ext = window.leap as WalletExt | undefined;
+  } else if (walletName === WalletName.COSMOSTATION) {
+    ext = window.cosmostation?.providers?.keplr as WalletExt | undefined;
+  }
+
+  if (!ext?.experimentalSuggestChain) return;
+
+  try {
+    await ext.experimentalSuggestChain(chainInfo);
+  } catch (err) {
+    console.warn(`[Wallet] experimentalSuggestChain failed for ${walletName}:`, err);
+  }
+}
+
+/**
  * Connect to Terra Classic wallet using cosmes
  */
 export async function connectTerraWallet(
@@ -116,18 +183,24 @@ export async function connectTerraWallet(
   try {
     const chainInfo = getChainInfo();
     console.log(`[Wallet] Connecting ${walletName} (${walletType}) to chain ${chainInfo.chainId}`);
+
+    if (walletType === WalletType.EXTENSION) {
+      await suggestTerraClassicChain(walletName);
+    }
     
     const wallets = await controller.connect(walletType, [chainInfo]);
     
     if (wallets.size === 0) {
-      // Handle WalletConnect edge cases
       if (walletType === WalletType.WALLETCONNECT) {
         throw new Error(
           'WalletConnect connection failed. The wallet may be connected but unable to verify. ' +
           'Please try disconnecting and reconnecting.'
         );
       }
-      throw new Error('No wallets connected');
+      throw new Error(
+        `${walletName} could not connect to Terra Classic (${chainInfo.chainId}). ` +
+        'The wallet may not support this chain. Try updating your wallet extension.'
+      );
     }
 
     // Get the wallet for Terra Classic chain
@@ -515,14 +588,21 @@ declare global {
     station?: {
       connect: () => Promise<void>;
       disconnect: () => Promise<void>;
+      keplr?: {
+        enable: (chainId: string) => Promise<void>;
+        getOfflineSigner: (chainId: string) => unknown;
+        experimentalSuggestChain?: (chainInfo: unknown) => Promise<void>;
+      };
     };
     keplr?: {
       enable: (chainId: string) => Promise<void>;
       getOfflineSigner: (chainId: string) => unknown;
+      experimentalSuggestChain?: (chainInfo: unknown) => Promise<void>;
     };
     leap?: {
       enable: (chainId: string) => Promise<void>;
       getOfflineSigner: (chainId: string) => unknown;
+      experimentalSuggestChain?: (chainInfo: unknown) => Promise<void>;
     };
     cosmostation?: {
       providers: {

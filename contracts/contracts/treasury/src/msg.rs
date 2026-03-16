@@ -12,6 +12,10 @@ pub struct InstantiateMsg {
     pub governance: String,
 }
 
+/// Migrate message (empty for now, can be extended for future migrations)
+#[cw_serde]
+pub struct MigrateMsg {}
+
 /// Execute messages
 #[cw_serde]
 pub enum ExecuteMsg {
@@ -64,6 +68,24 @@ pub enum ExecuteMsg {
     /// CW20 receive hook - accepts direct CW20 token transfers
     /// Called automatically when CW20 tokens are sent to this contract
     Receive(Cw20ReceiveMsg),
+
+    /// Registers a wrapper contract for a native denom (governance-only)
+    SetDenomWrapper { denom: String, wrapper: String },
+
+    /// Removes the wrapper registration for a native denom (governance-only)
+    RemoveDenomWrapper { denom: String },
+
+    /// Accepts native token deposits for wrapping (anyone).
+    /// Native tokens stay in treasury; wrapper is notified to mint CW20.
+    WrapDeposit {},
+
+    /// Allows a registered wrapper to withdraw assets to a recipient.
+    /// Caller must be the registered wrapper for the denom being withdrawn.
+    InstantWithdraw {
+        recipient: String,
+        denom: String,
+        amount: Uint128,
+    },
 }
 
 /// Query messages
@@ -93,6 +115,10 @@ pub enum QueryMsg {
     /// Returns all pending withdrawal proposals
     #[returns(PendingWithdrawalsResponse)]
     PendingWithdrawals {},
+
+    /// Returns all denom->wrapper mappings
+    #[returns(DenomWrappersResponse)]
+    DenomWrappers {},
 }
 
 /// Response for Config query
@@ -156,5 +182,29 @@ pub struct PendingWithdrawalEntry {
 #[cw_serde]
 pub struct PendingWithdrawalsResponse {
     pub withdrawals: Vec<PendingWithdrawalEntry>,
+}
+
+/// A single denom->wrapper mapping entry
+#[cw_serde]
+pub struct DenomWrapperEntry {
+    pub denom: String,
+    pub wrapper: Addr,
+}
+
+/// Response for DenomWrappers query
+#[cw_serde]
+pub struct DenomWrappersResponse {
+    pub wrappers: Vec<DenomWrapperEntry>,
+}
+
+/// Message sent to wrapper contract to notify of a wrap deposit.
+/// Matches the wrap-mapper's ExecuteMsg::NotifyDeposit variant.
+#[cw_serde]
+pub enum WrapperExecuteMsg {
+    NotifyDeposit {
+        depositor: String,
+        denom: String,
+        amount: Uint128,
+    },
 }
 

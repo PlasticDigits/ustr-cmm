@@ -16,22 +16,24 @@
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
     to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Env, MessageInfo,
-    Order, Response, StdResult, Uint128, WasmMsg,
+    Order, Response, StdError, StdResult, Uint128, WasmMsg,
 };
 use cosmwasm_schema::cw_serde;
 use sha2::{Digest, Sha256};
-use cw2::set_contract_version;
+use cw2::{get_contract_version, set_contract_version};
 use cw20::Cw20ExecuteMsg;
 
 use crate::error::ContractError;
 use crate::msg::{
     AllBalancesResponse, AssetBalance, BalanceResponse, ConfigResponse, Cw20WhitelistResponse,
-    ExecuteMsg, InstantiateMsg, PendingGovernanceEntry, PendingGovernanceResponse,
-    PendingWithdrawalEntry, PendingWithdrawalsResponse, QueryMsg,
+    DenomWrapperEntry, DenomWrappersResponse, ExecuteMsg, InstantiateMsg, MigrateMsg,
+    PendingGovernanceEntry, PendingGovernanceResponse, PendingWithdrawalEntry,
+    PendingWithdrawalsResponse, QueryMsg, WrapperExecuteMsg,
 };
 use crate::state::{
     Config, PendingGovernance, PendingWithdrawal, CONFIG, CONTRACT_NAME, CONTRACT_VERSION,
-    CW20_WHITELIST, DEFAULT_TIMELOCK_DURATION, PENDING_GOVERNANCE, PENDING_WITHDRAWALS,
+    CW20_WHITELIST, DEFAULT_TIMELOCK_DURATION, DENOM_WRAPPERS, PENDING_GOVERNANCE,
+    PENDING_WITHDRAWALS,
 };
 use common::AssetInfo;
 use cw20::Cw20ReceiveMsg;
@@ -66,6 +68,26 @@ pub fn instantiate(
     Ok(Response::new()
         .add_attribute("action", "instantiate")
         .add_attribute("governance", governance))
+}
+
+// ============ MIGRATE ============
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, ContractError> {
+    let ver = get_contract_version(deps.storage)?;
+    if ver.contract != CONTRACT_NAME {
+        return Err(ContractError::Std(StdError::generic_err(format!(
+            "Cannot migrate from different contract: {} != {}",
+            ver.contract, CONTRACT_NAME
+        ))));
+    }
+
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "migrate")
+        .add_attribute("from_version", ver.version)
+        .add_attribute("to_version", CONTRACT_VERSION))
 }
 
 // ============ EXECUTE ============
@@ -103,6 +125,18 @@ pub fn execute(
         }
         ExecuteMsg::SwapDeposit {} => execute_swap_deposit(deps, env, info),
         ExecuteMsg::Receive(msg) => execute_receive_cw20(deps, info, msg),
+        ExecuteMsg::SetDenomWrapper { denom, wrapper } => {
+            execute_set_denom_wrapper(deps, info, denom, wrapper)
+        }
+        ExecuteMsg::RemoveDenomWrapper { denom } => {
+            execute_remove_denom_wrapper(deps, info, denom)
+        }
+        ExecuteMsg::WrapDeposit {} => execute_wrap_deposit(deps, info),
+        ExecuteMsg::InstantWithdraw {
+            recipient,
+            denom,
+            amount,
+        } => execute_instant_withdraw(deps, env, info, recipient, denom, amount),
     }
 }
 
@@ -553,6 +587,143 @@ fn execute_receive_cw20(
         .add_attribute("amount", cw20_msg.amount))
 }
 
+fn execute_set_denom_wrapper(
+    deps: DepsMut,
+    info: MessageInfo,
+    denom: String,
+    wrapper: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    if DENOM_WRAPPERS.has(deps.storage, &denom) {
+        return Err(ContractError::DenomWrapperAlreadySet {
+            denom: denom.clone(),
+        });
+    }
+
+    let wrapper_addr = deps.api.addr_validate(&wrapper)?;
+    DENOM_WRAPPERS.save(deps.storage, &denom, &wrapper_addr)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_denom_wrapper")
+        .add_attribute("denom", denom)
+        .add_attribute("wrapper", wrapper_addr))
+}
+
+fn execute_remove_denom_wrapper(
+    deps: DepsMut,
+    info: MessageInfo,
+    denom: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    DENOM_WRAPPERS.remove(deps.storage, &denom);
+
+    Ok(Response::new()
+        .add_attribute("action", "remove_denom_wrapper")
+        .add_attribute("denom", denom))
+}
+
+fn execute_wrap_deposit(
+    deps: DepsMut,
+    info: MessageInfo,
+) -> Result<Response, ContractError> {
+    if info.funds.is_empty() || info.funds.len() != 1 {
+        return Err(ContractError::InvalidWrapFunds);
+    }
+
+    let coin = &info.funds[0];
+    if coin.amount.is_zero() {
+        return Err(ContractError::ZeroAmount);
+    }
+
+    let wrapper = DENOM_WRAPPERS
+        .may_load(deps.storage, &coin.denom)?
+        .ok_or(ContractError::NoDenomWrapper {
+            denom: coin.denom.clone(),
+        })?;
+
+    let notify_msg = WasmMsg::Execute {
+        contract_addr: wrapper.to_string(),
+        msg: to_json_binary(&WrapperExecuteMsg::NotifyDeposit {
+            depositor: info.sender.to_string(),
+            denom: coin.denom.clone(),
+            amount: coin.amount,
+        })?,
+        funds: vec![],
+    };
+
+    Ok(Response::new()
+        .add_message(notify_msg)
+        .add_attribute("action", "wrap_deposit")
+        .add_attribute("depositor", info.sender)
+        .add_attribute("denom", &coin.denom)
+        .add_attribute("amount", coin.amount))
+}
+
+/// Withdraws native tokens to recipient. Caller must be the registered wrapper
+/// for the given denom.
+///
+/// Design note: the treasury may hold native tokens from multiple sources
+/// (SwapDeposit, WrapDeposit, direct transfers). We intentionally allow
+/// InstantWithdraw up to the full bank balance rather than tracking
+/// wrapped-only balances separately. This lets governance mint CW20 tokens
+/// directly (backed by pre-existing treasury holdings) without re-depositing
+/// through WrapDeposit and incurring an extra tax event. The total CW20
+/// supply should never exceed the treasury's native balance; the bank
+/// balance check enforces this invariant at withdrawal time.
+fn execute_instant_withdraw(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    recipient: String,
+    denom: String,
+    amount: Uint128,
+) -> Result<Response, ContractError> {
+    if amount.is_zero() {
+        return Err(ContractError::ZeroAmount);
+    }
+
+    let wrapper = DENOM_WRAPPERS
+        .may_load(deps.storage, &denom)?
+        .ok_or(ContractError::NotRegisteredWrapper)?;
+
+    if info.sender != wrapper {
+        return Err(ContractError::NotRegisteredWrapper);
+    }
+
+    let recipient_addr = deps.api.addr_validate(&recipient)?;
+
+    let balance = deps.querier.query_balance(&env.contract.address, &denom)?;
+    if balance.amount < amount {
+        return Err(ContractError::InsufficientBalance {
+            requested: amount.to_string(),
+            available: balance.amount.to_string(),
+        });
+    }
+
+    let send_msg = BankMsg::Send {
+        to_address: recipient_addr.to_string(),
+        amount: vec![Coin {
+            denom: denom.clone(),
+            amount,
+        }],
+    };
+
+    Ok(Response::new()
+        .add_message(send_msg)
+        .add_attribute("action", "instant_withdraw")
+        .add_attribute("recipient", recipient_addr)
+        .add_attribute("denom", denom)
+        .add_attribute("amount", amount))
+}
+
 // ============ QUERY ============
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -564,6 +735,7 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::AllBalances {} => to_json_binary(&query_all_balances(deps, env)?),
         QueryMsg::Cw20Whitelist {} => to_json_binary(&query_cw20_whitelist(deps)?),
         QueryMsg::PendingWithdrawals {} => to_json_binary(&query_pending_withdrawals(deps)?),
+        QueryMsg::DenomWrappers {} => to_json_binary(&query_denom_wrappers(deps)?),
     }
 }
 
@@ -672,6 +844,20 @@ fn query_pending_withdrawals(deps: Deps) -> StdResult<PendingWithdrawalsResponse
         .collect::<StdResult<Vec<_>>>()?;
 
     Ok(PendingWithdrawalsResponse { withdrawals })
+}
+
+fn query_denom_wrappers(deps: Deps) -> StdResult<DenomWrappersResponse> {
+    let wrappers: Vec<DenomWrapperEntry> = DENOM_WRAPPERS
+        .range(deps.storage, None, None, Order::Ascending)
+        .map(|r| {
+            r.map(|(denom, addr)| DenomWrapperEntry {
+                denom: denom.to_string(),
+                wrapper: addr,
+            })
+        })
+        .collect::<StdResult<Vec<_>>>()?;
+
+    Ok(DenomWrappersResponse { wrappers })
 }
 
 // ============ TESTS ============
@@ -3943,6 +4129,461 @@ mod tests {
             }
             _ => panic!("Expected WasmMsg::Execute"),
         }
+    }
+
+    // ============ DENOM WRAPPER TESTS ============
+
+    const WRAPPER: &str = "wrapper_addr";
+
+    #[test]
+    fn test_set_denom_wrapper() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetDenomWrapper {
+            denom: DENOM_LUNC.to_string(),
+            wrapper: WRAPPER.to_string(),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+        assert_eq!(res.attributes[0].value, "set_denom_wrapper");
+
+        let stored = DENOM_WRAPPERS.load(&deps.storage, DENOM_LUNC).unwrap();
+        assert_eq!(stored.as_str(), WRAPPER);
+
+        // Non-governance rejected
+        let info = mock_info(USER, &[]);
+        let msg = ExecuteMsg::SetDenomWrapper {
+            denom: DENOM_LUNC.to_string(),
+            wrapper: WRAPPER.to_string(),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_remove_denom_wrapper() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetDenomWrapper {
+            denom: DENOM_LUNC.to_string(),
+            wrapper: WRAPPER.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+
+        let msg = ExecuteMsg::RemoveDenomWrapper {
+            denom: DENOM_LUNC.to_string(),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+        assert_eq!(res.attributes[0].value, "remove_denom_wrapper");
+
+        assert!(DENOM_WRAPPERS.may_load(&deps.storage, DENOM_LUNC).unwrap().is_none());
+
+        // Removing non-existent is a no-op
+        let msg = ExecuteMsg::RemoveDenomWrapper {
+            denom: "nonexistent".to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+    }
+
+    #[test]
+    fn test_wrap_deposit_success() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetDenomWrapper {
+            denom: DENOM_LUNC.to_string(),
+            wrapper: WRAPPER.to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        let info = mock_info(USER, &coins(500_000, DENOM_LUNC));
+        let msg = ExecuteMsg::WrapDeposit {};
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        assert_eq!(res.attributes[0].value, "wrap_deposit");
+        assert_eq!(res.attributes[1].value, USER);
+        assert_eq!(res.attributes[2].value, DENOM_LUNC);
+        assert_eq!(res.attributes[3].value, "500000");
+
+        assert_eq!(res.messages.len(), 1);
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { contract_addr, msg, funds }) => {
+                assert_eq!(contract_addr, WRAPPER);
+                assert!(funds.is_empty());
+                let parsed: WrapperExecuteMsg = from_json(msg).unwrap();
+                match parsed {
+                    WrapperExecuteMsg::NotifyDeposit { depositor, denom, amount } => {
+                        assert_eq!(depositor, USER);
+                        assert_eq!(denom, DENOM_LUNC);
+                        assert_eq!(amount, Uint128::new(500_000));
+                    }
+                }
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
+        }
+    }
+
+    #[test]
+    fn test_wrap_deposit_unknown_denom() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &coins(100, "unknown_denom"));
+        let msg = ExecuteMsg::WrapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::NoDenomWrapper {
+                denom: "unknown_denom".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_wrap_deposit_multiple_coins() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &[coin(100, DENOM_LUNC), coin(200, DENOM_USTC)]);
+        let msg = ExecuteMsg::WrapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::InvalidWrapFunds);
+    }
+
+    #[test]
+    fn test_wrap_deposit_zero_amount() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(USER, &coins(0, DENOM_LUNC));
+        let msg = ExecuteMsg::WrapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::ZeroAmount);
+    }
+
+    #[test]
+    fn test_wrap_deposit_no_funds() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &[]);
+        let msg = ExecuteMsg::WrapDeposit {};
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::InvalidWrapFunds);
+    }
+
+    #[test]
+    fn test_instant_withdraw_native() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        deps.querier.update_balance(
+            mock_env().contract.address.clone(),
+            vec![coin(1_000_000, DENOM_LUNC)],
+        );
+
+        let info = mock_info(WRAPPER, &[]);
+        let msg = ExecuteMsg::InstantWithdraw {
+            recipient: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::new(500_000),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        assert_eq!(res.attributes[0].value, "instant_withdraw");
+        assert_eq!(res.messages.len(), 1);
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, USER);
+                assert_eq!(amount.len(), 1);
+                assert_eq!(amount[0].denom, DENOM_LUNC);
+                assert_eq!(amount[0].amount, Uint128::new(500_000));
+            }
+            _ => panic!("Expected BankMsg::Send"),
+        }
+    }
+
+    #[test]
+    fn test_instant_withdraw_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(USER, &[]);
+        let msg = ExecuteMsg::InstantWithdraw {
+            recipient: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::new(500_000),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::NotRegisteredWrapper);
+    }
+
+    #[test]
+    fn test_instant_withdraw_insufficient() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        deps.querier.update_balance(
+            mock_env().contract.address.clone(),
+            vec![coin(100, DENOM_LUNC)],
+        );
+
+        let info = mock_info(WRAPPER, &[]);
+        let msg = ExecuteMsg::InstantWithdraw {
+            recipient: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::new(500_000),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::InsufficientBalance {
+                requested: "500000".to_string(),
+                available: "100".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_instant_withdraw_unknown_wrapper() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info("random_contract", &[]);
+        let msg = ExecuteMsg::InstantWithdraw {
+            recipient: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::new(500_000),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::NotRegisteredWrapper);
+    }
+
+    #[test]
+    fn test_set_denom_wrapper_rejects_overwrite() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        // Overwriting should fail -- must RemoveDenomWrapper first
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: "new_wrapper".to_string(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::DenomWrapperAlreadySet {
+                denom: DENOM_LUNC.to_string(),
+            }
+        );
+
+        // Remove then re-set should work
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::RemoveDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+            },
+        )
+        .unwrap();
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: "new_wrapper".to_string(),
+            },
+        )
+        .unwrap();
+
+        let stored = DENOM_WRAPPERS.load(&deps.storage, DENOM_LUNC).unwrap();
+        assert_eq!(stored.as_str(), "new_wrapper");
+    }
+
+    #[test]
+    fn test_migrate_from_old_version() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        use cw2::get_contract_version;
+
+        let ver_before = get_contract_version(&deps.storage).unwrap();
+        assert_eq!(ver_before.contract, CONTRACT_NAME);
+
+        let msg = MigrateMsg {};
+        let res = migrate(deps.as_mut(), mock_env(), msg).unwrap();
+        assert_eq!(res.attributes[0].value, "migrate");
+
+        let ver_after = get_contract_version(&deps.storage).unwrap();
+        assert_eq!(ver_after.contract, CONTRACT_NAME);
+        assert_eq!(ver_after.version, CONTRACT_VERSION);
+
+        // Verify existing state is preserved
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.governance.as_str(), GOVERNANCE);
+    }
+
+    #[test]
+    fn test_migrate_wrong_contract() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        // Overwrite stored contract name to simulate a different contract
+        cw2::set_contract_version(&mut deps.storage, "wrong_contract", "0.1.0").unwrap();
+
+        let msg = MigrateMsg {};
+        let err = migrate(deps.as_mut(), mock_env(), msg).unwrap_err();
+        match err {
+            ContractError::Std(_) => {}
+            _ => panic!("Expected Std error for wrong contract name"),
+        }
+    }
+
+    #[test]
+    fn test_existing_features_after_migrate() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        // Migrate
+        migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+
+        // SwapDeposit still works (after setting swap contract)
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::SetSwapContract {
+            contract_addr: "swap_contract".to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        let info = mock_info(USER, &coins(1_000_000, DENOM_USTC));
+        let msg = ExecuteMsg::SwapDeposit {};
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Governance still works
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeGovernanceTransfer {
+            new_governance: "new_gov".to_string(),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // ProposeWithdraw still works
+        let info = mock_info(GOVERNANCE, &[]);
+        let msg = ExecuteMsg::ProposeWithdraw {
+            destination: USER.to_string(),
+            asset: AssetInfo::Native {
+                denom: DENOM_USTC.to_string(),
+            },
+            amount: Uint128::new(100),
+        };
+        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+    }
+
+    #[test]
+    fn test_query_denom_wrappers() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        // Query empty
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::DenomWrappers {}).unwrap();
+        let response: DenomWrappersResponse = from_json(res).unwrap();
+        assert!(response.wrappers.is_empty());
+
+        // Add wrappers
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_USTC.to_string(),
+                wrapper: "wrapper2".to_string(),
+            },
+        )
+        .unwrap();
+
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::DenomWrappers {}).unwrap();
+        let response: DenomWrappersResponse = from_json(res).unwrap();
+        assert_eq!(response.wrappers.len(), 2);
     }
 }
 
