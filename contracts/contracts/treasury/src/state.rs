@@ -64,3 +64,7 @@ pub const PENDING_WITHDRAWALS: Map<&str, PendingWithdrawal> = Map::new("pending_
 /// Key: CW20 contract address as string
 pub const CW20_WHITELIST: Map<&str, bool> = Map::new("cw20_whitelist");
 
+/// Maps native denom (e.g. "uluna", "uusd") to a trusted wrapper contract address.
+/// Governance-managed. Used by WrapDeposit and InstantWithdraw.
+pub const DENOM_WRAPPERS: Map<&str, Addr> = Map::new("denom_wrappers");
+

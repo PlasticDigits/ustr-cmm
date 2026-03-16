@@ -6,6 +6,7 @@ members = [
     "contracts/ustc-swap",
     "contracts/airdrop",
     "contracts/referral",
+    "contracts/wrap-mapper",
     "packages/common",
     # External contracts (for testing - in production use deployed code IDs)
     "external/cw20-mintable",

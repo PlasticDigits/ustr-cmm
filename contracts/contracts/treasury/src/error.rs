@@ -40,5 +40,20 @@ pub enum ContractError {
 
     #[error("Minimum swap deposit is 1 USTC (1,000,000 uusd), received {received}")]
     BelowMinimumSwap { received: String },
+
+    #[error("No wrapper registered for denom: {denom}")]
+    NoDenomWrapper { denom: String },
+
+    #[error("Caller is not a registered wrapper contract")]
+    NotRegisteredWrapper,
+
+    #[error("Invalid wrap deposit funds: expected exactly one native coin")]
+    InvalidWrapFunds,
+
+    #[error("Zero amount not allowed")]
+    ZeroAmount,
+
+    #[error("Wrapper already registered for denom {denom} (remove first)")]
+    DenomWrapperAlreadySet { denom: String },
 }
 
