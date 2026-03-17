@@ -20,6 +20,12 @@ pub struct Config {
 
 pub const MAX_FEE_BPS: u16 = 1000; // 10% hard cap
 
+/// Minimum fee in basis points. Must be set >= chain tax rate to ensure
+/// treasury solvency: each unwrap triggers a BankMsg::Send whose tax is
+/// deducted from treasury reserves. The wrapping fee must cover this tax
+/// or the treasury's native balance will erode below outstanding CW20 supply.
+pub const MIN_FEE_BPS: u16 = 1;
+
 #[cw_serde]
 pub struct PendingGovernance {
     pub new_address: Addr,

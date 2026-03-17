@@ -15,8 +15,8 @@ use crate::msg::{
 };
 use crate::state::{
     Config, RateLimitState, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, CW20_TO_DENOM,
-    DENOM_TO_CW20, GOVERNANCE_TIMELOCK, MAX_FEE_BPS, PENDING_GOVERNANCE, RATE_LIMITS,
-    RATE_LIMIT_STATE,
+    DENOM_TO_CW20, GOVERNANCE_TIMELOCK, MAX_FEE_BPS, MIN_FEE_BPS, PENDING_GOVERNANCE,
+    RATE_LIMITS, RATE_LIMIT_STATE,
 };
 
 // ============ INSTANTIATE ============
@@ -38,6 +38,12 @@ pub fn instantiate(
         return Err(ContractError::FeeTooHigh {
             fee_bps,
             max_bps: MAX_FEE_BPS,
+        });
+    }
+    if fee_bps < MIN_FEE_BPS {
+        return Err(ContractError::FeeTooLow {
+            fee_bps,
+            min_bps: MIN_FEE_BPS,
         });
     }
 
@@ -91,7 +97,7 @@ pub fn execute(
         } => execute_notify_deposit(deps, env, info, depositor, denom, amount),
         ExecuteMsg::Receive(cw20_msg) => execute_receive_cw20(deps, env, info, cw20_msg),
         ExecuteMsg::SetDenomMapping { denom, cw20_addr } => {
-            execute_set_denom_mapping(deps, info, denom, cw20_addr)
+            execute_set_denom_mapping(deps, env, info, denom, cw20_addr)
         }
         ExecuteMsg::RemoveDenomMapping { denom } => {
             execute_remove_denom_mapping(deps, info, denom)
@@ -247,6 +253,7 @@ fn execute_receive_cw20(
 
 fn execute_set_denom_mapping(
     deps: DepsMut,
+    env: Env,
     info: MessageInfo,
     denom: String,
     cw20_addr: String,
@@ -257,6 +264,8 @@ fn execute_set_denom_mapping(
     }
 
     let cw20 = deps.api.addr_validate(&cw20_addr)?;
+
+    verify_minter_access(&deps, &env, &cw20)?;
 
     // Clean up stale reverse mapping if this denom was previously mapped
     if let Some(old_cw20) = DENOM_TO_CW20.may_load(deps.storage, &denom)? {
@@ -279,6 +288,56 @@ fn execute_set_denom_mapping(
         .add_attribute("action", "set_denom_mapping")
         .add_attribute("denom", denom)
         .add_attribute("cw20_addr", cw20))
+}
+
+/// Verifies that this contract (wrap-mapper) is authorized to mint on the
+/// CW20 token. Checks both the primary minter (standard CW20 `Minter` query)
+/// and the extended minters list (cw20-mintable `Minters` query).
+fn verify_minter_access(deps: &DepsMut, env: &Env, cw20: &cosmwasm_std::Addr) -> Result<(), ContractError> {
+    let self_addr = env.contract.address.to_string();
+
+    let primary: Option<cw20::MinterResponse> = deps
+        .querier
+        .query_wasm_smart(cw20, &cw20::Cw20QueryMsg::Minter {})
+        .unwrap_or(None);
+
+    if let Some(ref m) = primary {
+        if m.minter == self_addr {
+            return Ok(());
+        }
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum MintableQueryMsg {
+        Minters {
+            start_after: Option<String>,
+            limit: Option<u32>,
+        },
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct MintersResponse {
+        pub minters: Vec<String>,
+    }
+
+    let minters_result: Result<MintersResponse, _> = deps.querier.query_wasm_smart(
+        cw20,
+        &MintableQueryMsg::Minters {
+            start_after: None,
+            limit: Some(30),
+        },
+    );
+
+    if let Ok(resp) = minters_result {
+        if resp.minters.iter().any(|m| m == &self_addr) {
+            return Ok(());
+        }
+    }
+
+    Err(ContractError::NotMinter {
+        cw20_addr: cw20.to_string(),
+    })
 }
 
 fn execute_remove_denom_mapping(
@@ -447,6 +506,12 @@ fn execute_set_fee_bps(
             max_bps: MAX_FEE_BPS,
         });
     }
+    if fee_bps < MIN_FEE_BPS {
+        return Err(ContractError::FeeTooLow {
+            fee_bps,
+            min_bps: MIN_FEE_BPS,
+        });
+    }
 
     config.fee_bps = fee_bps;
     CONFIG.save(deps.storage, &config)?;
@@ -503,7 +568,10 @@ fn check_rate_limit(
         state.amount_used = Uint128::zero();
     }
 
-    let new_usage = state.amount_used + amount;
+    let new_usage = state
+        .amount_used
+        .checked_add(amount)
+        .map_err(|_| ContractError::RateLimitOverflow)?;
     if new_usage > rate_config.max_amount_per_window {
         return Err(ContractError::RateLimitExceeded {
             denom: denom.to_string(),
@@ -625,18 +693,28 @@ mod tests {
         };
         let info = mock_info("creator", &[]);
         instantiate(deps.branch(), mock_env(), info, msg).unwrap();
+        add_mapping(deps, DENOM_LUNC, CW20_LUNC);
+    }
 
-        let info = mock_info(GOVERNANCE, &[]);
-        execute(
-            deps,
-            mock_env(),
-            info,
-            ExecuteMsg::SetDenomMapping {
-                denom: DENOM_LUNC.to_string(),
-                cw20_addr: CW20_LUNC.to_string(),
-            },
-        )
-        .unwrap();
+    /// Writes a denom<->CW20 mapping directly to storage with the same
+    /// stale-entry cleanup logic as `execute_set_denom_mapping`, but
+    /// without the CW20 minter query (which requires a real contract).
+    /// Minter verification is tested in integration tests.
+    fn add_mapping(deps: DepsMut, denom: &str, cw20: &str) {
+        use crate::state::{CW20_TO_DENOM, DENOM_TO_CW20};
+        let cw20_addr = cosmwasm_std::Addr::unchecked(cw20);
+        if let Some(old_cw20) = DENOM_TO_CW20.may_load(deps.storage, denom).unwrap() {
+            if old_cw20 != cw20_addr {
+                CW20_TO_DENOM.remove(deps.storage, old_cw20.as_str());
+            }
+        }
+        if let Some(old_denom) = CW20_TO_DENOM.may_load(deps.storage, cw20).unwrap() {
+            if old_denom != denom {
+                DENOM_TO_CW20.remove(deps.storage, &old_denom);
+            }
+        }
+        DENOM_TO_CW20.save(deps.storage, denom, &cw20_addr).unwrap();
+        CW20_TO_DENOM.save(deps.storage, cw20, &denom.to_string()).unwrap();
     }
 
     // ============ B1: INSTANTIATE ============
@@ -694,13 +772,7 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
-        let info = mock_info(GOVERNANCE, &[]);
-        let msg = ExecuteMsg::SetDenomMapping {
-            denom: DENOM_LUNC.to_string(),
-            cw20_addr: CW20_LUNC.to_string(),
-        };
-        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-        assert_eq!(res.attributes[0].value, "set_denom_mapping");
+        add_mapping(deps.as_mut(), DENOM_LUNC, CW20_LUNC);
 
         let forward = DENOM_TO_CW20.load(&deps.storage, DENOM_LUNC).unwrap();
         assert_eq!(forward.as_str(), CW20_LUNC);
@@ -995,7 +1067,30 @@ mod tests {
     }
 
     #[test]
-    fn test_set_fee_bps_zero() {
+    fn test_set_fee_bps_zero_rejected() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetFeeBps { fee_bps: 0 },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            ContractError::FeeTooLow {
+                fee_bps: 0,
+                min_bps: crate::state::MIN_FEE_BPS,
+            }
+        );
+    }
+
+    #[test]
+    fn test_set_fee_bps_at_minimum() {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
@@ -1004,35 +1099,41 @@ mod tests {
             deps.as_mut(),
             mock_env(),
             info,
-            ExecuteMsg::SetFeeBps { fee_bps: 0 },
+            ExecuteMsg::SetFeeBps {
+                fee_bps: crate::state::MIN_FEE_BPS,
+            },
         )
         .unwrap();
 
         let config = CONFIG.load(&deps.storage).unwrap();
-        assert_eq!(config.fee_bps, 0);
+        assert_eq!(config.fee_bps, crate::state::MIN_FEE_BPS);
     }
 
     #[test]
-    fn test_zero_fee_no_deduction() {
+    fn test_min_fee_deduction() {
         let mut deps = mock_dependencies();
         setup_with_mapping(deps.as_mut());
 
-        // Set fee to 0
         let info = mock_info(GOVERNANCE, &[]);
         execute(
             deps.as_mut(),
             mock_env(),
             info,
-            ExecuteMsg::SetFeeBps { fee_bps: 0 },
+            ExecuteMsg::SetFeeBps {
+                fee_bps: crate::state::MIN_FEE_BPS,
+            },
         )
         .unwrap();
 
-        // Wrap with zero fee
+        let gross = 1_000_000u128;
+        let fee = gross * crate::state::MIN_FEE_BPS as u128 / 10_000;
+        let expected_mint = gross - fee;
+
         let info = mock_info(TREASURY, &[]);
         let msg = ExecuteMsg::NotifyDeposit {
             depositor: USER.to_string(),
             denom: DENOM_LUNC.to_string(),
-            amount: Uint128::new(1_000_000),
+            amount: Uint128::new(gross),
         };
         let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
 
@@ -1041,13 +1142,32 @@ mod tests {
                 let parsed: Cw20ExecuteMsg = from_json(msg).unwrap();
                 match parsed {
                     Cw20ExecuteMsg::Mint { amount, .. } => {
-                        assert_eq!(amount, Uint128::new(1_000_000));
+                        assert_eq!(amount, Uint128::new(expected_mint));
                     }
                     _ => panic!("Expected Cw20ExecuteMsg::Mint"),
                 }
             }
             _ => panic!("Expected WasmMsg::Execute"),
         }
+    }
+
+    #[test]
+    fn test_instantiate_fee_too_low() {
+        let mut deps = mock_dependencies();
+        let msg = InstantiateMsg {
+            governance: GOVERNANCE.to_string(),
+            treasury: TREASURY.to_string(),
+            fee_bps: Some(0),
+        };
+        let info = mock_info("creator", &[]);
+        let err = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::FeeTooLow {
+                fee_bps: 0,
+                min_bps: crate::state::MIN_FEE_BPS,
+            }
+        );
     }
 
     // ============ B12-B15: RATE LIMITS ============
@@ -1191,20 +1311,10 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_with_mapping(deps.as_mut());
 
-        // Also add USTC mapping
-        let info = mock_info(GOVERNANCE, &[]);
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info.clone(),
-            ExecuteMsg::SetDenomMapping {
-                denom: DENOM_USTC.to_string(),
-                cw20_addr: CW20_USTC.to_string(),
-            },
-        )
-        .unwrap();
+        add_mapping(deps.as_mut(), DENOM_USTC, CW20_USTC);
 
         // Set rate limits for both denoms
+        let info = mock_info(GOVERNANCE, &[]);
         execute(
             deps.as_mut(),
             mock_env(),
@@ -1578,18 +1688,7 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_with_mapping(deps.as_mut());
 
-        // Add a second mapping
-        let info = mock_info(GOVERNANCE, &[]);
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info,
-            ExecuteMsg::SetDenomMapping {
-                denom: DENOM_USTC.to_string(),
-                cw20_addr: CW20_USTC.to_string(),
-            },
-        )
-        .unwrap();
+        add_mapping(deps.as_mut(), DENOM_USTC, CW20_USTC);
 
         let res = query(deps.as_ref(), mock_env(), QueryMsg::AllDenomMappings {}).unwrap();
         let response: AllDenomMappingsResponse = from_json(res).unwrap();
@@ -2203,36 +2302,13 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
-        let info = mock_info(GOVERNANCE, &[]);
-
-        // Map denom_A -> cw20_old
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info.clone(),
-            ExecuteMsg::SetDenomMapping {
-                denom: DENOM_LUNC.to_string(),
-                cw20_addr: "cw20_old".to_string(),
-            },
-        )
-        .unwrap();
+        add_mapping(deps.as_mut(), DENOM_LUNC, "cw20_old");
         assert!(CW20_TO_DENOM.may_load(&deps.storage, "cw20_old").unwrap().is_some());
 
-        // Remap denom_A -> cw20_new
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info,
-            ExecuteMsg::SetDenomMapping {
-                denom: DENOM_LUNC.to_string(),
-                cw20_addr: "cw20_new".to_string(),
-            },
-        )
-        .unwrap();
+        add_mapping(deps.as_mut(), DENOM_LUNC, "cw20_new");
 
         // Old reverse mapping removed
         assert!(CW20_TO_DENOM.may_load(&deps.storage, "cw20_old").unwrap().is_none());
-        // New mappings correct
         assert_eq!(
             DENOM_TO_CW20.load(&deps.storage, DENOM_LUNC).unwrap().as_str(),
             "cw20_new"
@@ -2248,40 +2324,15 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
-        let info = mock_info(GOVERNANCE, &[]);
-
-        // Map denom_A -> cw20_X
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info.clone(),
-            ExecuteMsg::SetDenomMapping {
-                denom: DENOM_LUNC.to_string(),
-                cw20_addr: CW20_LUNC.to_string(),
-            },
-        )
-        .unwrap();
-
-        // Map denom_B -> cw20_X (same CW20, different denom)
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info,
-            ExecuteMsg::SetDenomMapping {
-                denom: DENOM_USTC.to_string(),
-                cw20_addr: CW20_LUNC.to_string(),
-            },
-        )
-        .unwrap();
+        add_mapping(deps.as_mut(), DENOM_LUNC, CW20_LUNC);
+        add_mapping(deps.as_mut(), DENOM_USTC, CW20_LUNC);
 
         // Old forward mapping (denom_A) should be removed
         assert!(DENOM_TO_CW20.may_load(&deps.storage, DENOM_LUNC).unwrap().is_none());
-        // New forward mapping correct
         assert_eq!(
             DENOM_TO_CW20.load(&deps.storage, DENOM_USTC).unwrap().as_str(),
             CW20_LUNC
         );
-        // Reverse mapping points to new denom
         assert_eq!(
             CW20_TO_DENOM.load(&deps.storage, CW20_LUNC).unwrap(),
             DENOM_USTC
@@ -2293,21 +2344,8 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_with_mapping(deps.as_mut());
 
-        let info = mock_info(GOVERNANCE, &[]);
+        add_mapping(deps.as_mut(), DENOM_LUNC, CW20_LUNC);
 
-        // Remap same denom to same CW20
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info,
-            ExecuteMsg::SetDenomMapping {
-                denom: DENOM_LUNC.to_string(),
-                cw20_addr: CW20_LUNC.to_string(),
-            },
-        )
-        .unwrap();
-
-        // Both mappings still intact
         assert_eq!(
             DENOM_TO_CW20.load(&deps.storage, DENOM_LUNC).unwrap().as_str(),
             CW20_LUNC
@@ -2386,6 +2424,200 @@ mod tests {
                 denom: DENOM_LUNC.to_string(),
             }
         );
+    }
+
+    // ============ T-1: MIGRATION TESTS ============
+
+    #[test]
+    fn test_migrate_success() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let res = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+        assert_eq!(res.attributes[0].value, "migrate");
+
+        let ver = cw2::get_contract_version(&deps.storage).unwrap();
+        assert_eq!(ver.contract, crate::state::CONTRACT_NAME);
+        assert_eq!(ver.version, crate::state::CONTRACT_VERSION);
+    }
+
+    #[test]
+    fn test_migrate_wrong_contract_name() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        cw2::set_contract_version(&mut deps.storage, "wrong-contract", "0.1.0").unwrap();
+        let err = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap_err();
+        match err {
+            ContractError::Std(_) => {}
+            other => panic!("Expected ContractError::Std, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_migrate_preserves_state() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetFeeBps { fee_bps: 100 },
+        )
+        .unwrap();
+
+        migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.fee_bps, 100);
+        assert_eq!(config.governance.as_str(), GOVERNANCE);
+        assert_eq!(config.treasury.as_str(), TREASURY);
+
+        let mapping = DENOM_TO_CW20.load(&deps.storage, DENOM_LUNC).unwrap();
+        assert_eq!(mapping.as_str(), CW20_LUNC);
+    }
+
+    // ============ T-4: RATE LIMIT ZERO WINDOW ============
+
+    #[test]
+    fn test_rate_limit_zero_window_seconds() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::new(1_000_000),
+                    window_seconds: 0,
+                },
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(TREASURY, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(500_000),
+            },
+        )
+        .unwrap();
+
+        // With window_seconds=0, every call resets the window (elapsed >= 0 is always true),
+        // so a second deposit should also succeed regardless of prior usage.
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(500_000),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_rate_limit_zero_window_still_enforces_per_call_limit() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::new(1_000_000),
+                    window_seconds: 0,
+                },
+            },
+        )
+        .unwrap();
+
+        // A single call exceeding the limit should still fail
+        let info = mock_info(TREASURY, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(1_000_001),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::RateLimitExceeded {
+                denom: DENOM_LUNC.to_string(),
+            }
+        );
+    }
+
+    // ============ SEC-4: RATE LIMIT OVERFLOW ============
+
+    #[test]
+    fn test_rate_limit_overflow_returns_error() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::MAX,
+                    window_seconds: 3600,
+                },
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(TREASURY, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::MAX,
+            },
+        )
+        .unwrap();
+
+        // Second deposit should trigger checked_add overflow, not panic
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(1),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::RateLimitOverflow);
     }
 }
 
@@ -4260,5 +4492,238 @@ mod integration_tests {
             .unwrap()
             .amount;
         assert_eq!(treasury_balance, Uint128::zero());
+    }
+
+    // ============ T-2: DENOM MAPPING CHANGE WITH OUTSTANDING CW20 ============
+
+    #[test]
+    fn test_mapping_change_strands_old_cw20_holders() {
+        let mut env = setup_full_env();
+
+        // User wraps 1M LUNC -> gets CW20 LUNC-C
+        let wrap_amount = Uint128::new(1_000_000);
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(wrap_amount.u128(), DENOM_LUNC)],
+            )
+            .unwrap();
+
+        let cw20_balance = query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER);
+        assert!(cw20_balance > Uint128::zero());
+
+        // Deploy a new CW20 token for the replacement mapping
+        let cw20_code = env.app.store_code(cw20_contract());
+        let new_cw20_addr = env
+            .app
+            .instantiate_contract(
+                cw20_code,
+                Addr::unchecked(GOVERNANCE),
+                &cw20_mintable::msg::InstantiateMsg {
+                    name: "LUNC-C-V2".to_string(),
+                    symbol: "LUNC-C2".to_string(),
+                    decimals: 6,
+                    initial_balances: vec![],
+                    mint: Some(MinterResponse {
+                        minter: GOVERNANCE.to_string(),
+                        cap: None,
+                    }),
+                    marketing: None,
+                },
+                &[],
+                "cw20-lunc-c-v2",
+                None,
+            )
+            .unwrap();
+
+        // Add wrap-mapper as minter on new token
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                new_cw20_addr.clone(),
+                &cw20_mintable::msg::ExecuteMsg::AddMinter {
+                    minter: env.wrapper_addr.to_string(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // Governance changes the mapping: uluna -> new_cw20
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.wrapper_addr.clone(),
+                &crate::msg::ExecuteMsg::SetDenomMapping {
+                    denom: DENOM_LUNC.to_string(),
+                    cw20_addr: new_cw20_addr.to_string(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // Old CW20 holders cannot unwrap -- the reverse mapping for old CW20 is gone
+        let hook_msg = crate::msg::Cw20HookMsg::Unwrap { recipient: None };
+        let err = env
+            .app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: cw20_balance,
+                    msg: cosmwasm_std::to_json_binary(&hook_msg).unwrap(),
+                },
+                &[],
+            )
+            .unwrap_err();
+        assert!(err.root_cause().to_string().contains("No denom mapping"));
+    }
+
+    #[test]
+    fn test_mapping_change_new_token_works() {
+        let mut env = setup_full_env();
+
+        // Deploy a new CW20 token
+        let cw20_code = env.app.store_code(cw20_contract());
+        let new_cw20_addr = env
+            .app
+            .instantiate_contract(
+                cw20_code,
+                Addr::unchecked(GOVERNANCE),
+                &cw20_mintable::msg::InstantiateMsg {
+                    name: "LUNC-C-V2".to_string(),
+                    symbol: "LUNC-C2".to_string(),
+                    decimals: 6,
+                    initial_balances: vec![],
+                    mint: Some(MinterResponse {
+                        minter: GOVERNANCE.to_string(),
+                        cap: None,
+                    }),
+                    marketing: None,
+                },
+                &[],
+                "cw20-lunc-c-v2",
+                None,
+            )
+            .unwrap();
+
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                new_cw20_addr.clone(),
+                &cw20_mintable::msg::ExecuteMsg::AddMinter {
+                    minter: env.wrapper_addr.to_string(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // Change mapping
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.wrapper_addr.clone(),
+                &crate::msg::ExecuteMsg::SetDenomMapping {
+                    denom: DENOM_LUNC.to_string(),
+                    cw20_addr: new_cw20_addr.to_string(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // Wrapping via the new token works
+        let wrap_amount = Uint128::new(1_000_000);
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(wrap_amount.u128(), DENOM_LUNC)],
+            )
+            .unwrap();
+
+        let new_balance = query_cw20_balance(&env.app, &new_cw20_addr, USER);
+        assert!(new_balance > Uint128::zero());
+    }
+
+    // ============ T-3: MINTER ROLE REVOKED ============
+
+    #[test]
+    fn test_wrap_fails_after_minter_revoked() {
+        let mut env = setup_full_env();
+
+        // Revoke wrap-mapper's minter role on LUNC-C CW20
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.cw20_lunc_addr.clone(),
+                &cw20_mintable::msg::ExecuteMsg::RemoveMinter {
+                    minter: env.wrapper_addr.to_string(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // Wrapping should fail because wrap-mapper can no longer mint
+        let err = env
+            .app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1_000_000u128, DENOM_LUNC)],
+            )
+            .unwrap_err();
+
+        // The error comes from the CW20 contract rejecting the mint
+        assert!(err.root_cause().to_string().to_lowercase().contains("unauthorized")
+            || err.root_cause().to_string().to_lowercase().contains("minter"));
+    }
+
+    #[test]
+    fn test_set_denom_mapping_rejects_non_minter() {
+        let mut env = setup_full_env();
+
+        // Deploy a CW20 where wrap-mapper is NOT a minter
+        let cw20_code = env.app.store_code(cw20_contract());
+        let foreign_cw20 = env
+            .app
+            .instantiate_contract(
+                cw20_code,
+                Addr::unchecked(GOVERNANCE),
+                &cw20_mintable::msg::InstantiateMsg {
+                    name: "FOREIGN".to_string(),
+                    symbol: "FRN".to_string(),
+                    decimals: 6,
+                    initial_balances: vec![],
+                    mint: Some(MinterResponse {
+                        minter: GOVERNANCE.to_string(),
+                        cap: None,
+                    }),
+                    marketing: None,
+                },
+                &[],
+                "cw20-foreign",
+                None,
+            )
+            .unwrap();
+
+        // SetDenomMapping should fail because wrap-mapper is not a minter
+        let err = env
+            .app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.wrapper_addr.clone(),
+                &crate::msg::ExecuteMsg::SetDenomMapping {
+                    denom: "uforeign".to_string(),
+                    cw20_addr: foreign_cw20.to_string(),
+                },
+                &[],
+            )
+            .unwrap_err();
+
+        assert!(err.root_cause().to_string().contains("not a minter"));
     }
 }

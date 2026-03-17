@@ -55,5 +55,8 @@ pub enum ContractError {
 
     #[error("Wrapper already registered for denom {denom} (remove first)")]
     DenomWrapperAlreadySet { denom: String },
+
+    #[error("Wrapping operations are paused")]
+    WrappingPaused,
 }
 

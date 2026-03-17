@@ -86,6 +86,10 @@ pub enum ExecuteMsg {
         denom: String,
         amount: Uint128,
     },
+
+    /// Pauses or unpauses wrapping operations (WrapDeposit / InstantWithdraw).
+    /// Only callable by governance.
+    SetWrappingPaused { paused: bool },
 }
 
 /// Query messages
@@ -127,6 +131,7 @@ pub struct ConfigResponse {
     pub governance: Addr,
     pub timelock_duration: u64,
     pub swap_contract: Option<Addr>,
+    pub wrapping_paused: bool,
 }
 
 /// A single pending governance proposal entry

@@ -13,6 +13,8 @@ pub struct Config {
     pub timelock_duration: u64,
     /// Authorized swap contract address for deposit notifications (optional)
     pub swap_contract: Option<Addr>,
+    /// Whether wrapping operations (WrapDeposit / InstantWithdraw) are paused
+    pub wrapping_paused: bool,
 }
 
 /// Pending governance change proposal

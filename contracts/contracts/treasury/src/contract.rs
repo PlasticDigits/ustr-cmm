@@ -61,6 +61,7 @@ pub fn instantiate(
         governance: governance.clone(),
         timelock_duration: DEFAULT_TIMELOCK_DURATION,
         swap_contract: None,
+        wrapping_paused: false,
     };
 
     CONFIG.save(deps.storage, &config)?;
@@ -137,6 +138,9 @@ pub fn execute(
             denom,
             amount,
         } => execute_instant_withdraw(deps, env, info, recipient, denom, amount),
+        ExecuteMsg::SetWrappingPaused { paused } => {
+            execute_set_wrapping_paused(deps, info, paused)
+        }
     }
 }
 
@@ -630,10 +634,33 @@ fn execute_remove_denom_wrapper(
         .add_attribute("denom", denom))
 }
 
+fn execute_set_wrapping_paused(
+    deps: DepsMut,
+    info: MessageInfo,
+    paused: bool,
+) -> Result<Response, ContractError> {
+    let mut config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    config.wrapping_paused = paused;
+    CONFIG.save(deps.storage, &config)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_wrapping_paused")
+        .add_attribute("paused", paused.to_string()))
+}
+
 fn execute_wrap_deposit(
     deps: DepsMut,
     info: MessageInfo,
 ) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if config.wrapping_paused {
+        return Err(ContractError::WrappingPaused);
+    }
+
     if info.funds.is_empty() || info.funds.len() != 1 {
         return Err(ContractError::InvalidWrapFunds);
     }
@@ -686,6 +713,11 @@ fn execute_instant_withdraw(
     denom: String,
     amount: Uint128,
 ) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if config.wrapping_paused {
+        return Err(ContractError::WrappingPaused);
+    }
+
     if amount.is_zero() {
         return Err(ContractError::ZeroAmount);
     }
@@ -745,6 +777,7 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
         governance: config.governance,
         timelock_duration: config.timelock_duration,
         swap_contract: config.swap_contract,
+        wrapping_paused: config.wrapping_paused,
     })
 }
 
@@ -4728,6 +4761,164 @@ mod tests {
                 available: "1000000".to_string(),
             }
         );
+    }
+
+    // ============ WRAPPING PAUSE TESTS (GAP-1) ============
+
+    #[test]
+    fn test_set_wrapping_paused() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert!(!config.wrapping_paused);
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetWrappingPaused { paused: true },
+        )
+        .unwrap();
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert!(config.wrapping_paused);
+    }
+
+    #[test]
+    fn test_set_wrapping_paused_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetWrappingPaused { paused: true },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_wrapping_paused_blocks_wrap_deposit() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetWrappingPaused { paused: true },
+        )
+        .unwrap();
+
+        let info = mock_info(USER, &[coin(1_000_000, DENOM_LUNC)]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::WrapDeposit {},
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::WrappingPaused);
+    }
+
+    #[test]
+    fn test_wrapping_paused_blocks_instant_withdraw() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetWrappingPaused { paused: true },
+        )
+        .unwrap();
+
+        let info = mock_info(WRAPPER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdraw {
+                recipient: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::WrappingPaused);
+    }
+
+    #[test]
+    fn test_wrapping_unpause_restores() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetWrappingPaused { paused: true },
+        )
+        .unwrap();
+
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetWrappingPaused { paused: false },
+        )
+        .unwrap();
+
+        let info = mock_info(USER, &[coin(1_000_000, DENOM_LUNC)]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::WrapDeposit {},
+        )
+        .unwrap();
     }
 }
 

@@ -32,4 +32,13 @@ pub enum ContractError {
 
     #[error("Fee too high: {fee_bps} bps exceeds max {max_bps} bps")]
     FeeTooHigh { fee_bps: u16, max_bps: u16 },
+
+    #[error("Fee too low: {fee_bps} bps below min {min_bps} bps (must cover chain tax)")]
+    FeeTooLow { fee_bps: u16, min_bps: u16 },
+
+    #[error("Rate limit usage overflow")]
+    RateLimitOverflow,
+
+    #[error("Wrap-mapper is not a minter on CW20 contract {cw20_addr}")]
+    NotMinter { cw20_addr: String },
 }
