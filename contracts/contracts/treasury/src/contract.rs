@@ -862,6 +862,16 @@ fn query_denom_wrappers(deps: Deps) -> StdResult<DenomWrappersResponse> {
 
 // ============ TESTS ============
 
+// Coverage gaps that cannot be tested with mock_dependencies:
+//
+// - addr_validate failures: mock_dependencies accepts all bech32-shaped strings;
+//   real chain validation covers this path.
+// - Storage I/O errors (CONFIG.load, DENOM_WRAPPERS.save, etc.): infrastructure-level
+//   StdError paths; CosmWasm test tooling does not support mocking storage failures.
+// - to_json_binary failures on well-typed structs: does not fail in practice.
+// - query_balance failures in execute_instant_withdraw: querier is always available
+//   in mock_dependencies; real chain handles RPC errors at the node level.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4584,6 +4594,140 @@ mod tests {
         let res = query(deps.as_ref(), mock_env(), QueryMsg::DenomWrappers {}).unwrap();
         let response: DenomWrappersResponse = from_json(res).unwrap();
         assert_eq!(response.wrappers.len(), 2);
+    }
+
+    // ============ C: ADDITIONAL COVERAGE TESTS ============
+
+    #[test]
+    fn test_instant_withdraw_zero_amount() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(WRAPPER, &[]);
+        let msg = ExecuteMsg::InstantWithdraw {
+            recipient: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::zero(),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::ZeroAmount);
+    }
+
+    #[test]
+    fn test_remove_denom_wrapper_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(USER, &[]);
+        let msg = ExecuteMsg::RemoveDenomWrapper {
+            denom: DENOM_LUNC.to_string(),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+
+        // Wrapper still registered
+        assert!(DENOM_WRAPPERS.may_load(&deps.storage, DENOM_LUNC).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_instant_withdraw_exact_balance() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        deps.querier.update_balance(
+            mock_env().contract.address.clone(),
+            vec![coin(1_000_000, DENOM_LUNC)],
+        );
+
+        let info = mock_info(WRAPPER, &[]);
+        let msg = ExecuteMsg::InstantWithdraw {
+            recipient: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::new(1_000_000),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+        assert_eq!(res.messages.len(), 1);
+        match &res.messages[0].msg {
+            CosmosMsg::Bank(BankMsg::Send { to_address, amount }) => {
+                assert_eq!(to_address, USER);
+                assert_eq!(amount[0].amount, Uint128::new(1_000_000));
+            }
+            _ => panic!("Expected BankMsg::Send"),
+        }
+    }
+
+    #[test]
+    fn test_instant_withdraw_one_over_balance() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: WRAPPER.to_string(),
+            },
+        )
+        .unwrap();
+
+        deps.querier.update_balance(
+            mock_env().contract.address.clone(),
+            vec![coin(1_000_000, DENOM_LUNC)],
+        );
+
+        let info = mock_info(WRAPPER, &[]);
+        let msg = ExecuteMsg::InstantWithdraw {
+            recipient: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::new(1_000_001),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::InsufficientBalance {
+                requested: "1000001".to_string(),
+                available: "1000000".to_string(),
+            }
+        );
     }
 }
 

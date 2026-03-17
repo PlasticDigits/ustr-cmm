@@ -577,6 +577,19 @@ fn query_pending_governance(deps: Deps) -> StdResult<PendingGovernanceResponse> 
     })
 }
 
+// Coverage gaps that cannot be tested with mock_dependencies / cw-multi-test:
+//
+// - addr_validate failures: mock_dependencies accepts all bech32-shaped strings;
+//   real chain validation covers this path.
+// - Storage I/O errors (CONFIG.load, DENOM_TO_CW20.save, etc.): infrastructure-level
+//   StdError paths; CosmWasm test tooling does not support mocking storage failures.
+// - to_json_binary / from_json failures: well-typed struct serialization does not fail
+//   in practice; malformed CW20 hook messages are rejected by the CW20 contract before
+//   reaching wrap-mapper's Receive handler.
+// - Uint128 overflow in check_rate_limit (amount_used + amount): would require amounts
+//   near u128::MAX; multiply_ratio uses Uint256 internally and is safe; the addition
+//   would panic (not error), and is bounded by rate limit config in practice.
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1642,6 +1655,737 @@ mod tests {
         let response: RateLimitResponse = from_json(res).unwrap();
         assert!(response.config.is_some());
         assert_eq!(response.amount_used, Uint128::new(250_000));
+    }
+
+    // ============ A1: ZERO-COVERAGE FUNCTIONS ============
+
+    #[test]
+    fn test_remove_rate_limit_success() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::new(1_000_000),
+                    window_seconds: 3600,
+                },
+            },
+        )
+        .unwrap();
+
+        // Use some of the limit to create state
+        let treasury_info = mock_info(TREASURY, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            treasury_info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap();
+
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::RemoveRateLimit {
+                denom: DENOM_LUNC.to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(res.attributes[0].value, "remove_rate_limit");
+
+        assert!(RATE_LIMITS.may_load(&deps.storage, DENOM_LUNC).unwrap().is_none());
+        assert!(RATE_LIMIT_STATE.may_load(&deps.storage, DENOM_LUNC).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_remove_rate_limit_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::RemoveRateLimit {
+                denom: DENOM_LUNC.to_string(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_remove_rate_limit_nonexistent() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::RemoveRateLimit {
+                denom: "nonexistent".to_string(),
+            },
+        )
+        .unwrap();
+        assert_eq!(res.attributes[0].value, "remove_rate_limit");
+    }
+
+    #[test]
+    fn test_query_pending_governance_none() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::PendingGovernance {}).unwrap();
+        let response: PendingGovernanceResponse = from_json(res).unwrap();
+        assert!(response.new_governance.is_none());
+        assert!(response.execute_after.is_none());
+    }
+
+    #[test]
+    fn test_query_pending_governance_some() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let env = mock_env();
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            ExecuteMsg::ProposeGovernanceTransfer {
+                new_governance: "new_gov".to_string(),
+            },
+        )
+        .unwrap();
+
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::PendingGovernance {}).unwrap();
+        let response: PendingGovernanceResponse = from_json(res).unwrap();
+        assert_eq!(response.new_governance.unwrap().as_str(), "new_gov");
+        assert!(response.execute_after.is_some());
+    }
+
+    // ============ A2: MISSING ERROR-PATH TESTS ============
+
+    #[test]
+    fn test_notify_deposit_zero_amount() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::zero(),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::ZeroAmount);
+    }
+
+    #[test]
+    fn test_unwrap_zero_amount() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(CW20_LUNC, &[]);
+        let msg = make_cw20_receive(USER, 0, &Cw20HookMsg::Unwrap { recipient: None });
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::ZeroAmount);
+    }
+
+    #[test]
+    fn test_remove_denom_mapping_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(USER, &[]);
+        let msg = ExecuteMsg::RemoveDenomMapping {
+            denom: DENOM_LUNC.to_string(),
+        };
+        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_cancel_governance_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        // Propose first so there is a pending transfer
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::ProposeGovernanceTransfer {
+                new_governance: "new_gov".to_string(),
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::CancelGovernanceTransfer {},
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_cancel_governance_no_pending() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::CancelGovernanceTransfer {},
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::NoPendingGovernance);
+    }
+
+    #[test]
+    fn test_accept_governance_no_pending() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let mut env = mock_env();
+        env.block.time = env.block.time.plus_seconds(700_000);
+
+        let info = mock_info("anyone", &[]);
+        let err = execute(
+            deps.as_mut(),
+            env,
+            info,
+            ExecuteMsg::AcceptGovernanceTransfer {},
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::NoPendingGovernance);
+    }
+
+    #[test]
+    fn test_set_paused_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetPaused { paused: true },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_set_rate_limit_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::new(100),
+                    window_seconds: 60,
+                },
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    // ============ A3: BOUNDARY AND FUZZING TESTS ============
+
+    #[test]
+    fn test_fee_rounding_small_amounts() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(TREASURY, &[]);
+
+        // At 50 bps, fee = amount * 50 / 10000. Truncates to 0 for amount < 200.
+        for (amount, expected_fee) in [
+            (1u128, 0u128),
+            (99, 0),
+            (100, 0),
+            (199, 0),
+            (200, 1),
+            (201, 1),
+            (399, 1),
+            (400, 2),
+        ] {
+            let msg = ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(amount),
+            };
+            let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+            let fee_attr = res.attributes.iter().find(|a| a.key == "fee").unwrap();
+            assert_eq!(
+                fee_attr.value,
+                expected_fee.to_string(),
+                "amount={amount} expected fee={expected_fee}"
+            );
+            let mint_attr = res.attributes.iter().find(|a| a.key == "mint_amount").unwrap();
+            assert_eq!(
+                mint_attr.value,
+                (amount - expected_fee).to_string(),
+                "amount={amount} expected mint={}",
+                amount - expected_fee
+            );
+        }
+    }
+
+    #[test]
+    fn test_fee_at_max_bps() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        // Set fee to max (10%)
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetFeeBps { fee_bps: 1000 },
+        )
+        .unwrap();
+
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::new(1_000_000),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        let fee_attr = res.attributes.iter().find(|a| a.key == "fee").unwrap();
+        assert_eq!(fee_attr.value, "100000"); // 10% of 1M
+        let mint_attr = res.attributes.iter().find(|a| a.key == "mint_amount").unwrap();
+        assert_eq!(mint_attr.value, "900000"); // 90% of 1M
+    }
+
+    #[test]
+    fn test_fee_exact_boundary_bps() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+
+        // Exactly at MAX_FEE_BPS (1000) should succeed
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetFeeBps { fee_bps: 1000 },
+        )
+        .unwrap();
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.fee_bps, 1000);
+
+        // One over should fail
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetFeeBps { fee_bps: 1001 },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::FeeTooHigh {
+                fee_bps: 1001,
+                max_bps: 1000,
+            }
+        );
+    }
+
+    #[test]
+    fn test_rate_limit_exact_boundary() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::new(1000),
+                    window_seconds: 3600,
+                },
+            },
+        )
+        .unwrap();
+
+        // Exactly at max should succeed (check uses `>`, not `>=`)
+        let info = mock_info(TREASURY, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(1000),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_rate_limit_one_over() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::new(1000),
+                    window_seconds: 3600,
+                },
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(TREASURY, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(1001),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::RateLimitExceeded {
+                denom: DENOM_LUNC.to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_rate_limit_window_boundary_burst() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::new(1_000_000),
+                    window_seconds: 3600,
+                },
+            },
+        )
+        .unwrap();
+
+        let mut env = mock_env();
+        let info = mock_info(TREASURY, &[]);
+
+        // T=0: fill the entire window
+        execute(
+            deps.as_mut(),
+            env.clone(),
+            info.clone(),
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(1_000_000),
+            },
+        )
+        .unwrap();
+
+        // T+3600: window just expired, resets and allows full limit again
+        env.block.time = Timestamp::from_seconds(env.block.time.seconds() + 3600);
+        execute(
+            deps.as_mut(),
+            env,
+            info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(1_000_000),
+            },
+        )
+        .unwrap();
+        // 2M moved across a single window boundary -- demonstrates the tumbling window burst
+    }
+
+    #[test]
+    fn test_calculate_fee_with_zero_amount_deposit() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        // Zero amount triggers ZeroAmount error before fee calculation matters
+        let info = mock_info(TREASURY, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::zero(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::ZeroAmount);
+    }
+
+    #[test]
+    fn test_wrap_very_large_amount() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        // Near-max u128 amount -- multiply_ratio uses Uint256 internally so no overflow
+        let large_amount = Uint128::new(u128::MAX / 2);
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: large_amount,
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        let fee_attr = res.attributes.iter().find(|a| a.key == "fee").unwrap();
+        let mint_attr = res.attributes.iter().find(|a| a.key == "mint_amount").unwrap();
+        let fee: u128 = fee_attr.value.parse().unwrap();
+        let mint: u128 = mint_attr.value.parse().unwrap();
+        assert_eq!(fee + mint, large_amount.u128());
+    }
+
+    // ============ A4: MAPPING OVERWRITE CORRECTNESS ============
+
+    #[test]
+    fn test_set_denom_mapping_overwrite_cleans_stale_reverse() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+
+        // Map denom_A -> cw20_old
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomMapping {
+                denom: DENOM_LUNC.to_string(),
+                cw20_addr: "cw20_old".to_string(),
+            },
+        )
+        .unwrap();
+        assert!(CW20_TO_DENOM.may_load(&deps.storage, "cw20_old").unwrap().is_some());
+
+        // Remap denom_A -> cw20_new
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomMapping {
+                denom: DENOM_LUNC.to_string(),
+                cw20_addr: "cw20_new".to_string(),
+            },
+        )
+        .unwrap();
+
+        // Old reverse mapping removed
+        assert!(CW20_TO_DENOM.may_load(&deps.storage, "cw20_old").unwrap().is_none());
+        // New mappings correct
+        assert_eq!(
+            DENOM_TO_CW20.load(&deps.storage, DENOM_LUNC).unwrap().as_str(),
+            "cw20_new"
+        );
+        assert_eq!(
+            CW20_TO_DENOM.load(&deps.storage, "cw20_new").unwrap(),
+            DENOM_LUNC
+        );
+    }
+
+    #[test]
+    fn test_set_denom_mapping_overwrite_cleans_stale_forward() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+
+        // Map denom_A -> cw20_X
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomMapping {
+                denom: DENOM_LUNC.to_string(),
+                cw20_addr: CW20_LUNC.to_string(),
+            },
+        )
+        .unwrap();
+
+        // Map denom_B -> cw20_X (same CW20, different denom)
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomMapping {
+                denom: DENOM_USTC.to_string(),
+                cw20_addr: CW20_LUNC.to_string(),
+            },
+        )
+        .unwrap();
+
+        // Old forward mapping (denom_A) should be removed
+        assert!(DENOM_TO_CW20.may_load(&deps.storage, DENOM_LUNC).unwrap().is_none());
+        // New forward mapping correct
+        assert_eq!(
+            DENOM_TO_CW20.load(&deps.storage, DENOM_USTC).unwrap().as_str(),
+            CW20_LUNC
+        );
+        // Reverse mapping points to new denom
+        assert_eq!(
+            CW20_TO_DENOM.load(&deps.storage, CW20_LUNC).unwrap(),
+            DENOM_USTC
+        );
+    }
+
+    #[test]
+    fn test_set_denom_mapping_same_values_noop() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+
+        // Remap same denom to same CW20
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetDenomMapping {
+                denom: DENOM_LUNC.to_string(),
+                cw20_addr: CW20_LUNC.to_string(),
+            },
+        )
+        .unwrap();
+
+        // Both mappings still intact
+        assert_eq!(
+            DENOM_TO_CW20.load(&deps.storage, DENOM_LUNC).unwrap().as_str(),
+            CW20_LUNC
+        );
+        assert_eq!(
+            CW20_TO_DENOM.load(&deps.storage, CW20_LUNC).unwrap(),
+            DENOM_LUNC
+        );
+    }
+
+    // ============ A5: MULTI-USER UNIT TEST ============
+
+    #[test]
+    fn test_rate_limit_shared_across_users() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetRateLimit {
+                denom: DENOM_LUNC.to_string(),
+                config: RateLimitConfig {
+                    max_amount_per_window: Uint128::new(1000),
+                    window_seconds: 3600,
+                },
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(TREASURY, &[]);
+
+        // User 1 deposits 600
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::NotifyDeposit {
+                depositor: "user_a".to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(600),
+            },
+        )
+        .unwrap();
+
+        // User 2 deposits 400 -- exactly at limit, should succeed
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::NotifyDeposit {
+                depositor: "user_b".to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(400),
+            },
+        )
+        .unwrap();
+
+        // User 3 deposits 1 -- over limit, should fail
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: "user_c".to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(1),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::RateLimitExceeded {
+                denom: DENOM_LUNC.to_string(),
+            }
+        );
     }
 }
 
@@ -3111,5 +3855,410 @@ mod integration_tests {
             .unwrap()
             .amount;
         assert_eq!(treasury_lunc, preexisting_lunc);
+    }
+
+    // ============ B: ADDITIONAL INTEGRATION TESTS ============
+
+    #[test]
+    fn test_unwrap_custom_recipient_e2e() {
+        let mut env = setup_full_env();
+
+        // Wrap 1M LUNC -> 995_000 CW20
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1_000_000u128, DENOM_LUNC)],
+            )
+            .unwrap();
+
+        let user2_native_before = env.app.wrap().query_balance(USER2, DENOM_LUNC).unwrap().amount;
+
+        // Unwrap to USER2
+        let hook_msg = crate::msg::Cw20HookMsg::Unwrap {
+            recipient: Some(USER2.to_string()),
+        };
+        let cw20_balance = query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER);
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: cw20_balance,
+                    msg: cosmwasm_std::to_json_binary(&hook_msg).unwrap(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // USER has no CW20 left
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER),
+            Uint128::zero(),
+        );
+
+        // USER2 received the native tokens (995_000 - 0.5% unwrap fee = 990_025)
+        let user2_native_after = env.app.wrap().query_balance(USER2, DENOM_LUNC).unwrap().amount;
+        assert_eq!(user2_native_after - user2_native_before, Uint128::new(990_025));
+    }
+
+    #[test]
+    fn test_fee_change_mid_session() {
+        let mut env = setup_full_env();
+
+        // Wrap 1M at 50 bps -> 995_000 CW20 (fee = 5_000)
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1_000_000u128, DENOM_LUNC)],
+            )
+            .unwrap();
+
+        let cw20_after_wrap = query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER);
+        assert_eq!(cw20_after_wrap, Uint128::new(995_000));
+
+        // Governance changes fee to 100 bps (1%)
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.wrapper_addr.clone(),
+                &crate::msg::ExecuteMsg::SetFeeBps { fee_bps: 100 },
+                &[],
+            )
+            .unwrap();
+
+        // Unwrap all at new fee: 995_000 * 100/10000 = 9_950 fee, withdraw = 985_050
+        let hook_msg = crate::msg::Cw20HookMsg::Unwrap { recipient: None };
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: cw20_after_wrap,
+                    msg: cosmwasm_std::to_json_binary(&hook_msg).unwrap(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // User started with 10M, deposited 1M, got back 985_050
+        let user_native = env.app.wrap().query_balance(USER, DENOM_LUNC).unwrap().amount;
+        assert_eq!(
+            user_native,
+            Uint128::new(10_000_000 - 1_000_000 + 985_050),
+        );
+
+        // Treasury retains wrap fee (5_000) + unwrap fee (9_950) = 14_950
+        let treasury_balance = env
+            .app
+            .wrap()
+            .query_balance(&env.treasury_addr, DENOM_LUNC)
+            .unwrap()
+            .amount;
+        assert_eq!(treasury_balance, Uint128::new(14_950));
+    }
+
+    #[test]
+    fn test_remove_wrapper_blocks_unwrap_reregister_restores() {
+        let mut env = setup_full_env();
+
+        // Wrap 1M LUNC
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1_000_000u128, DENOM_LUNC)],
+            )
+            .unwrap();
+
+        let cw20_balance = query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER);
+        assert_eq!(cw20_balance, Uint128::new(995_000));
+
+        // Remove the treasury's denom wrapper
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::RemoveDenomWrapper {
+                    denom: DENOM_LUNC.to_string(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // Unwrap should fail
+        let hook_msg = crate::msg::Cw20HookMsg::Unwrap { recipient: None };
+        let err = env
+            .app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: cw20_balance,
+                    msg: cosmwasm_std::to_json_binary(&hook_msg).unwrap(),
+                },
+                &[],
+            )
+            .unwrap_err();
+        assert!(err.root_cause().to_string().contains("registered wrapper"));
+
+        // CW20 balance unchanged (tx reverted)
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER),
+            cw20_balance,
+        );
+
+        // Re-register the wrapper
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::SetDenomWrapper {
+                    denom: DENOM_LUNC.to_string(),
+                    wrapper: env.wrapper_addr.to_string(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // Unwrap should succeed now
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: cw20_balance,
+                    msg: cosmwasm_std::to_json_binary(&hook_msg).unwrap(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER),
+            Uint128::zero(),
+        );
+    }
+
+    #[test]
+    fn test_rate_limit_window_boundary_burst_e2e() {
+        let mut env = setup_full_env();
+
+        // Set tight rate limit: 1M per 3600s
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.wrapper_addr.clone(),
+                &crate::msg::ExecuteMsg::SetRateLimit {
+                    denom: DENOM_LUNC.to_string(),
+                    config: crate::state::RateLimitConfig {
+                        max_amount_per_window: Uint128::new(1_000_000),
+                        window_seconds: 3600,
+                    },
+                },
+                &[],
+            )
+            .unwrap();
+
+        // Fill the entire window
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1_000_000u128, DENOM_LUNC)],
+            )
+            .unwrap();
+
+        // Can't wrap more in same window
+        let err = env
+            .app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1u128, DENOM_LUNC)],
+            )
+            .unwrap_err();
+        assert!(err.root_cause().to_string().contains("Rate limit exceeded"));
+
+        // Advance past window
+        env.app.update_block(|b| {
+            b.height += 600;
+            b.time = b.time.plus_seconds(3600);
+        });
+
+        // Full limit available again
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1_000_000u128, DENOM_LUNC)],
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn test_multi_user_interleaved_wrap_unwrap() {
+        let mut env = setup_full_env();
+
+        // USER wraps 2M, USER2 wraps 1M
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(2_000_000u128, DENOM_LUNC)],
+            )
+            .unwrap();
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER2),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1_000_000u128, DENOM_LUNC)],
+            )
+            .unwrap();
+
+        let user_cw20 = query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER);
+        let user2_cw20 = query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER2);
+        assert_eq!(user_cw20, Uint128::new(1_990_000));
+        assert_eq!(user2_cw20, Uint128::new(995_000));
+
+        let hook_msg = crate::msg::Cw20HookMsg::Unwrap { recipient: None };
+
+        // USER unwraps partial (500k CW20)
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: Uint128::new(500_000),
+                    msg: cosmwasm_std::to_json_binary(&hook_msg).unwrap(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // USER2 unwraps all
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER2),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: user2_cw20,
+                    msg: cosmwasm_std::to_json_binary(&hook_msg).unwrap(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        // CW20 supply = USER's remaining balance
+        let remaining_user_cw20 = query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER);
+        assert_eq!(remaining_user_cw20, Uint128::new(1_490_000));
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER2),
+            Uint128::zero(),
+        );
+
+        let supply = query_cw20_supply(&env.app, &env.cw20_lunc_addr);
+        assert_eq!(supply, remaining_user_cw20);
+
+        // Treasury balance > CW20 supply (fee profit)
+        let treasury_balance = env
+            .app
+            .wrap()
+            .query_balance(&env.treasury_addr, DENOM_LUNC)
+            .unwrap()
+            .amount;
+        assert!(treasury_balance > supply);
+    }
+
+    #[test]
+    fn test_wrap_one_unit() {
+        let mut env = setup_full_env();
+
+        // Wrap exactly 1 unit -- fee should be 0 (1 * 50 / 10000 = 0)
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1u128, DENOM_LUNC)],
+            )
+            .unwrap();
+
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER),
+            Uint128::new(1),
+        );
+
+        let treasury_balance = env
+            .app
+            .wrap()
+            .query_balance(&env.treasury_addr, DENOM_LUNC)
+            .unwrap()
+            .amount;
+        assert_eq!(treasury_balance, Uint128::new(1));
+    }
+
+    #[test]
+    fn test_unwrap_one_unit() {
+        let mut env = setup_full_env();
+
+        // Wrap 1 unit to get 1 CW20
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1u128, DENOM_LUNC)],
+            )
+            .unwrap();
+
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER),
+            Uint128::new(1),
+        );
+
+        // Unwrap 1 CW20 -- fee = 0 (1 * 50 / 10000 = 0), withdraw = 1
+        let hook_msg = crate::msg::Cw20HookMsg::Unwrap { recipient: None };
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: Uint128::new(1),
+                    msg: cosmwasm_std::to_json_binary(&hook_msg).unwrap(),
+                },
+                &[],
+            )
+            .unwrap();
+
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER),
+            Uint128::zero(),
+        );
+
+        // Treasury should be empty (1 deposited, 1 withdrawn, 0 fee)
+        let treasury_balance = env
+            .app
+            .wrap()
+            .query_balance(&env.treasury_addr, DENOM_LUNC)
+            .unwrap()
+            .amount;
+        assert_eq!(treasury_balance, Uint128::zero());
     }
 }
