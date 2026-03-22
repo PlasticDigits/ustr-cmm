@@ -27,10 +27,22 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
     return displayBalance * priceUsd;
   };
 
-  // Filter out assets with USD value less than $1, then sort by USD value descending
+  // Prefer hiding sub-$1 dust when we have USD prices; if price is unavailable (0), still show non-zero balances
+  const shouldShowAsset = (asset: TreasuryAsset): boolean => {
+    if (asset.balance <= 0n) return false;
+    const px = prices[asset.displayName] ?? 0;
+    if (px <= 0) return true;
+    return getUsdValue(asset) >= 1;
+  };
+
   const assetEntries = Object.entries(assets)
-    .filter(([, asset]) => getUsdValue(asset) >= 1)
-    .sort(([, a], [, b]) => getUsdValue(b) - getUsdValue(a));
+    .filter(([, asset]) => shouldShowAsset(asset))
+    .sort(([, a], [, b]) => {
+      const vb = getUsdValue(b);
+      const va = getUsdValue(a);
+      if (vb !== va) return vb - va;
+      return Number(b.balance) / 10 ** b.decimals - Number(a.balance) / 10 ** a.decimals;
+    });
   
   // Helper function to format USD values
   const formatUsd = (value: number): string => {

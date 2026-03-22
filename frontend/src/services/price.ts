@@ -43,38 +43,58 @@ class PriceService {
   }
 
   /**
-   * Fetch LUNC and USTC prices from Binance
- * 
- * @returns Object containing LUNC and USTC prices in USD
- */
+   * Fetch LUNC and USTC USD prices.
+   * Prefers CryptoCompare (CORS-safe); Binance often fails in browsers (CORS, 451).
+   */
   async fetchBasePrices(): Promise<{ lunc: number; ustc: number }> {
+    let lunc = 0;
+    let ustc = 0;
+
     try {
-      // URL encode the symbols array for Binance API
-      const symbols = encodeURIComponent('["LUNCUSDT","USTCUSDT"]');
-      const response = await fetch(
-        `${PRICE_API.binance}?symbols=${symbols}`
-      );
-      
-      if (!response.ok) {
-        throw new Error(`Binance API error: ${response.statusText}`);
+      const response = await fetch(PRICE_API.cryptocompare);
+      if (response.ok) {
+        const data = (await response.json()) as {
+          LUNC?: { USD?: number };
+          USTC?: { USD?: number };
+        };
+        lunc = data.LUNC?.USD ?? 0;
+        ustc = data.USTC?.USD ?? 0;
       }
-
-      const data = await response.json();
-      
-      // Binance returns array of price objects
-      const prices = data.map((item: { symbol: string; price: string }) => ({
-        symbol: item.symbol,
-        price: parseFloat(item.price),
-      }));
-
-      const luncPrice = prices.find((p: { symbol: string; price: number }) => p.symbol === 'LUNCUSDT')?.price ?? 0;
-      const ustcPrice = prices.find((p: { symbol: string; price: number }) => p.symbol === 'USTCUSDT')?.price ?? 0;
-
-      return { lunc: luncPrice, ustc: ustcPrice };
     } catch (error) {
-      console.error('Failed to fetch base prices from Binance:', error);
-      return { lunc: 0, ustc: 0 };
+      console.warn('CryptoCompare base prices failed:', error);
     }
+
+    if (lunc > 0 && ustc > 0) {
+      return { lunc, ustc };
+    }
+
+    try {
+      const symbols = encodeURIComponent('["LUNCUSDT","USTCUSDT"]');
+      const response = await fetch(`${PRICE_API.binance}?symbols=${symbols}`);
+
+      if (response.ok) {
+        const data = await response.json();
+        const rows = data.map((item: { symbol: string; price: string }) => ({
+          symbol: item.symbol,
+          price: parseFloat(item.price),
+        }));
+        const fromBn = {
+          lunc: rows.find((p: { symbol: string; price: number }) => p.symbol === 'LUNCUSDT')?.price ?? 0,
+          ustc: rows.find((p: { symbol: string; price: number }) => p.symbol === 'USTCUSDT')?.price ?? 0,
+        };
+        lunc = lunc > 0 ? lunc : fromBn.lunc;
+        ustc = ustc > 0 ? ustc : fromBn.ustc;
+      }
+    } catch (error) {
+      console.warn('Binance base prices failed:', error);
+    }
+
+    if (lunc > 0 || ustc > 0) {
+      return { lunc, ustc };
+    }
+
+    console.error('Failed to fetch LUNC/USTC base prices from CryptoCompare and Binance');
+    return { lunc: 0, ustc: 0 };
   }
 
   /**
