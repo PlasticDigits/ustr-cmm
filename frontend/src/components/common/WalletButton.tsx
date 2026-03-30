@@ -206,7 +206,18 @@ export function WalletButton() {
               <WalletOption
                 name="Keplr"
                 icon={<KeplrIcon />}
-                description={isKeplrAvailable ? "Keplr, Trust Wallet & compatible" : "Not installed"}
+                description={isKeplrAvailable ? "Cosmos ecosystem" : "Not installed"}
+                available={isKeplrAvailable}
+                loading={connectingWallet === WalletName.KEPLR}
+                onClick={() => handleConnect(WalletName.KEPLR, WalletType.EXTENSION)}
+                disabled={connecting}
+              />
+              
+              {/* Trust Wallet (uses Keplr-compatible provider) */}
+              <WalletOption
+                name="Trust Wallet"
+                icon={<TrustWalletIcon />}
+                description={isKeplrAvailable ? "Enable Terra Classic in Trust Wallet first" : "Open this page in Trust Wallet browser"}
                 available={isKeplrAvailable}
                 loading={connectingWallet === WalletName.KEPLR}
                 onClick={() => handleConnect(WalletName.KEPLR, WalletType.EXTENSION)}
@@ -348,6 +359,16 @@ function KeplrIcon() {
     <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
       <svg className="w-6 h-6 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+      </svg>
+    </div>
+  );
+}
+
+function TrustWalletIcon() {
+  return (
+    <div className="w-10 h-10 rounded-xl bg-blue-600/20 flex items-center justify-center">
+      <svg className="w-6 h-6 text-blue-400" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 2L4 6.5v5.5c0 5.25 3.4 10.15 8 11.5 4.6-1.35 8-6.25 8-11.5V6.5L12 2zm0 2.18l6 3.38v4.44c0 4.34-2.72 8.37-6 9.57-3.28-1.2-6-5.23-6-9.57V7.56l6-3.38z"/>
       </svg>
     </div>
   );
