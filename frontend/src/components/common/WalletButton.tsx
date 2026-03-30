@@ -206,7 +206,7 @@ export function WalletButton() {
               <WalletOption
                 name="Keplr"
                 icon={<KeplrIcon />}
-                description={isKeplrAvailable ? "Cosmos ecosystem" : "Not installed"}
+                description={isKeplrAvailable ? "Keplr, Trust Wallet & compatible" : "Not installed"}
                 available={isKeplrAvailable}
                 loading={connectingWallet === WalletName.KEPLR}
                 onClick={() => handleConnect(WalletName.KEPLR, WalletType.EXTENSION)}
