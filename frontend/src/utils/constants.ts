@@ -116,7 +116,7 @@ export const DEX_ROUTERS = {
   },
 } as const;
 
-// Price API configuration (browser-safe sources first — Binance often blocks CORS / returns 451)
+// Price API: prefer Binance spot for LUNC/USTC; CryptoCompare fills gaps (Binance can fail in-browser via CORS/451).
 export const PRICE_API = {
   cryptocompare:
     'https://min-api.cryptocompare.com/data/pricemulti?fsyms=LUNC,USTC&tsyms=USD',

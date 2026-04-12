@@ -61,10 +61,10 @@
       "type": "cw20",
       "decimals": 6,
       "pool": {
-        "address": "terra1r6fvrss6na4wv3w6d0v3akpfrykuvycd65nfm4q0g02xccqcnr2shl5fmc",
+        "address": "terra1ts0r4whpr48cwsnd7elgpuqqaqu5phy0ywx5x09f5zrnj9wda54sreeumg",
         "dex": "terraport",
-        "name": "Terraport SpaceUSD/USTC",
-        "quoteAsset": "ustc"
+        "name": "Terraport v2 SpaceUSD/LUNC (Vyntrex)",
+        "quoteAsset": "lunc"
       },
       "gradient": "from-orange-500 to-slate-700",
       "iconColor": "text-orange-400"
