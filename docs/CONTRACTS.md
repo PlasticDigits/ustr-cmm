@@ -81,13 +81,14 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - `WrapDeposit {}` - Accept native funds for wrapping; notify registered wrapper
 - `InstantWithdraw { recipient, denom, amount }` - Native pull by registered wrapper (gated by `wrapping_paused`)
 - `SetWrappingPaused { paused }` - Pause/unpause wrap + native InstantWithdraw only
-- `SetCw20Spender { token, spender }` / `RemoveCw20Spender { token }` - Register CW20 InstantWithdraw spender (governance; no timelock; overwrite allowed)
+- `SetCw20Spender { token, spender, limit_24h? }` / `RemoveCw20Spender { token }` - Register CW20 InstantWithdraw spender (governance; no timelock; overwrite allowed). Optional `limit_24h` sets the pair's 24h pull quota in the same tx; remove also clears that pair's limit/usage.
+- `SetCw20SpenderLimit { token, spender, limit_24h }` / `RemoveCw20SpenderLimit { token, spender }` - Governance-configurable tumbling 24h pull quota per `(token, spender)`. Remove is fail-closed (pulls denied until reset).
 - `SetCw20InstantWithdrawPaused { paused }` - Pause CW20 InstantWithdraw only (independent of wrapping)
-- `InstantWithdrawCw20 { recipient, token, amount }` - CW20 `Transfer` by registered spender (not gated by `wrapping_paused`)
+- `InstantWithdrawCw20 { recipient, token, amount }` - CW20 `Transfer` by registered spender (not gated by `wrapping_paused`; enforces 24h pull limit)
 
 **Note**: The `SwapDeposit` message exists on the deployed Treasury contract but is not used in the current swap architecture. Users should call `Swap {}` on the Swap contract directly, which forwards USTC to Treasury and mints USTR with optional referral bonuses.
 
-**CW20 InstantWithdraw (ust1-window / vFDUSD)**: See [skills/treasury-cw20-instant-withdraw/](../skills/treasury-cw20-instant-withdraw/SKILL.md) and issue [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6). Companion consumer: [ust1-window#20](https://gitlab.com/PlasticDigits/ust1-window/-/work_items/20). Mainnet post-migrate ops step: `SetCw20Spender { token: TERRA_VFDUSD, spender: WINDOW_ADDR }` (also needed for [ust1-window#19](https://gitlab.com/PlasticDigits/ust1-window/-/issues/19) Phase 5).
+**CW20 InstantWithdraw (ust1-window / vFDUSD)**: See [skills/treasury-cw20-instant-withdraw/](../skills/treasury-cw20-instant-withdraw/SKILL.md) and issues [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6) / [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7). Companion consumer: [ust1-window#20](https://gitlab.com/PlasticDigits/ust1-window/-/work_items/20). Mainnet post-migrate ops: register spender **with** `limit_24h` (or `SetCw20SpenderLimit`) before enabling window redeem — fail-closed if unset. Also needed for [ust1-window#19](https://gitlab.com/PlasticDigits/ust1-window/-/issues/19) Phase 5.
 
 **Query Messages**:
 - `Config {}` - Returns governance, timelock, `wrapping_paused`, and `cw20_instant_withdraw_paused`
@@ -98,6 +99,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - `Cw20Whitelist {}` - Returns list of whitelisted CW20 contract addresses
 - `DenomWrappers {}` - Returns native denom→wrapper mappings
 - `Cw20Spenders {}` - Returns CW20 token→spender mappings for InstantWithdrawCw20
+- `Cw20SpenderLimit { token, spender }` - Returns 24h pull limit config, usage, remaining, and window reset timing
 
 **Key Development Decisions**:
 
@@ -119,7 +121,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 9. **Two InstantWithdraw paths**: Native wrap uses `InstantWithdraw { denom }` + `DENOM_WRAPPERS` and is gated by `wrapping_paused`. CW20 inventory for swap windows uses parallel `InstantWithdrawCw20` + `CW20_SPENDERS` and is gated only by `cw20_instant_withdraw_paused`. Pausing wraps must not halt vFDUSD redeem.
 
-10. **No on-chain CW20 pull cap (v1)**: A registered spender can drain the full treasury balance of that token (same model as native InstantWithdraw). Product caps live in the window contract. Register only audited spenders.
+10. **24h CW20 pull limit per (spender, token)**: `InstantWithdrawCw20` enforces a governance-set tumbling 24h (`86400s`) quota keyed by `(token, spender)`. Unset / removed limit ⇒ fail-closed (`Cw20PullLimitNotSet`). Exceed ⇒ `Cw20PullLimitExceeded` with no Transfer. Native InstantWithdraw and ProposeWithdraw are unaffected. Window-side inventory caps remain a product control; treasury limit is the hard ceiling. See [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7) and [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md).
 
 11. **Whitelist vs spender registry**: `CW20_WHITELIST` is for CR / `AllBalances` tracking only. InstantWithdrawCw20 does **not** require the token to be whitelisted.
 

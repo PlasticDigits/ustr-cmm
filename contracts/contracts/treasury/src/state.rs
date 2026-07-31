@@ -1,8 +1,11 @@
 //! State definitions for the Treasury contract
 
 use cosmwasm_schema::cw_serde;
-use cosmwasm_std::{Addr, Timestamp};
+use cosmwasm_std::{Addr, Timestamp, Uint128};
 use cw_storage_plus::{Item, Map};
+
+/// Fixed tumbling window for CW20 InstantWithdraw pull limits (24 hours).
+pub const CW20_PULL_LIMIT_WINDOW_SECONDS: u64 = 86_400;
 
 /// Contract configuration
 #[cw_serde]
@@ -80,10 +83,41 @@ pub const DENOM_WRAPPERS: Map<&str, Addr> = Map::new("denom_wrappers");
 /// - Only governance may set/remove entries (`SetCw20Spender` / `RemoveCw20Spender`).
 /// - At most one spender per token; `SetCw20Spender` overwrites.
 /// - Governance is **not** an implicit spender — registration is required.
-/// - A registered spender may drain the full treasury balance of that token
-///   (no on-chain pull cap in v1; window-side limits are the product control).
+/// - Pulls also require a per-(spender, token) 24h limit (see `CW20_PULL_LIMITS`);
+///   unset / removed limit ⇒ fail-closed (deny InstantWithdrawCw20).
 /// - Whitelist membership is **not** required for InstantWithdrawCw20.
 pub const CW20_SPENDERS: Map<&str, Addr> = Map::new("cw20_spenders");
+
+/// Governance-configured max cumulative InstantWithdrawCw20 amount per
+/// tumbling 24h window, keyed by `(token, spender)`.
+///
+/// Namespace `"cw20_pull_limits"` is distinct from `cw20_spenders`,
+/// `cw20_whitelist`, and wrap-mapper `rate_limits`.
+///
+/// # Invariants
+/// - Absent entry ⇒ InstantWithdrawCw20 denied for that pair (fail-closed).
+/// - `window_seconds` is always `CW20_PULL_LIMIT_WINDOW_SECONDS` (86400).
+/// - Does not gate native InstantWithdraw or ProposeWithdraw / ExecuteWithdraw.
+#[cw_serde]
+pub struct Cw20PullLimitConfig {
+    pub max_amount_per_window: Uint128,
+    pub window_seconds: u64,
+}
+
+/// Tumbling-window usage for a `(token, spender)` pull-limit pair.
+#[cw_serde]
+pub struct Cw20PullLimitState {
+    pub current_window_start: Timestamp,
+    pub amount_used: Uint128,
+}
+
+/// Key: `(token_addr, spender_addr)`. Value: limit config.
+pub const CW20_PULL_LIMITS: Map<(&str, &str), Cw20PullLimitConfig> =
+    Map::new("cw20_pull_limits");
+
+/// Key: `(token_addr, spender_addr)`. Value: current window usage.
+pub const CW20_PULL_LIMIT_STATE: Map<(&str, &str), Cw20PullLimitState> =
+    Map::new("cw20_pull_limit_state");
 
 /// Independent pause for the CW20 InstantWithdraw pull path.
 /// Distinct from `Config.wrapping_paused` so pausing wraps does not halt

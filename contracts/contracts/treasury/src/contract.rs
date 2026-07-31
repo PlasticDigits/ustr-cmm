@@ -26,14 +26,16 @@ use cw20::Cw20ExecuteMsg;
 use crate::error::ContractError;
 use crate::msg::{
     AllBalancesResponse, AssetBalance, BalanceResponse, ConfigResponse, Cw20SpenderEntry,
-    Cw20SpendersResponse, Cw20WhitelistResponse, DenomWrapperEntry, DenomWrappersResponse,
-    ExecuteMsg, InstantiateMsg, MigrateMsg, PendingGovernanceEntry, PendingGovernanceResponse,
-    PendingWithdrawalEntry, PendingWithdrawalsResponse, QueryMsg, WrapperExecuteMsg,
+    Cw20SpenderLimitResponse, Cw20SpendersResponse, Cw20WhitelistResponse, DenomWrapperEntry,
+    DenomWrappersResponse, ExecuteMsg, InstantiateMsg, MigrateMsg, PendingGovernanceEntry,
+    PendingGovernanceResponse, PendingWithdrawalEntry, PendingWithdrawalsResponse, QueryMsg,
+    WrapperExecuteMsg,
 };
 use crate::state::{
-    Config, PendingGovernance, PendingWithdrawal, CONFIG, CONTRACT_NAME, CONTRACT_VERSION,
-    CW20_INSTANT_WITHDRAW_PAUSED, CW20_SPENDERS, CW20_WHITELIST, DEFAULT_TIMELOCK_DURATION,
-    DENOM_WRAPPERS, PENDING_GOVERNANCE, PENDING_WITHDRAWALS,
+    Config, Cw20PullLimitConfig, Cw20PullLimitState, PendingGovernance, PendingWithdrawal, CONFIG,
+    CONTRACT_NAME, CONTRACT_VERSION, CW20_INSTANT_WITHDRAW_PAUSED, CW20_PULL_LIMITS,
+    CW20_PULL_LIMIT_STATE, CW20_PULL_LIMIT_WINDOW_SECONDS, CW20_SPENDERS, CW20_WHITELIST,
+    DEFAULT_TIMELOCK_DURATION, DENOM_WRAPPERS, PENDING_GOVERNANCE, PENDING_WITHDRAWALS,
 };
 use common::AssetInfo;
 use cw20::Cw20ReceiveMsg;
@@ -141,11 +143,21 @@ pub fn execute(
         ExecuteMsg::SetWrappingPaused { paused } => {
             execute_set_wrapping_paused(deps, info, paused)
         }
-        ExecuteMsg::SetCw20Spender { token, spender } => {
-            execute_set_cw20_spender(deps, info, token, spender)
-        }
+        ExecuteMsg::SetCw20Spender {
+            token,
+            spender,
+            limit_24h,
+        } => execute_set_cw20_spender(deps, info, token, spender, limit_24h),
         ExecuteMsg::RemoveCw20Spender { token } => {
             execute_remove_cw20_spender(deps, info, token)
+        }
+        ExecuteMsg::SetCw20SpenderLimit {
+            token,
+            spender,
+            limit_24h,
+        } => execute_set_cw20_spender_limit(deps, info, token, spender, limit_24h),
+        ExecuteMsg::RemoveCw20SpenderLimit { token, spender } => {
+            execute_remove_cw20_spender_limit(deps, info, token, spender)
         }
         ExecuteMsg::SetCw20InstantWithdrawPaused { paused } => {
             execute_set_cw20_instant_withdraw_paused(deps, info, paused)
@@ -770,11 +782,92 @@ fn execute_instant_withdraw(
         .add_attribute("amount", amount))
 }
 
+fn clear_cw20_pull_limit(
+    storage: &mut dyn cosmwasm_std::Storage,
+    token: &str,
+    spender: &str,
+) -> StdResult<()> {
+    CW20_PULL_LIMITS.remove(storage, (token, spender));
+    CW20_PULL_LIMIT_STATE.remove(storage, (token, spender));
+    Ok(())
+}
+
+fn save_cw20_pull_limit(
+    storage: &mut dyn cosmwasm_std::Storage,
+    token: &str,
+    spender: &str,
+    limit_24h: Uint128,
+) -> StdResult<()> {
+    let config = Cw20PullLimitConfig {
+        max_amount_per_window: limit_24h,
+        window_seconds: CW20_PULL_LIMIT_WINDOW_SECONDS,
+    };
+    CW20_PULL_LIMITS.save(storage, (token, spender), &config)
+}
+
+fn check_cw20_pull_limit(
+    storage: &mut dyn cosmwasm_std::Storage,
+    env: &Env,
+    token: &Addr,
+    spender: &Addr,
+    amount: Uint128,
+) -> Result<(), ContractError> {
+    let token_str = token.as_str();
+    let spender_str = spender.as_str();
+
+    let limit_config = CW20_PULL_LIMITS
+        .may_load(storage, (token_str, spender_str))?
+        .ok_or_else(|| ContractError::Cw20PullLimitNotSet {
+            token: token.to_string(),
+            spender: spender.to_string(),
+        })?;
+
+    let now = env.block.time;
+    let mut state = CW20_PULL_LIMIT_STATE
+        .may_load(storage, (token_str, spender_str))?
+        .unwrap_or(Cw20PullLimitState {
+            current_window_start: now,
+            amount_used: Uint128::zero(),
+        });
+
+    let window_elapsed = now
+        .seconds()
+        .saturating_sub(state.current_window_start.seconds());
+    if window_elapsed >= limit_config.window_seconds {
+        state.current_window_start = now;
+        state.amount_used = Uint128::zero();
+    }
+
+    let new_usage = state
+        .amount_used
+        .checked_add(amount)
+        .map_err(|_| ContractError::Cw20PullLimitOverflow)?;
+    if new_usage > limit_config.max_amount_per_window {
+        let remaining = limit_config
+            .max_amount_per_window
+            .saturating_sub(state.amount_used);
+        let reset_at = state.current_window_start.seconds() + limit_config.window_seconds;
+        return Err(ContractError::Cw20PullLimitExceeded {
+            token: token.to_string(),
+            spender: spender.to_string(),
+            requested: amount.to_string(),
+            remaining: remaining.to_string(),
+            reset_at: reset_at.to_string(),
+        });
+    }
+
+    state.amount_used = new_usage;
+    CW20_PULL_LIMIT_STATE.save(storage, (token_str, spender_str), &state)?;
+
+    Ok(())
+}
+
 fn execute_set_cw20_spender(
     deps: DepsMut,
     info: MessageInfo,
     token: String,
     spender: String,
+    limit_24h: Option<Uint128>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if info.sender != config.governance {
@@ -783,14 +876,36 @@ fn execute_set_cw20_spender(
 
     let token_addr = deps.api.addr_validate(&token)?;
     let spender_addr = deps.api.addr_validate(&spender)?;
+
+    if let Some(old_spender) = CW20_SPENDERS.may_load(deps.storage, token_addr.as_str())? {
+        if old_spender != spender_addr {
+            clear_cw20_pull_limit(deps.storage, token_addr.as_str(), old_spender.as_str())?;
+        }
+    }
+
     // Overwrite allowed: operators may rotate spenders (e.g. window migrate)
     // without a Remove+Set two-step. Distinct from SetDenomWrapper (no overwrite).
     CW20_SPENDERS.save(deps.storage, token_addr.as_str(), &spender_addr)?;
 
-    Ok(Response::new()
+    if let Some(limit) = limit_24h {
+        save_cw20_pull_limit(
+            deps.storage,
+            token_addr.as_str(),
+            spender_addr.as_str(),
+            limit,
+        )?;
+    }
+
+    let mut res = Response::new()
         .add_attribute("action", "set_cw20_spender")
         .add_attribute("token", token_addr)
-        .add_attribute("spender", spender_addr))
+        .add_attribute("spender", spender_addr);
+
+    if let Some(limit) = limit_24h {
+        res = res.add_attribute("limit_24h", limit);
+    }
+
+    Ok(res)
 }
 
 fn execute_remove_cw20_spender(
@@ -804,11 +919,71 @@ fn execute_remove_cw20_spender(
     }
 
     let token_addr = deps.api.addr_validate(&token)?;
+
+    if let Some(spender) = CW20_SPENDERS.may_load(deps.storage, token_addr.as_str())? {
+        clear_cw20_pull_limit(deps.storage, token_addr.as_str(), spender.as_str())?;
+    }
+
     CW20_SPENDERS.remove(deps.storage, token_addr.as_str());
 
     Ok(Response::new()
         .add_attribute("action", "remove_cw20_spender")
         .add_attribute("token", token_addr))
+}
+
+fn execute_set_cw20_spender_limit(
+    deps: DepsMut,
+    info: MessageInfo,
+    token: String,
+    spender: String,
+    limit_24h: Uint128,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    let token_addr = deps.api.addr_validate(&token)?;
+    let spender_addr = deps.api.addr_validate(&spender)?;
+
+    save_cw20_pull_limit(
+        deps.storage,
+        token_addr.as_str(),
+        spender_addr.as_str(),
+        limit_24h,
+    )?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_cw20_spender_limit")
+        .add_attribute("token", token_addr)
+        .add_attribute("spender", spender_addr)
+        .add_attribute("limit_24h", limit_24h))
+}
+
+fn execute_remove_cw20_spender_limit(
+    deps: DepsMut,
+    info: MessageInfo,
+    token: String,
+    spender: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    let token_addr = deps.api.addr_validate(&token)?;
+    let spender_addr = deps.api.addr_validate(&spender)?;
+
+    clear_cw20_pull_limit(
+        deps.storage,
+        token_addr.as_str(),
+        spender_addr.as_str(),
+    )?;
+
+    Ok(Response::new()
+        .add_attribute("action", "remove_cw20_spender_limit")
+        .add_attribute("token", token_addr)
+        .add_attribute("spender", spender_addr))
 }
 
 fn execute_set_cw20_instant_withdraw_paused(
@@ -834,9 +1009,11 @@ fn execute_set_cw20_instant_withdraw_paused(
 /// - Gated only by `CW20_INSTANT_WITHDRAW_PAUSED` — **not** by `wrapping_paused`.
 /// - Caller must equal the registered spender for `token` (gov is not implicit).
 /// - Amount must be non-zero; treasury CW20 balance must be ≥ amount.
+/// - Per-(token, spender) tumbling 24h pull limit enforced after solvency
+///   (fail-closed if unset). Usage is persisted only when Transfer will emit.
 /// - CW20 whitelist is irrelevant (whitelist is for CR/AllBalances tracking only).
-/// - No on-chain per-pull cap: a buggy registered spender can drain the token.
 /// - Uses standard CW20 Transfer (no Receive hook on treasury mid-state).
+/// - Does not gate native InstantWithdraw or ProposeWithdraw / ExecuteWithdraw.
 fn execute_instant_withdraw_cw20(
     deps: DepsMut,
     env: Env,
@@ -869,6 +1046,7 @@ fn execute_instant_withdraw_cw20(
 
     let recipient_addr = deps.api.addr_validate(&recipient)?;
 
+    // Solvency before quota accounting so failed balance checks do not burn quota.
     let balance: cw20::BalanceResponse = deps.querier.query_wasm_smart(
         token_addr.to_string(),
         &cw20::Cw20QueryMsg::Balance {
@@ -881,6 +1059,8 @@ fn execute_instant_withdraw_cw20(
             available: balance.balance.to_string(),
         });
     }
+
+    check_cw20_pull_limit(deps.storage, &env, &token_addr, &spender, amount)?;
 
     let transfer_msg = WasmMsg::Execute {
         contract_addr: token_addr.to_string(),
@@ -913,6 +1093,9 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::PendingWithdrawals {} => to_json_binary(&query_pending_withdrawals(deps)?),
         QueryMsg::DenomWrappers {} => to_json_binary(&query_denom_wrappers(deps)?),
         QueryMsg::Cw20Spenders {} => to_json_binary(&query_cw20_spenders(deps)?),
+        QueryMsg::Cw20SpenderLimit { token, spender } => {
+            to_json_binary(&query_cw20_spender_limit(deps, env, token, spender)?)
+        }
     }
 }
 
@@ -1058,6 +1241,80 @@ fn query_cw20_spenders(deps: Deps) -> StdResult<Cw20SpendersResponse> {
     Ok(Cw20SpendersResponse { spenders })
 }
 
+/// Read-only tumbling-window view for a `(token, spender)` pull limit.
+///
+/// When the stored window has expired, reports `amount_used = 0`, `remaining = limit`,
+/// and `reset_at = None` (a fresh window would start on the next pull). Does not
+/// mutate storage.
+fn query_cw20_spender_limit(
+    deps: Deps,
+    env: Env,
+    token: String,
+    spender: String,
+) -> StdResult<Cw20SpenderLimitResponse> {
+    let token_addr = deps.api.addr_validate(&token)?;
+    let spender_addr = deps.api.addr_validate(&spender)?;
+    let token_str = token_addr.as_str();
+    let spender_str = spender_addr.as_str();
+
+    let config = CW20_PULL_LIMITS.may_load(deps.storage, (token_str, spender_str))?;
+    let state = CW20_PULL_LIMIT_STATE.may_load(deps.storage, (token_str, spender_str))?;
+
+    if config.is_none() {
+        return Ok(Cw20SpenderLimitResponse {
+            config: None,
+            current_window_start: None,
+            amount_used: Uint128::zero(),
+            remaining: Uint128::zero(),
+            reset_at: None,
+        });
+    }
+
+    let config = config.unwrap();
+    let now = env.block.time;
+
+    let (current_window_start, amount_used, remaining, reset_at) =
+        if let Some(s) = state {
+            let window_elapsed = now
+                .seconds()
+                .saturating_sub(s.current_window_start.seconds());
+            if window_elapsed >= config.window_seconds {
+                (
+                    None,
+                    Uint128::zero(),
+                    config.max_amount_per_window,
+                    None,
+                )
+            } else {
+                let remaining = config
+                    .max_amount_per_window
+                    .saturating_sub(s.amount_used);
+                let reset_at = s.current_window_start.seconds() + config.window_seconds;
+                (
+                    Some(s.current_window_start),
+                    s.amount_used,
+                    remaining,
+                    Some(reset_at),
+                )
+            }
+        } else {
+            (
+                None,
+                Uint128::zero(),
+                config.max_amount_per_window,
+                None,
+            )
+        };
+
+    Ok(Cw20SpenderLimitResponse {
+        config: Some(config),
+        current_window_start,
+        amount_used,
+        remaining,
+        reset_at,
+    })
+}
+
 // ============ TESTS ============
 
 // Coverage gaps that cannot be tested with mock_dependencies:
@@ -1088,6 +1345,7 @@ mod tests {
     const CW20_SPENDER_B: &str = "cw20_spender_b_addr";
     const DENOM_USTC: &str = "uusd";
     const DENOM_LUNC: &str = "uluna";
+    const GENEROUS_CW20_LIMIT: Uint128 = Uint128::new(u128::MAX / 2);
 
     fn setup_contract(deps: DepsMut) {
         let msg = InstantiateMsg {
@@ -1118,9 +1376,47 @@ mod tests {
             ExecuteMsg::SetCw20Spender {
                 token: token.to_string(),
                 spender: spender.to_string(),
+                limit_24h: Some(GENEROUS_CW20_LIMIT),
             },
         )
         .unwrap();
+    }
+
+    fn set_cw20_spender_limit(deps: DepsMut, token: &str, spender: &str, limit: Uint128) {
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps,
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20SpenderLimit {
+                token: token.to_string(),
+                spender: spender.to_string(),
+                limit_24h: limit,
+            },
+        )
+        .unwrap();
+    }
+
+    fn query_cw20_pull_limit(
+        deps: &cosmwasm_std::OwnedDeps<
+            cosmwasm_std::MemoryStorage,
+            cosmwasm_std::testing::MockApi,
+            cosmwasm_std::testing::MockQuerier,
+        >,
+        env: cosmwasm_std::Env,
+        token: &str,
+        spender: &str,
+    ) -> Cw20SpenderLimitResponse {
+        let res = query(
+            deps.as_ref(),
+            env,
+            QueryMsg::Cw20SpenderLimit {
+                token: token.to_string(),
+                spender: spender.to_string(),
+            },
+        )
+        .unwrap();
+        from_json(res).unwrap()
     }
 
     // ============ INSTANTIATE TESTS ============
@@ -5199,6 +5495,7 @@ mod tests {
             ExecuteMsg::SetCw20Spender {
                 token: CW20_TOKEN.to_string(),
                 spender: CW20_SPENDER.to_string(),
+                limit_24h: Some(GENEROUS_CW20_LIMIT),
             },
         )
         .unwrap_err();
@@ -5679,6 +5976,626 @@ mod tests {
             err,
             ContractError::NoCw20Spender {
                 token: CW20_TOKEN.to_string(),
+            }
+        );
+    }
+
+    // ============ CW20 PULL LIMIT (#7) ============
+
+    #[test]
+    fn test_cw20_pull_limit_set_and_query() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+
+        let limit = Uint128::new(1_000_000);
+        set_cw20_spender_limit(deps.as_mut(), CW20_TOKEN, CW20_SPENDER, limit);
+
+        let res = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN, CW20_SPENDER);
+        assert_eq!(
+            res.config.unwrap().max_amount_per_window,
+            limit
+        );
+        assert_eq!(res.amount_used, Uint128::zero());
+        assert_eq!(res.remaining, limit);
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_set_remove_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetCw20SpenderLimit {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+                limit_24h: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::RemoveCw20SpenderLimit {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_happy_pull_updates_usage() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        set_cw20_spender_limit(deps.as_mut(), CW20_TOKEN, CW20_SPENDER, Uint128::new(1_000_000));
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(300_000),
+            },
+        )
+        .unwrap();
+
+        let res = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN, CW20_SPENDER);
+        assert_eq!(res.amount_used, Uint128::new(300_000));
+        assert_eq!(res.remaining, Uint128::new(700_000));
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_exact_remaining_succeeds() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        set_cw20_spender_limit(deps.as_mut(), CW20_TOKEN, CW20_SPENDER, Uint128::new(500_000));
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(400_000),
+            },
+        )
+        .unwrap();
+
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100_000),
+            },
+        )
+        .unwrap();
+
+        let res = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN, CW20_SPENDER);
+        assert_eq!(res.amount_used, Uint128::new(500_000));
+        assert_eq!(res.remaining, Uint128::zero());
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_exceeded_no_messages_usage_unchanged() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        set_cw20_spender_limit(deps.as_mut(), CW20_TOKEN, CW20_SPENDER, Uint128::new(500_000));
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(400_000),
+            },
+        )
+        .unwrap();
+
+        let env = mock_env();
+        let err = execute(
+            deps.as_mut(),
+            env.clone(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(200_000),
+            },
+        )
+        .unwrap_err();
+        match err {
+            ContractError::Cw20PullLimitExceeded {
+                token,
+                spender,
+                requested,
+                remaining,
+                reset_at: _,
+            } => {
+                assert_eq!(token, CW20_TOKEN);
+                assert_eq!(spender, CW20_SPENDER);
+                assert_eq!(requested, "200000");
+                assert_eq!(remaining, "100000");
+            }
+            _ => panic!("Expected Cw20PullLimitExceeded"),
+        }
+
+        let res = query_cw20_pull_limit(&deps, env, CW20_TOKEN, CW20_SPENDER);
+        assert_eq!(res.amount_used, Uint128::new(400_000));
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_separate_quotas_per_token() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        let limit = Uint128::new(500_000);
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetCw20Spender {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+                limit_24h: Some(limit),
+            },
+        )
+        .unwrap();
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20Spender {
+                token: CW20_TOKEN_B.to_string(),
+                spender: CW20_SPENDER.to_string(),
+                limit_24h: Some(limit),
+            },
+        )
+        .unwrap();
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(400_000),
+            },
+        )
+        .unwrap();
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN_B.to_string(),
+                amount: Uint128::new(400_000),
+            },
+        )
+        .unwrap();
+
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(200_000),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, ContractError::Cw20PullLimitExceeded { .. }));
+
+        let res_b = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN_B, CW20_SPENDER);
+        assert_eq!(res_b.amount_used, Uint128::new(400_000));
+        assert_eq!(res_b.remaining, Uint128::new(100_000));
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_rotate_spender_fresh_usage() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender_limit(deps.as_mut(), CW20_TOKEN, CW20_SPENDER, Uint128::new(1_000_000));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20Spender {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+                limit_24h: Some(Uint128::new(1_000_000)),
+            },
+        )
+        .unwrap();
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(800_000),
+            },
+        )
+        .unwrap();
+
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER_B);
+
+        let res_old = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN, CW20_SPENDER);
+        assert!(res_old.config.is_none());
+
+        let info = mock_info(CW20_SPENDER_B, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(800_000),
+            },
+        )
+        .unwrap();
+
+        let res_new = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN, CW20_SPENDER_B);
+        assert_eq!(res_new.amount_used, Uint128::new(800_000));
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_window_reset() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        set_cw20_spender_limit(deps.as_mut(), CW20_TOKEN, CW20_SPENDER, Uint128::new(1_000_000));
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(800_000),
+            },
+        )
+        .unwrap();
+
+        let mut env = mock_env();
+        env.block.time = Timestamp::from_seconds(
+            env.block.time.seconds() + CW20_PULL_LIMIT_WINDOW_SECONDS,
+        );
+
+        let res = query_cw20_pull_limit(&deps, env.clone(), CW20_TOKEN, CW20_SPENDER);
+        assert_eq!(res.amount_used, Uint128::zero());
+        assert_eq!(res.remaining, Uint128::new(1_000_000));
+        assert!(res.reset_at.is_none());
+
+        execute(
+            deps.as_mut(),
+            env,
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(800_000),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_remove_fails_closed() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::RemoveCw20SpenderLimit {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::Cw20PullLimitNotSet {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_pause_still_blocks() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20InstantWithdrawPaused { paused: true },
+        )
+        .unwrap();
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Cw20InstantWithdrawPaused);
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_insufficient_balance_under_limit() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        set_cw20_spender_limit(deps.as_mut(), CW20_TOKEN, CW20_SPENDER, Uint128::new(1_000_000));
+        mock_cw20_balance(&mut deps, Uint128::new(100));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(101),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::InsufficientBalance {
+                requested: "101".to_string(),
+                available: "100".to_string(),
+            }
+        );
+
+        let res = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN, CW20_SPENDER);
+        assert_eq!(res.amount_used, Uint128::zero());
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_zero_amount_usage_unchanged() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::zero(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::ZeroAmount);
+
+        let res = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN, CW20_SPENDER);
+        assert_eq!(res.amount_used, Uint128::zero());
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_unregistered_no_usage() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::NoCw20Spender {
+                token: CW20_TOKEN.to_string(),
+            }
+        );
+
+        let res = query_cw20_pull_limit(&deps, mock_env(), CW20_TOKEN, CW20_SPENDER);
+        assert!(res.config.is_none());
+        assert_eq!(res.amount_used, Uint128::zero());
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_fail_closed_no_limit_config() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20Spender {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+                limit_24h: None,
+            },
+        )
+        .unwrap();
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::Cw20PullLimitNotSet {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_zero_limit_blocks_all_pulls() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        set_cw20_spender_limit(deps.as_mut(), CW20_TOKEN, CW20_SPENDER, Uint128::zero());
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(1),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(err, ContractError::Cw20PullLimitExceeded { .. }));
+    }
+
+    #[test]
+    fn test_cw20_pull_limit_migrate_smoke() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        cw2::set_contract_version(&mut deps.storage, CONTRACT_NAME, "0.1.0").unwrap();
+        migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(5_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20Spender {
+                token: CW20_TOKEN_B.to_string(),
+                spender: CW20_SPENDER_B.to_string(),
+                limit_24h: None,
+            },
+        )
+        .unwrap();
+
+        let info = mock_info(CW20_SPENDER_B, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN_B.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::Cw20PullLimitNotSet {
+                token: CW20_TOKEN_B.to_string(),
+                spender: CW20_SPENDER_B.to_string(),
             }
         );
     }
