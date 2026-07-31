@@ -338,6 +338,41 @@ terrad query wasm contract-state smart $SWAP '{"status": {}}' \
   --node $RPC
 ```
 
+## Treasury Migrate + CW20 Spender Wiring (#6)
+
+In-place migrate keeps mainnet treasury address
+`terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` stable.
+
+```bash
+# 1) Store new treasury wasm, then migrate (governance/admin)
+terrad tx wasm migrate $TREASURY $NEW_TREASURY_CODE_ID '{}' \
+  --from governance \
+  --chain-id $CHAIN_ID \
+  --node $RPC \
+  --gas auto --gas-adjustment 1.4 \
+  --fees 100000000uluna \
+  --broadcast-mode sync -y
+
+# 2) Verify new queries
+terrad query wasm contract-state smart $TREASURY '{"cw20_spenders":{}}' --node $RPC
+terrad query wasm contract-state smart $TREASURY '{"config":{}}' --node $RPC
+# expect cw20_instant_withdraw_paused: false; wrapping_paused unchanged
+
+# 3) After ust1-window is ready (companion issue #20 / Phase 5 of #19):
+terrad tx wasm execute $TREASURY \
+  "{\"set_cw20_spender\":{\"token\":\"$TERRA_VFDUSD\",\"spender\":\"$WINDOW_ADDR\"}}" \
+  --from governance \
+  --chain-id $CHAIN_ID --node $RPC \
+  --gas auto --gas-adjustment 1.4 \
+  --fees 100000000uluna \
+  --broadcast-mode sync -y
+```
+
+**Pause semantics**: `set_wrapping_paused` does **not** stop CW20 InstantWithdraw.
+Use `set_cw20_instant_withdraw_paused` to halt window vFDUSD pulls independently.
+
+Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md).
+
 ## Post-Deployment Checklist
 
 - [ ] USTR token instantiated correctly
@@ -350,6 +385,8 @@ terrad query wasm contract-state smart $SWAP '{"status": {}}' \
 - [ ] All contract addresses documented
 - [ ] Frontend updated with contract addresses
 - [ ] Monitoring/alerting configured
+- [ ] Treasury migrated with CW20 InstantWithdraw API (#6)
+- [ ] `SetCw20Spender` executed for vFDUSD → ust1-window (post window deploy)
 
 ## Contract Addresses
 

@@ -58,5 +58,14 @@ pub enum ContractError {
 
     #[error("Wrapping operations are paused")]
     WrappingPaused,
+
+    #[error("Caller is not the registered CW20 spender for this token")]
+    NotRegisteredCw20Spender,
+
+    #[error("No CW20 spender registered for token: {token}")]
+    NoCw20Spender { token: String },
+
+    #[error("CW20 InstantWithdraw is paused")]
+    Cw20InstantWithdrawPaused,
 }
 

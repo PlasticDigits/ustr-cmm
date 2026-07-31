@@ -62,6 +62,8 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Multiple governance proposals can exist simultaneously
 - Unified withdrawal interface for all asset types with 7-day timelock
 - CW20 whitelist for balance tracking and CR calculations
+- Native wrap path: `SetDenomWrapper` / `WrapDeposit` / `InstantWithdraw` (gated by `wrapping_paused`)
+- CW20 InstantWithdraw path for registered spenders (e.g. ust1-window → vFDUSD); gated by a **separate** pause flag
 
 **Execute Messages**:
 - `ProposeGovernanceTransfer { new_governance }` - Initiates 7-day timelock for governance transfer; multiple proposals can exist simultaneously
@@ -75,16 +77,27 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - `SetSwapContract { contract_addr }` - Sets the authorized swap contract address (governance only)
 - `SwapDeposit {}` - **(Legacy)** Accepts USTC for swap; not used in current architecture
 - `Receive(Cw20ReceiveMsg)` - CW20 receive hook for accepting direct token transfers
+- `SetDenomWrapper { denom, wrapper }` / `RemoveDenomWrapper { denom }` - Register native wrap-mapper (governance)
+- `WrapDeposit {}` - Accept native funds for wrapping; notify registered wrapper
+- `InstantWithdraw { recipient, denom, amount }` - Native pull by registered wrapper (gated by `wrapping_paused`)
+- `SetWrappingPaused { paused }` - Pause/unpause wrap + native InstantWithdraw only
+- `SetCw20Spender { token, spender }` / `RemoveCw20Spender { token }` - Register CW20 InstantWithdraw spender (governance; no timelock; overwrite allowed)
+- `SetCw20InstantWithdrawPaused { paused }` - Pause CW20 InstantWithdraw only (independent of wrapping)
+- `InstantWithdrawCw20 { recipient, token, amount }` - CW20 `Transfer` by registered spender (not gated by `wrapping_paused`)
 
 **Note**: The `SwapDeposit` message exists on the deployed Treasury contract but is not used in the current swap architecture. Users should call `Swap {}` on the Swap contract directly, which forwards USTC to Treasury and mints USTR with optional referral bonuses.
 
+**CW20 InstantWithdraw (ust1-window / vFDUSD)**: See [skills/treasury-cw20-instant-withdraw/](../skills/treasury-cw20-instant-withdraw/SKILL.md) and issue [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6). Companion consumer: [ust1-window#20](https://gitlab.com/PlasticDigits/ust1-window/-/work_items/20). Mainnet post-migrate ops step: `SetCw20Spender { token: TERRA_VFDUSD, spender: WINDOW_ADDR }` (also needed for [ust1-window#19](https://gitlab.com/PlasticDigits/ust1-window/-/issues/19) Phase 5).
+
 **Query Messages**:
-- `Config {}` - Returns current governance and timelock settings
+- `Config {}` - Returns governance, timelock, `wrapping_paused`, and `cw20_instant_withdraw_paused`
 - `PendingGovernance {}` - Returns all pending governance proposals (empty list if none)
 - `PendingWithdrawals {}` - Returns all pending withdrawal proposals (empty list if none)
 - `Balance { asset }` - Returns treasury balance for specified asset
 - `AllBalances {}` - Returns all treasury holdings (native + whitelisted CW20s)
 - `Cw20Whitelist {}` - Returns list of whitelisted CW20 contract addresses
+- `DenomWrappers {}` - Returns native denom→wrapper mappings
+- `Cw20Spenders {}` - Returns CW20 token→spender mappings for InstantWithdrawCw20
 
 **Key Development Decisions**:
 
@@ -104,6 +117,12 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 8. **Governance Transition Plan**: In Phase 1, governance is a single admin EOA. Phase 2 will transfer governance to a multi-sig with additional security measures. Phase 3+ will implement full DAO governance with on-chain voting. The treasury contract implements withdrawal timelocks directly, providing security at the contract level regardless of the governance mechanism.
 
+9. **Two InstantWithdraw paths**: Native wrap uses `InstantWithdraw { denom }` + `DENOM_WRAPPERS` and is gated by `wrapping_paused`. CW20 inventory for swap windows uses parallel `InstantWithdrawCw20` + `CW20_SPENDERS` and is gated only by `cw20_instant_withdraw_paused`. Pausing wraps must not halt vFDUSD redeem.
+
+10. **No on-chain CW20 pull cap (v1)**: A registered spender can drain the full treasury balance of that token (same model as native InstantWithdraw). Product caps live in the window contract. Register only audited spenders.
+
+11. **Whitelist vs spender registry**: `CW20_WHITELIST` is for CR / `AllBalances` tracking only. InstantWithdrawCw20 does **not** require the token to be whitelisted.
+
 **Security Features**:
 - Governance changes require 7-day waiting period
 - Withdrawals require 7-day waiting period
@@ -111,6 +130,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - All actions emit events for transparency
 - No direct access to assets except via explicit withdrawal proposals
 - Gas attack prevention: accepting governance only clears the accepted proposal (not all pending proposals)
+- CW20 InstantWithdraw requires explicit gov-registered spender; governance is not an implicit spender
 
 **Withdrawal Tax Note**: Native token withdrawals use `BankMsg::Send`, which incurs TerraClassic's 0.5% burn tax. The `amount` specifies what is debited from treasury; the destination receives the post-tax amount.
 

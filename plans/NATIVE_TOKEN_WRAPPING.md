@@ -2,6 +2,8 @@
 
 Plan to add native token wrapping support to the ustr-cmm contracts. The treasury holds all native LUNC/USTC backing for ecosystem auditability. A new wrap-mapper contract orchestrates CW20 minting/burning but never holds native tokens itself.
 
+> **Status (implementation note):** Native wrap path (`migrate`, `DENOM_WRAPPERS`, `WrapDeposit`, native-only `InstantWithdraw { denom }`, `wrapping_paused`) is implemented. The original §1.4 sketch of `InstantWithdraw { asset: AssetInfo }` with CW20 Transfer was **not** shipped — CW20 InstantWithdraw is a **parallel** API (`InstantWithdrawCw20` + `CW20_SPENDERS`) for ust1-window / vFDUSD. See [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6) and [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md).
+
 ## Architecture
 
 ```mermaid
@@ -24,7 +26,7 @@ Tax optimization: native tokens flow directly user-to-treasury and treasury-to-u
 
 ## 1. Upgrade Treasury Contract (`contracts/contracts/treasury/`)
 
-The treasury currently has **no `migrate` entry point**. It uses `cw2::set_contract_version` in `instantiate`, and the `ustc-swap` contract in this repo has a working migrate pattern to follow.
+The treasury **now has** a `migrate` entry point (implemented). Historical note below described the pre-wrap gap.
 
 ### 1.1 Add migration support
 
@@ -86,11 +88,13 @@ Add to `src/contract.rs`:
 4. Call wrapper contract: `WasmMsg::Execute { msg: NotifyDeposit { depositor: info.sender, denom, amount }, funds: [] }`
 5. Wrapper mints CW20 to depositor
 
-**`InstantWithdraw { recipient, asset, amount }`** -- caller must be a registered wrapper:
+**`InstantWithdraw { recipient, denom, amount }`** -- caller must be the registered wrapper for that denom (shipped shape; native-only):
 
-1. Verify `info.sender` exists as a value in `DENOM_WRAPPERS`
-2. For `AssetInfo::Native`: check balance, `BankMsg::Send` to recipient
-3. For `AssetInfo::Cw20`: `CW20.Transfer` to recipient
+1. Verify `DENOM_WRAPPERS[denom] == info.sender`
+2. Check native bank balance ≥ amount, `BankMsg::Send` to recipient
+3. Gated by `wrapping_paused`
+
+**CW20 InstantWithdraw (separate path, #6):** Do **not** overload wrap-mapper's native ABI. Use `InstantWithdrawCw20` + `CW20_SPENDERS` + `cw20_iw_paused` — see [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md).
 
 **`SetDenomWrapper { denom, wrapper }`** -- governance-only:
 

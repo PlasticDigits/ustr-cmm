@@ -90,6 +90,27 @@ pub enum ExecuteMsg {
     /// Pauses or unpauses wrapping operations (WrapDeposit / InstantWithdraw).
     /// Only callable by governance.
     SetWrappingPaused { paused: bool },
+
+    /// Registers (or replaces) the sole spender allowed to pull a CW20 token
+    /// via `InstantWithdrawCw20`. Governance-only. No timelock (same as
+    /// `SetDenomWrapper`). Register only audited contracts (e.g. ust1-window).
+    SetCw20Spender { token: String, spender: String },
+
+    /// Removes the CW20 spender registration for a token. Governance-only.
+    RemoveCw20Spender { token: String },
+
+    /// Pauses or unpauses CW20 InstantWithdraw. Independent of `wrapping_paused`.
+    /// Only callable by governance.
+    SetCw20InstantWithdrawPaused { paused: bool },
+
+    /// Allows a registered CW20 spender to transfer treasury-held CW20 to a
+    /// recipient (no allowance required). Caller must equal `CW20_SPENDERS[token]`.
+    /// Not gated by `wrapping_paused`.
+    InstantWithdrawCw20 {
+        recipient: String,
+        token: String,
+        amount: Uint128,
+    },
 }
 
 /// Query messages
@@ -123,6 +144,10 @@ pub enum QueryMsg {
     /// Returns all denom->wrapper mappings
     #[returns(DenomWrappersResponse)]
     DenomWrappers {},
+
+    /// Returns all CW20 token→spender mappings for InstantWithdrawCw20
+    #[returns(Cw20SpendersResponse)]
+    Cw20Spenders {},
 }
 
 /// Response for Config query
@@ -132,6 +157,8 @@ pub struct ConfigResponse {
     pub timelock_duration: u64,
     pub swap_contract: Option<Addr>,
     pub wrapping_paused: bool,
+    /// Pause flag for `InstantWithdrawCw20` only (independent of wrapping_paused)
+    pub cw20_instant_withdraw_paused: bool,
 }
 
 /// A single pending governance proposal entry
@@ -200,6 +227,19 @@ pub struct DenomWrapperEntry {
 #[cw_serde]
 pub struct DenomWrappersResponse {
     pub wrappers: Vec<DenomWrapperEntry>,
+}
+
+/// A single CW20 token→spender mapping entry
+#[cw_serde]
+pub struct Cw20SpenderEntry {
+    pub token: Addr,
+    pub spender: Addr,
+}
+
+/// Response for Cw20Spenders query
+#[cw_serde]
+pub struct Cw20SpendersResponse {
+    pub spenders: Vec<Cw20SpenderEntry>,
 }
 
 /// Message sent to wrapper contract to notify of a wrap deposit.
