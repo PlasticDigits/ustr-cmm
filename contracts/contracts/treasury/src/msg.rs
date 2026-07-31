@@ -1,5 +1,6 @@
 //! Message types for the Treasury contract
 
+use crate::state::Cw20PullLimitConfig;
 use common::AssetInfo;
 use cosmwasm_schema::{cw_serde, QueryResponses};
 use cosmwasm_std::{Addr, Timestamp, Uint128};
@@ -94,10 +95,32 @@ pub enum ExecuteMsg {
     /// Registers (or replaces) the sole spender allowed to pull a CW20 token
     /// via `InstantWithdrawCw20`. Governance-only. No timelock (same as
     /// `SetDenomWrapper`). Register only audited contracts (e.g. ust1-window).
-    SetCw20Spender { token: String, spender: String },
+    ///
+    /// If `limit_24h` is `Some`, also sets the tumbling 24h pull limit for
+    /// `(token, spender)`. If `None`, existing limit for the new pair is left
+    /// unchanged (pulls fail-closed until `SetCw20SpenderLimit`).
+    SetCw20Spender {
+        token: String,
+        spender: String,
+        limit_24h: Option<Uint128>,
+    },
 
     /// Removes the CW20 spender registration for a token. Governance-only.
+    /// Also clears pull-limit config/usage for the removed `(token, spender)`.
     RemoveCw20Spender { token: String },
+
+    /// Sets or updates the 24h InstantWithdrawCw20 pull limit for a
+    /// `(spender, token)` pair. Governance-only. No timelock.
+    SetCw20SpenderLimit {
+        token: String,
+        spender: String,
+        limit_24h: Uint128,
+    },
+
+    /// Removes the 24h pull limit for a `(spender, token)` pair (fail-closed:
+    /// subsequent InstantWithdrawCw20 for that pair is denied until reset).
+    /// Governance-only.
+    RemoveCw20SpenderLimit { token: String, spender: String },
 
     /// Pauses or unpauses CW20 InstantWithdraw. Independent of `wrapping_paused`.
     /// Only callable by governance.
@@ -105,7 +128,8 @@ pub enum ExecuteMsg {
 
     /// Allows a registered CW20 spender to transfer treasury-held CW20 to a
     /// recipient (no allowance required). Caller must equal `CW20_SPENDERS[token]`.
-    /// Not gated by `wrapping_paused`.
+    /// Not gated by `wrapping_paused`. Enforces the per-(spender, token) 24h
+    /// pull limit (fail-closed if unset).
     InstantWithdrawCw20 {
         recipient: String,
         token: String,
@@ -148,6 +172,10 @@ pub enum QueryMsg {
     /// Returns all CW20 token→spender mappings for InstantWithdrawCw20
     #[returns(Cw20SpendersResponse)]
     Cw20Spenders {},
+
+    /// Returns 24h pull-limit config + tumbling-window usage for a pair
+    #[returns(Cw20SpenderLimitResponse)]
+    Cw20SpenderLimit { token: String, spender: String },
 }
 
 /// Response for Config query
@@ -240,6 +268,19 @@ pub struct Cw20SpenderEntry {
 #[cw_serde]
 pub struct Cw20SpendersResponse {
     pub spenders: Vec<Cw20SpenderEntry>,
+}
+
+/// Response for Cw20SpenderLimit query
+#[cw_serde]
+pub struct Cw20SpenderLimitResponse {
+    /// Absent when no limit is configured (fail-closed for pulls)
+    pub config: Option<Cw20PullLimitConfig>,
+    pub current_window_start: Option<Timestamp>,
+    pub amount_used: Uint128,
+    /// `limit - amount_used` in the active window; zero when unset or exhausted
+    pub remaining: Uint128,
+    /// Unix seconds when the current tumbling window resets (if usage exists)
+    pub reset_at: Option<u64>,
 }
 
 /// Message sent to wrapper contract to notify of a wrap deposit.

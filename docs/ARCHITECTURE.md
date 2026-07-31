@@ -89,7 +89,7 @@ This architecture avoids the intermediate `BankMsg::Send` that would incur the 0
 - Governance-controlled withdrawals with 7-day timelock
 - 7-day timelock on governance changes
 - Native wrapping custody (`WrapDeposit` / wrapper `InstantWithdraw`)
-- Registered CW20 spender pulls (`InstantWithdrawCw20`) for ust1-window vFDUSD redeem — see [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6) and [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md)
+- Registered CW20 spender pulls (`InstantWithdrawCw20`) for ust1-window vFDUSD redeem, with per-(spender, token) 24h pull limits — see [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6), [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7), and [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md)
 
 **Dependencies**: 
 - USTC-Swap Contract (for deposit notifications)
@@ -203,15 +203,17 @@ All submessages execute in the same transaction context. If any fails, everythin
 ### CW20 InstantWithdraw Flow (registered spender, e.g. ust1-window)
 
 ```
-1. Governance → Treasury: SetCw20Spender { token: vFDUSD, spender: window }
+1. Governance → Treasury: SetCw20Spender { token: vFDUSD, spender: window, limit_24h }
+   (or SetCw20Spender + SetCw20SpenderLimit — fail-closed if limit unset)
 2. User redeems UST1 on window (window burns UST1 / settles)
 3. Window → Treasury: InstantWithdrawCw20 { recipient: user, token: vFDUSD, amount }
 4. Treasury: pause check (cw20_instant_withdraw_paused only — not wrapping_paused)
 5. Treasury: sender == CW20_SPENDERS[token]; balance ≥ amount
-6. Treasury → vFDUSD CW20: Transfer { recipient: user, amount }
+6. Treasury: tumbling 24h pull limit for (token, spender); deny if unset / exceeded
+7. Treasury → vFDUSD CW20: Transfer { recipient: user, amount }
 ```
 
-Timelocked `ProposeWithdraw` remains the only path for arbitrary destinations / non-registered spenders.
+Timelocked `ProposeWithdraw` remains the only path for arbitrary destinations / non-registered spenders and is **not** gated by CW20 pull limits.
 
 ## State Management
 
@@ -235,6 +237,8 @@ Timelocked `ProposeWithdraw` remains the only path for arbitrary destinations / 
 | `cw20_whitelist` | `Map<Addr, bool>` | CW20 tokens included in balance tracking |
 | `denom_wrappers` | `Map<String, Addr>` | Native denom → wrap-mapper |
 | `cw20_spenders` | `Map<String, Addr>` | CW20 token → InstantWithdrawCw20 spender |
+| `cw20_pull_limits` | `Map<(token, spender), Config>` | 24h max InstantWithdrawCw20 amount per pair |
+| `cw20_pull_limit_state` | `Map<(token, spender), State>` | Tumbling-window usage (`amount_used`, `window_start`) |
 | `cw20_iw_paused` | `Item<bool>` | Pause for CW20 InstantWithdraw (absent = false) |
 | `wrapping_paused` | `bool` (in Config) | Pause for WrapDeposit + native InstantWithdraw |
 
@@ -267,11 +271,11 @@ Timelocked `ProposeWithdraw` remains the only path for arbitrary destinations / 
 | Contract | Role | Permissions |
 |----------|------|-------------|
 | USTR Token | Minter | Mint tokens |
-| Treasury | Governance | Propose governance, withdraw, set swap contract, set denom wrappers / CW20 spenders, pause flags |
+| Treasury | Governance | Propose governance, withdraw, set swap contract, set denom wrappers / CW20 spenders + 24h pull limits, pause flags |
 | Treasury | Pending Governance | Accept governance |
 | Treasury | Any User | Deposit USTC for swap (via SwapDeposit); WrapDeposit |
 | Treasury | Registered wrapper | Native `InstantWithdraw` for its denom |
-| Treasury | Registered CW20 spender | `InstantWithdrawCw20` for its token only |
+| Treasury | Registered CW20 spender | `InstantWithdrawCw20` for its token only, within configured 24h quota |
 | USTC-Swap | Admin | Pause/resume, update admin |
 | USTC-Swap | Treasury | Notify deposits (triggers USTR mint) |
 | Airdrop | Any User | Execute airdrop (must have CW20 allowance) |

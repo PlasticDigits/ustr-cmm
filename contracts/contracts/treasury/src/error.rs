@@ -67,5 +67,24 @@ pub enum ContractError {
 
     #[error("CW20 InstantWithdraw is paused")]
     Cw20InstantWithdrawPaused,
+
+    #[error(
+        "CW20 pull limit not set for token {token}, spender {spender} (fail-closed)"
+    )]
+    Cw20PullLimitNotSet { token: String, spender: String },
+
+    #[error(
+        "CW20 pull limit exceeded for token {token}, spender {spender}: requested {requested}, remaining {remaining}, reset_at {reset_at}"
+    )]
+    Cw20PullLimitExceeded {
+        token: String,
+        spender: String,
+        requested: String,
+        remaining: String,
+        reset_at: String,
+    },
+
+    #[error("CW20 pull limit usage overflow")]
+    Cw20PullLimitOverflow,
 }
 

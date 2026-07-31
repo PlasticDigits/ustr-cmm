@@ -94,7 +94,7 @@ Add to `src/contract.rs`:
 2. Check native bank balance ≥ amount, `BankMsg::Send` to recipient
 3. Gated by `wrapping_paused`
 
-**CW20 InstantWithdraw (separate path, #6):** Do **not** overload wrap-mapper's native ABI. Use `InstantWithdrawCw20` + `CW20_SPENDERS` + `cw20_iw_paused` — see [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md).
+**CW20 InstantWithdraw (separate path, #6 / #7):** Do **not** overload wrap-mapper's native ABI. Use `InstantWithdrawCw20` + `CW20_SPENDERS` + `cw20_iw_paused` + per-(spender,token) 24h pull limits (`cw20_pull_limits`) — see [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md). Treasury CW20 limits are separate from wrap-mapper denom `rate_limits`.
 
 **`SetDenomWrapper { denom, wrapper }`** -- governance-only:
 

@@ -338,10 +338,12 @@ terrad query wasm contract-state smart $SWAP '{"status": {}}' \
   --node $RPC
 ```
 
-## Treasury Migrate + CW20 Spender Wiring (#6)
+## Treasury Migrate + CW20 Spender Wiring (#6 / #7)
 
 In-place migrate keeps mainnet treasury address
 `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` stable.
+
+**Fail-closed (#7):** after migrate, InstantWithdrawCw20 requires a configured 24h pull limit for `(token, spender)`. Set the limit **with** or **before** enabling window redeem.
 
 ```bash
 # 1) Store new treasury wasm, then migrate (governance/admin)
@@ -359,8 +361,26 @@ terrad query wasm contract-state smart $TREASURY '{"config":{}}' --node $RPC
 # expect cw20_instant_withdraw_paused: false; wrapping_paused unchanged
 
 # 3) After ust1-window is ready (companion issue #20 / Phase 5 of #19):
+#    Register spender WITH 24h limit (align with window inventory policy).
 terrad tx wasm execute $TREASURY \
-  "{\"set_cw20_spender\":{\"token\":\"$TERRA_VFDUSD\",\"spender\":\"$WINDOW_ADDR\"}}" \
+  "{\"set_cw20_spender\":{\"token\":\"$TERRA_VFDUSD\",\"spender\":\"$WINDOW_ADDR\",\"limit_24h\":\"$VFDUSD_PULL_LIMIT_24H\"}}" \
+  --from governance \
+  --chain-id $CHAIN_ID --node $RPC \
+  --gas auto --gas-adjustment 1.4 \
+  --fees 100000000uluna \
+  --broadcast-mode sync -y
+
+# 4) Confirm limit + unused quota
+terrad query wasm contract-state smart $TREASURY \
+  "{\"cw20_spender_limit\":{\"token\":\"$TERRA_VFDUSD\",\"spender\":\"$WINDOW_ADDR\"}}" \
+  --node $RPC
+```
+
+To change quota later without rotating the spender:
+
+```bash
+terrad tx wasm execute $TREASURY \
+  "{\"set_cw20_spender_limit\":{\"token\":\"$TERRA_VFDUSD\",\"spender\":\"$WINDOW_ADDR\",\"limit_24h\":\"$VFDUSD_PULL_LIMIT_24H\"}}" \
   --from governance \
   --chain-id $CHAIN_ID --node $RPC \
   --gas auto --gas-adjustment 1.4 \
@@ -370,6 +390,7 @@ terrad tx wasm execute $TREASURY \
 
 **Pause semantics**: `set_wrapping_paused` does **not** stop CW20 InstantWithdraw.
 Use `set_cw20_instant_withdraw_paused` to halt window vFDUSD pulls independently.
+`cw20_iw_paused` does **not** stop governance `ExecuteWithdraw`.
 
 Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md).
 
@@ -385,8 +406,9 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 - [ ] All contract addresses documented
 - [ ] Frontend updated with contract addresses
 - [ ] Monitoring/alerting configured
-- [ ] Treasury migrated with CW20 InstantWithdraw API (#6)
-- [ ] `SetCw20Spender` executed for vFDUSD → ust1-window (post window deploy)
+- [ ] Treasury migrated with CW20 InstantWithdraw API (#6) + 24h pull limits (#7)
+- [ ] `SetCw20Spender` (+ `limit_24h` or `SetCw20SpenderLimit`) executed for vFDUSD → ust1-window
+- [ ] `Cw20SpenderLimit` query confirms production quota before enabling redeem
 
 ## Contract Addresses
 
