@@ -70,3 +70,23 @@ pub const CW20_WHITELIST: Map<&str, bool> = Map::new("cw20_whitelist");
 /// Governance-managed. Used by WrapDeposit and InstantWithdraw.
 pub const DENOM_WRAPPERS: Map<&str, Addr> = Map::new("denom_wrappers");
 
+/// Maps CW20 token contract address → registered spender authorized for
+/// `InstantWithdrawCw20` on that token only.
+///
+/// Storage namespace `"cw20_spenders"` is intentionally distinct from
+/// `"cw20_whitelist"` (balance tracking) and `"denom_wrappers"` (native wrap).
+///
+/// # Invariants
+/// - Only governance may set/remove entries (`SetCw20Spender` / `RemoveCw20Spender`).
+/// - At most one spender per token; `SetCw20Spender` overwrites.
+/// - Governance is **not** an implicit spender — registration is required.
+/// - A registered spender may drain the full treasury balance of that token
+///   (no on-chain pull cap in v1; window-side limits are the product control).
+/// - Whitelist membership is **not** required for InstantWithdrawCw20.
+pub const CW20_SPENDERS: Map<&str, Addr> = Map::new("cw20_spenders");
+
+/// Independent pause for the CW20 InstantWithdraw pull path.
+/// Distinct from `Config.wrapping_paused` so pausing wraps does not halt
+/// UST1-window vFDUSD redeem. Absent key means not paused (`false`).
+pub const CW20_INSTANT_WITHDRAW_PAUSED: Item<bool> = Item::new("cw20_iw_paused");
+

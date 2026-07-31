@@ -25,15 +25,15 @@ use cw20::Cw20ExecuteMsg;
 
 use crate::error::ContractError;
 use crate::msg::{
-    AllBalancesResponse, AssetBalance, BalanceResponse, ConfigResponse, Cw20WhitelistResponse,
-    DenomWrapperEntry, DenomWrappersResponse, ExecuteMsg, InstantiateMsg, MigrateMsg,
-    PendingGovernanceEntry, PendingGovernanceResponse, PendingWithdrawalEntry,
-    PendingWithdrawalsResponse, QueryMsg, WrapperExecuteMsg,
+    AllBalancesResponse, AssetBalance, BalanceResponse, ConfigResponse, Cw20SpenderEntry,
+    Cw20SpendersResponse, Cw20WhitelistResponse, DenomWrapperEntry, DenomWrappersResponse,
+    ExecuteMsg, InstantiateMsg, MigrateMsg, PendingGovernanceEntry, PendingGovernanceResponse,
+    PendingWithdrawalEntry, PendingWithdrawalsResponse, QueryMsg, WrapperExecuteMsg,
 };
 use crate::state::{
     Config, PendingGovernance, PendingWithdrawal, CONFIG, CONTRACT_NAME, CONTRACT_VERSION,
-    CW20_WHITELIST, DEFAULT_TIMELOCK_DURATION, DENOM_WRAPPERS, PENDING_GOVERNANCE,
-    PENDING_WITHDRAWALS,
+    CW20_INSTANT_WITHDRAW_PAUSED, CW20_SPENDERS, CW20_WHITELIST, DEFAULT_TIMELOCK_DURATION,
+    DENOM_WRAPPERS, PENDING_GOVERNANCE, PENDING_WITHDRAWALS,
 };
 use common::AssetInfo;
 use cw20::Cw20ReceiveMsg;
@@ -141,6 +141,20 @@ pub fn execute(
         ExecuteMsg::SetWrappingPaused { paused } => {
             execute_set_wrapping_paused(deps, info, paused)
         }
+        ExecuteMsg::SetCw20Spender { token, spender } => {
+            execute_set_cw20_spender(deps, info, token, spender)
+        }
+        ExecuteMsg::RemoveCw20Spender { token } => {
+            execute_remove_cw20_spender(deps, info, token)
+        }
+        ExecuteMsg::SetCw20InstantWithdrawPaused { paused } => {
+            execute_set_cw20_instant_withdraw_paused(deps, info, paused)
+        }
+        ExecuteMsg::InstantWithdrawCw20 {
+            recipient,
+            token,
+            amount,
+        } => execute_instant_withdraw_cw20(deps, env, info, recipient, token, amount),
     }
 }
 
@@ -756,6 +770,136 @@ fn execute_instant_withdraw(
         .add_attribute("amount", amount))
 }
 
+fn execute_set_cw20_spender(
+    deps: DepsMut,
+    info: MessageInfo,
+    token: String,
+    spender: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    let token_addr = deps.api.addr_validate(&token)?;
+    let spender_addr = deps.api.addr_validate(&spender)?;
+    // Overwrite allowed: operators may rotate spenders (e.g. window migrate)
+    // without a Remove+Set two-step. Distinct from SetDenomWrapper (no overwrite).
+    CW20_SPENDERS.save(deps.storage, token_addr.as_str(), &spender_addr)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_cw20_spender")
+        .add_attribute("token", token_addr)
+        .add_attribute("spender", spender_addr))
+}
+
+fn execute_remove_cw20_spender(
+    deps: DepsMut,
+    info: MessageInfo,
+    token: String,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    let token_addr = deps.api.addr_validate(&token)?;
+    CW20_SPENDERS.remove(deps.storage, token_addr.as_str());
+
+    Ok(Response::new()
+        .add_attribute("action", "remove_cw20_spender")
+        .add_attribute("token", token_addr))
+}
+
+fn execute_set_cw20_instant_withdraw_paused(
+    deps: DepsMut,
+    info: MessageInfo,
+    paused: bool,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+
+    CW20_INSTANT_WITHDRAW_PAUSED.save(deps.storage, &paused)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_cw20_instant_withdraw_paused")
+        .add_attribute("paused", paused.to_string()))
+}
+
+/// Pulls CW20 from treasury to `recipient` via `Cw20ExecuteMsg::Transfer`.
+///
+/// # Invariants
+/// - Gated only by `CW20_INSTANT_WITHDRAW_PAUSED` — **not** by `wrapping_paused`.
+/// - Caller must equal the registered spender for `token` (gov is not implicit).
+/// - Amount must be non-zero; treasury CW20 balance must be ≥ amount.
+/// - CW20 whitelist is irrelevant (whitelist is for CR/AllBalances tracking only).
+/// - No on-chain per-pull cap: a buggy registered spender can drain the token.
+/// - Uses standard CW20 Transfer (no Receive hook on treasury mid-state).
+fn execute_instant_withdraw_cw20(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    recipient: String,
+    token: String,
+    amount: Uint128,
+) -> Result<Response, ContractError> {
+    let paused = CW20_INSTANT_WITHDRAW_PAUSED
+        .may_load(deps.storage)?
+        .unwrap_or(false);
+    if paused {
+        return Err(ContractError::Cw20InstantWithdrawPaused);
+    }
+
+    if amount.is_zero() {
+        return Err(ContractError::ZeroAmount);
+    }
+
+    let token_addr = deps.api.addr_validate(&token)?;
+    let spender = CW20_SPENDERS
+        .may_load(deps.storage, token_addr.as_str())?
+        .ok_or_else(|| ContractError::NoCw20Spender {
+            token: token_addr.to_string(),
+        })?;
+
+    if info.sender != spender {
+        return Err(ContractError::NotRegisteredCw20Spender);
+    }
+
+    let recipient_addr = deps.api.addr_validate(&recipient)?;
+
+    let balance: cw20::BalanceResponse = deps.querier.query_wasm_smart(
+        token_addr.to_string(),
+        &cw20::Cw20QueryMsg::Balance {
+            address: env.contract.address.to_string(),
+        },
+    )?;
+    if balance.balance < amount {
+        return Err(ContractError::InsufficientBalance {
+            requested: amount.to_string(),
+            available: balance.balance.to_string(),
+        });
+    }
+
+    let transfer_msg = WasmMsg::Execute {
+        contract_addr: token_addr.to_string(),
+        msg: to_json_binary(&Cw20ExecuteMsg::Transfer {
+            recipient: recipient_addr.to_string(),
+            amount,
+        })?,
+        funds: vec![],
+    };
+
+    Ok(Response::new()
+        .add_message(transfer_msg)
+        .add_attribute("action", "instant_withdraw_cw20")
+        .add_attribute("recipient", recipient_addr)
+        .add_attribute("token", token_addr)
+        .add_attribute("amount", amount)
+        .add_attribute("spender", info.sender))
+}
+
 // ============ QUERY ============
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -768,16 +912,21 @@ pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::Cw20Whitelist {} => to_json_binary(&query_cw20_whitelist(deps)?),
         QueryMsg::PendingWithdrawals {} => to_json_binary(&query_pending_withdrawals(deps)?),
         QueryMsg::DenomWrappers {} => to_json_binary(&query_denom_wrappers(deps)?),
+        QueryMsg::Cw20Spenders {} => to_json_binary(&query_cw20_spenders(deps)?),
     }
 }
 
 fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
     let config = CONFIG.load(deps.storage)?;
+    let cw20_instant_withdraw_paused = CW20_INSTANT_WITHDRAW_PAUSED
+        .may_load(deps.storage)?
+        .unwrap_or(false);
     Ok(ConfigResponse {
         governance: config.governance,
         timelock_duration: config.timelock_duration,
         swap_contract: config.swap_contract,
         wrapping_paused: config.wrapping_paused,
+        cw20_instant_withdraw_paused,
     })
 }
 
@@ -893,6 +1042,22 @@ fn query_denom_wrappers(deps: Deps) -> StdResult<DenomWrappersResponse> {
     Ok(DenomWrappersResponse { wrappers })
 }
 
+fn query_cw20_spenders(deps: Deps) -> StdResult<Cw20SpendersResponse> {
+    let spenders: Vec<Cw20SpenderEntry> = CW20_SPENDERS
+        .range(deps.storage, None, None, Order::Ascending)
+        .map(|r| {
+            r.and_then(|(token, spender)| {
+                Ok(Cw20SpenderEntry {
+                    token: deps.api.addr_validate(&token)?,
+                    spender,
+                })
+            })
+        })
+        .collect::<StdResult<Vec<_>>>()?;
+
+    Ok(Cw20SpendersResponse { spenders })
+}
+
 // ============ TESTS ============
 
 // Coverage gaps that cannot be tested with mock_dependencies:
@@ -918,6 +1083,9 @@ mod tests {
     const NEW_GOVERNANCE: &str = "new_governance_addr";
     const USER: &str = "user_addr";
     const CW20_TOKEN: &str = "cw20_token_addr";
+    const CW20_TOKEN_B: &str = "cw20_token_b_addr";
+    const CW20_SPENDER: &str = "cw20_spender_addr";
+    const CW20_SPENDER_B: &str = "cw20_spender_b_addr";
     const DENOM_USTC: &str = "uusd";
     const DENOM_LUNC: &str = "uluna";
 
@@ -927,6 +1095,32 @@ mod tests {
         };
         let info = mock_info("creator", &[]);
         instantiate(deps, mock_env(), info, msg).unwrap();
+    }
+
+    fn mock_cw20_balance(deps: &mut cosmwasm_std::OwnedDeps<cosmwasm_std::MemoryStorage, cosmwasm_std::testing::MockApi, cosmwasm_std::testing::MockQuerier>, balance: Uint128) {
+        let amount_clone = balance;
+        deps.querier.update_wasm(move |_| {
+            cosmwasm_std::SystemResult::Ok(cosmwasm_std::ContractResult::Ok(
+                to_json_binary(&Cw20BalanceResponse {
+                    balance: amount_clone,
+                })
+                .unwrap(),
+            ))
+        });
+    }
+
+    fn set_cw20_spender(deps: DepsMut, token: &str, spender: &str) {
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps,
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20Spender {
+                token: token.to_string(),
+                spender: spender.to_string(),
+            },
+        )
+        .unwrap();
     }
 
     // ============ INSTANTIATE TESTS ============
@@ -4558,8 +4752,70 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
+        // Pre-migrate state: whitelist, denom wrapper, pending withdraw
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::AddCw20 {
+                contract_addr: CW20_TOKEN.to_string(),
+            },
+        )
+        .unwrap();
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: "wrapper_addr".to_string(),
+            },
+        )
+        .unwrap();
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::ProposeWithdraw {
+                destination: USER.to_string(),
+                asset: AssetInfo::Native {
+                    denom: DENOM_USTC.to_string(),
+                },
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap();
+
         // Migrate
         migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+
+        // Governance / whitelist / wrappers / pending withdraw preserved
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.governance.as_str(), GOVERNANCE);
+        assert!(CW20_WHITELIST.has(&deps.storage, CW20_TOKEN));
+        assert_eq!(
+            DENOM_WRAPPERS.load(&deps.storage, DENOM_LUNC).unwrap().as_str(),
+            "wrapper_addr"
+        );
+        let pending = query(
+            deps.as_ref(),
+            mock_env(),
+            QueryMsg::PendingWithdrawals {},
+        )
+        .unwrap();
+        let pending: PendingWithdrawalsResponse = from_json(pending).unwrap();
+        assert_eq!(pending.withdrawals.len(), 1);
+
+        // New CW20 spender queries/API available after migrate
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::Cw20Spenders {}).unwrap();
+        let spenders: Cw20SpendersResponse = from_json(res).unwrap();
+        assert!(spenders.spenders.is_empty());
+
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::Cw20Spenders {}).unwrap();
+        let spenders: Cw20SpendersResponse = from_json(res).unwrap();
+        assert_eq!(spenders.spenders.len(), 1);
 
         // SwapDeposit still works (after setting swap contract)
         let info = mock_info(GOVERNANCE, &[]);
@@ -4576,17 +4832,6 @@ mod tests {
         let info = mock_info(GOVERNANCE, &[]);
         let msg = ExecuteMsg::ProposeGovernanceTransfer {
             new_governance: "new_gov".to_string(),
-        };
-        execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-        // ProposeWithdraw still works
-        let info = mock_info(GOVERNANCE, &[]);
-        let msg = ExecuteMsg::ProposeWithdraw {
-            destination: USER.to_string(),
-            asset: AssetInfo::Native {
-                denom: DENOM_USTC.to_string(),
-            },
-            amount: Uint128::new(100),
         };
         execute(deps.as_mut(), mock_env(), info, msg).unwrap();
     }
@@ -4919,6 +5164,523 @@ mod tests {
             ExecuteMsg::WrapDeposit {},
         )
         .unwrap();
+    }
+
+    // ============ CW20 INSTANT WITHDRAW / SPENDER REGISTRY (#6) ============
+
+    #[test]
+    fn test_set_cw20_spender_and_query() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::Cw20Spenders {}).unwrap();
+        let response: Cw20SpendersResponse = from_json(res).unwrap();
+        assert_eq!(response.spenders.len(), 1);
+        assert_eq!(response.spenders[0].token.as_str(), CW20_TOKEN);
+        assert_eq!(response.spenders[0].spender.as_str(), CW20_SPENDER);
+
+        let config_bin = query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap();
+        let config: ConfigResponse = from_json(config_bin).unwrap();
+        assert!(!config.cw20_instant_withdraw_paused);
+    }
+
+    #[test]
+    fn test_set_cw20_spender_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20Spender {
+                token: CW20_TOKEN.to_string(),
+                spender: CW20_SPENDER.to_string(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_remove_cw20_spender() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::RemoveCw20Spender {
+                token: CW20_TOKEN.to_string(),
+            },
+        )
+        .unwrap();
+
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::NoCw20Spender {
+                token: CW20_TOKEN.to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_remove_cw20_spender_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::RemoveCw20Spender {
+                token: CW20_TOKEN.to_string(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_success() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(500_000),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.messages.len(), 1);
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute {
+                contract_addr,
+                msg,
+                funds,
+            }) => {
+                assert_eq!(contract_addr, CW20_TOKEN);
+                assert!(funds.is_empty());
+                let transfer: Cw20ExecuteMsg = from_json(msg).unwrap();
+                match transfer {
+                    Cw20ExecuteMsg::Transfer { recipient, amount } => {
+                        assert_eq!(recipient, USER);
+                        assert_eq!(amount, Uint128::new(500_000));
+                    }
+                    _ => panic!("Expected Cw20 Transfer"),
+                }
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
+        }
+        assert_eq!(res.attributes[0].value, "instant_withdraw_cw20");
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_replace_spender() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER_B);
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::NotRegisteredCw20Spender);
+
+        let info = mock_info(CW20_SPENDER_B, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_token_isolation() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN_B, CW20_SPENDER_B);
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        // Spender A cannot pull token B
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN_B.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::NotRegisteredCw20Spender);
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_unauthorized_random() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::NotRegisteredCw20Spender);
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_gov_not_implicit_spender() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::NotRegisteredCw20Spender);
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_zero_amount() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::zero(),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::ZeroAmount);
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_insufficient_balance() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(100));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(101),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::InsufficientBalance {
+                requested: "101".to_string(),
+                available: "100".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_cw20_instant_withdraw_pause() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20InstantWithdrawPaused { paused: true },
+        )
+        .unwrap();
+
+        let config_bin = query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap();
+        let config: ConfigResponse = from_json(config_bin).unwrap();
+        assert!(config.cw20_instant_withdraw_paused);
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Cw20InstantWithdrawPaused);
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20InstantWithdrawPaused { paused: false },
+        )
+        .unwrap();
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_cw20_pause_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20InstantWithdrawPaused { paused: true },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_wrapping_paused_does_not_block_cw20_instant_withdraw() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetWrappingPaused { paused: true },
+        )
+        .unwrap();
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_cw20_pause_does_not_block_native_instant_withdraw() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetDenomWrapper {
+                denom: DENOM_LUNC.to_string(),
+                wrapper: "wrapper_addr".to_string(),
+            },
+        )
+        .unwrap();
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetCw20InstantWithdrawPaused { paused: true },
+        )
+        .unwrap();
+
+        deps.querier.update_balance(
+            mock_env().contract.address.clone(),
+            vec![coin(1_000_000, DENOM_LUNC)],
+        );
+
+        let info = mock_info("wrapper_addr", &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdraw {
+                recipient: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_propose_withdraw_cw20_unaffected_by_spender_registry() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        // No spender registered; timelock path still works
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::ProposeWithdraw {
+                destination: USER.to_string(),
+                asset: AssetInfo::Cw20 {
+                    contract_addr: Addr::unchecked(CW20_TOKEN),
+                },
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap();
+
+        let res = query(
+            deps.as_ref(),
+            mock_env(),
+            QueryMsg::PendingWithdrawals {},
+        )
+        .unwrap();
+        let pending: PendingWithdrawalsResponse = from_json(res).unwrap();
+        assert_eq!(pending.withdrawals.len(), 1);
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_without_whitelist() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        // Whitelist not required for InstantWithdrawCw20
+        assert!(!CW20_WHITELIST.has(&deps.storage, CW20_TOKEN));
+        set_cw20_spender(deps.as_mut(), CW20_TOKEN, CW20_SPENDER);
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(50),
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn test_instant_withdraw_cw20_unregistered_token() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        mock_cw20_balance(&mut deps, Uint128::new(1_000_000));
+
+        let info = mock_info(CW20_SPENDER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::InstantWithdrawCw20 {
+                recipient: USER.to_string(),
+                token: CW20_TOKEN.to_string(),
+                amount: Uint128::new(100),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::NoCw20Spender {
+                token: CW20_TOKEN.to_string(),
+            }
+        );
     }
 }
 
