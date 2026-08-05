@@ -318,7 +318,6 @@ The Treasury Contract serves as the secure custodian for all protocol assets. It
 | `pending_governance` | `Map<Addr, PendingGovernance>` | Mapping of proposed governance addresses to their proposals; multiple proposals can exist simultaneously |
 | `timelock_duration` | `u64` | Duration of governance change delay (7 days = 604,800 seconds) |
 | `cw20_whitelist` | `Map<Addr, bool>` | Map of CW20 addresses for balance tracking |
-| `swap_contract` | `Option<Addr>` | Authorized swap contract for deposit notifications (set via `SetSwapContract`) |
 
 ```
 PendingGovernance {
@@ -346,11 +345,9 @@ PendingGovernance {
 | `CancelWithdraw { withdrawal_id }` | Governance | Cancels a specific pending withdrawal |
 | `AddCw20 { contract_addr }` | Governance | Adds a CW20 token to the balance tracking whitelist |
 | `RemoveCw20 { contract_addr }` | Governance | Removes a CW20 token from the whitelist |
-| `SetSwapContract { contract_addr }` | Governance | Sets the authorized swap contract address for deposit notifications |
-| `SwapDeposit {}` | Any user | **(Legacy)** Accepts USTC for swap; notifies swap contract. Not used in current architecture. |
 | `Receive(Cw20ReceiveMsg)` | CW20 contract | CW20 receive hook; accepts direct CW20 token transfers |
 
-**Note**: The `SwapDeposit` message exists on the deployed Treasury contract but is not used in the current swap architecture. Users should call `Swap {}` on the Swap contract directly, which forwards USTC to Treasury and mints USTR with optional referral bonuses.
+**Note (historical)**: `SetSwapContract` and `SwapDeposit` were removed in [#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8). The product path is ustc-swap `Swap { referral_code, leaderboard_hint }` — users send USTC to ustc-swap, which mints USTR and forwards USTC to treasury via `BankMsg::Send`. See [skills/treasury-swap-removal](../skills/treasury-swap-removal/SKILL.md).
 
 **QueryMsg**
 

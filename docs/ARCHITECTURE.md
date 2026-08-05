@@ -25,23 +25,18 @@ The USTR CMM system consists of smart contracts that work together to implement 
 │  └──────┬───────┘                          └─────────┬─────────┘   │
 │         │                                            │             │
 │         │ USTC (MsgExecuteContract)                  │             │
-│         │ [NO TAX - direct to contract]              │             │
+│         │ Swap { referral_code, leaderboard_hint }   │             │
 │         ▼                                            │             │
-│  ┌──────────────────────────────────────────────────▼─────────┐   │
-│  │                      TREASURY CONTRACT                      │   │
-│  │  ┌─────────────────────────────────────────────────────┐   │   │
-│  │  │  SwapDeposit { swap_contract }                      │   │   │
-│  │  │  - Accepts USTC deposits for swap                   │   │   │
-│  │  │  - Emits deposit event with sender + amount         │   │   │
-│  │  │  - Notifies swap contract of deposit                │   │   │
-│  │  └─────────────────────────────────────────────────────┘   │   │
-│  └────────────────────────────┬───────────────────────────────┘   │
-│                               │ Notify deposit                     │
-│                               ▼                                    │
 │  ┌──────────────┐      ┌──────────────┐                           │
-│  │  USTR TOKEN  │◄─────│  USTC-SWAP   │  Tracks deposits,         │
-│  │  (CW20)      │ Mint │  CONTRACT    │  calculates rate,         │
-│  └──────────────┘      └──────────────┘  mints USTR               │
+│  │  USTR TOKEN  │◄─────│  USTC-SWAP   │  Calculates rate,         │
+│  │  (CW20)      │ Mint │  CONTRACT    │  mints USTR to user       │
+│  └──────────────┘      └──────┬───────┘                           │
+│                               │ BankMsg::Send (0.5% tax)           │
+│                               ▼                                    │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │                      TREASURY CONTRACT                      │   │
+│  │  Passive custodian — holds USTC forwarded from ustc-swap    │   │
+│  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │
 │  ┌──────────────┐     [PHASE 2]                                    │
 │  │  UST1 TOKEN  │     Collateralized unstablecoin                  │
@@ -51,15 +46,15 @@ The USTR CMM system consists of smart contracts that work together to implement 
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Tax Optimization
+### Tax on Swap Forward
 
-TerraClassic applies a **0.5% burn tax** on native token transfers via `BankMsg::Send`. To avoid this tax and ensure 100% of user USTC reaches the treasury:
+TerraClassic applies a **0.5% burn tax** on native token transfers via `BankMsg::Send`. The live swap path uses this taxed forward:
 
-- **Users send USTC directly to Treasury** via `MsgExecuteContract` (no tax on contract calls)
-- **Treasury accepts the deposit** and notifies the Swap contract
-- **Swap contract mints USTR** to the user based on the deposit
+- **Users call `Swap { referral_code, leaderboard_hint }` on ustc-swap** with USTC attached via `MsgExecuteContract` (no tax on the user→contract call)
+- **ustc-swap calculates the rate and mints USTR** to the user (on the pre-tax amount)
+- **ustc-swap forwards USTC to Treasury** via `BankMsg::Send` (0.5% burn tax applies on this forward)
 
-This architecture avoids the intermediate `BankMsg::Send` that would incur the 0.5% tax.
+Treasury is a passive custodian for swap USTC; it does not participate in swap execution. The tax cost is offset by up to 20% referral bonus. See [skills/treasury-swap-removal](../skills/treasury-swap-removal/SKILL.md) and [#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8) for removal of the legacy tax-free `SwapDeposit` / `NotifyDeposit` path.
 
 ## Contract Responsibilities
 
@@ -79,20 +74,17 @@ This architecture avoids the intermediate `BankMsg::Send` that would incur the 0
 
 ### Treasury Contract
 
-**Purpose**: Secure custody of all protocol assets + swap deposit acceptance + wrap/CW20 inventory pulls
+**Purpose**: Secure custody of all protocol assets + wrap/CW20 inventory pulls
 
 **Key Functions**:
-- Accept and hold native tokens (USTC, LUNC)
+- Accept and hold native tokens (USTC, LUNC), including USTC forwarded from ustc-swap
 - Accept and hold CW20 tokens
-- **Accept swap deposits** via `SwapDeposit` message (tax-free path)
-- Notify swap contract of deposits for USTR minting
 - Governance-controlled withdrawals with 7-day timelock
 - 7-day timelock on governance changes
 - Native wrapping custody (`WrapDeposit` / wrapper `InstantWithdraw`)
 - Registered CW20 spender pulls (`InstantWithdrawCw20`) for ust1-window vFDUSD redeem, with per-(spender, token) 24h pull limits — see [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6), [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7), and [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md)
 
 **Dependencies**: 
-- USTC-Swap Contract (for deposit notifications)
 - Wrap-mapper (registered via `SetDenomWrapper`)
 - ust1-window (registered via `SetCw20Spender` for vFDUSD; companion [ust1-window#20](https://gitlab.com/PlasticDigits/ust1-window/-/work_items/20))
 
@@ -101,14 +93,15 @@ This architecture avoids the intermediate `BankMsg::Send` that would incur the 0
 **Purpose**: Time-limited USTC→USTR exchange rate tracking and minting
 
 **Key Functions**:
-- **Receive deposit notifications** from Treasury
+- **Receive `Swap` from users** with USTC attached
 - Calculate current exchange rate
 - Mint USTR to users based on deposit amount
+- Forward USTC to Treasury via `BankMsg::Send`
 - Track swap statistics
 
 **Dependencies**: 
 - USTR Token (minter)
-- Treasury (deposit source, must be authorized caller)
+- Treasury (USTC destination for forwarded funds)
 
 ### Airdrop Contract
 
@@ -141,27 +134,27 @@ This architecture avoids the intermediate `BankMsg::Send` that would incur the 0
 
 ## Data Flow
 
-### Swap Flow (Tax-Optimized, Atomic)
+### Swap Flow (Atomic)
 
-All steps execute **atomically within a single transaction** via CosmWasm submessages:
+All steps execute **atomically within a single transaction**:
 
 ```
 ┌─────────────────── SINGLE ATOMIC TRANSACTION ───────────────────┐
 │                                                                 │
-│  1. User → Treasury: SwapDeposit {} with USTC                  │
-│     [NO TAX: MsgExecuteContract, not BankMsg::Send]            │
+│  1. User → ustc-swap: Swap { referral_code, leaderboard_hint } │
+│     with USTC attached [NO TAX: MsgExecuteContract]            │
+│                           │                                     │
+│                           ▼                                     │
+│  2. ustc-swap: Calculate rate, validate period active        │
+│  3. ustc-swap: Calculate ustr_amount = ustc_amount / rate      │
 │                           │                                     │
 │                           ▼ (submessage)                        │
-│  2. Treasury → Swap: NotifyDeposit { depositor, amount }       │
+│  4. ustc-swap → USTR Token: Mint USTR to user                  │
 │     [WasmMsg::Execute - same transaction]                      │
 │                           │                                     │
 │                           ▼                                     │
-│  3. Swap: Calculate rate, validate period active               │
-│  4. Swap: Calculate ustr_amount = ustc_amount / rate           │
-│                           │                                     │
-│                           ▼ (submessage)                        │
-│  5. Swap → USTR Token: Mint USTR to depositor                  │
-│     [WasmMsg::Execute - same transaction]                      │
+│  5. ustc-swap → Treasury: BankMsg::Send USTC                   │
+│     [0.5% burn tax applies on forward]                         │
 │                                                                 │
 │  If ANY step fails → entire transaction reverts                │
 │                       (USTC returned to user)                  │
@@ -169,12 +162,9 @@ All steps execute **atomically within a single transaction** via CosmWasm submes
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Why This Flow?** TerraClassic's 0.5% burn tax applies to `BankMsg::Send` (native transfers). 
-By having users send USTC directly to Treasury via `MsgExecuteContract`, we avoid the tax entirely.
-The Treasury holds 100% of the deposited USTC rather than 99.5%.
+**Tax note**: USTR is calculated on the pre-tax USTC amount; the user pays the 0.5% burn tax when ustc-swap forwards USTC to Treasury. Referral bonuses (up to 20%) offset the tax cost.
 
-**Atomic Guarantees**: Treasury calls Swap via `WasmMsg::Execute`, Swap calls USTR via `WasmMsg::Execute`.
-All submessages execute in the same transaction context. If any fails, everything reverts.
+**Atomic Guarantees**: ustc-swap mints USTR via `WasmMsg::Execute` and forwards USTC via `BankMsg::Send` in the same transaction. If any step fails, everything reverts.
 
 ### Governance Change Flow
 
@@ -242,18 +232,12 @@ Timelocked `ProposeWithdraw` remains the only path for arbitrary destinations / 
 | `cw20_iw_paused` | `Item<bool>` | Pause for CW20 InstantWithdraw (absent = false) |
 | `wrapping_paused` | `bool` (in Config) | Pause for WrapDeposit + native InstantWithdraw |
 
-### Treasury State (Swap-Related)
-
-| Key | Type | Description |
-|-----|------|-------------|
-| `swap_contract` | `Option<Addr>` | Authorized swap contract for deposit notifications |
-
 ### USTC-Swap State
 
 | Key | Type | Description |
 |-----|------|-------------|
 | `config` | `Config` | Token addresses, rates, timing, treasury address |
-| `total_ustc_received` | `Uint128` | Cumulative USTC deposited (tracked via notifications) |
+| `total_ustc_received` | `Uint128` | Cumulative USTC received from swaps |
 | `total_ustr_minted` | `Uint128` | Cumulative USTR issued |
 | `paused` | `bool` | Emergency pause status |
 | `referral_code_stats` | `Map<String, ReferralCodeStats>` | Per-code reward tracking (rewards earned, user bonuses, swap count) |
@@ -271,13 +255,13 @@ Timelocked `ProposeWithdraw` remains the only path for arbitrary destinations / 
 | Contract | Role | Permissions |
 |----------|------|-------------|
 | USTR Token | Minter | Mint tokens |
-| Treasury | Governance | Propose governance, withdraw, set swap contract, set denom wrappers / CW20 spenders + 24h pull limits, pause flags |
+| Treasury | Governance | Propose governance, withdraw, set denom wrappers / CW20 spenders + 24h pull limits, pause flags |
 | Treasury | Pending Governance | Accept governance |
-| Treasury | Any User | Deposit USTC for swap (via SwapDeposit); WrapDeposit |
+| Treasury | Any User | `WrapDeposit` (native wrap path) |
 | Treasury | Registered wrapper | Native `InstantWithdraw` for its denom |
 | Treasury | Registered CW20 spender | `InstantWithdrawCw20` for its token only, within configured 24h quota |
 | USTC-Swap | Admin | Pause/resume, update admin |
-| USTC-Swap | Treasury | Notify deposits (triggers USTR mint) |
+| USTC-Swap | Any User | `Swap` with USTC attached (mints USTR, forwards USTC to treasury) |
 | Airdrop | Any User | Execute airdrop (must have CW20 allowance) |
 
 ### Timelock Protection

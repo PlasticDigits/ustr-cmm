@@ -793,7 +793,6 @@ class ContractService {
       interface ContractConfigResponse {
         governance: string;
         timelock_duration: number;
-        swap_contract: string | null;
       }
       
       const result = await this.queryContract<{ data: ContractConfigResponse }>(

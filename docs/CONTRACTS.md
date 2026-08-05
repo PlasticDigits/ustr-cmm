@@ -74,8 +74,6 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - `CancelWithdraw { withdrawal_id }` - Cancels a specific pending withdrawal (governance only)
 - `AddCw20 { contract_addr }` - Adds CW20 token to balance tracking whitelist
 - `RemoveCw20 { contract_addr }` - Removes CW20 token from whitelist
-- `SetSwapContract { contract_addr }` - Sets the authorized swap contract address (governance only)
-- `SwapDeposit {}` - **(Legacy)** Accepts USTC for swap; not used in current architecture
 - `Receive(Cw20ReceiveMsg)` - CW20 receive hook for accepting direct token transfers
 - `SetDenomWrapper { denom, wrapper }` / `RemoveDenomWrapper { denom }` - Register native wrap-mapper (governance)
 - `WrapDeposit {}` - Accept native funds for wrapping; notify registered wrapper
@@ -86,7 +84,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - `SetCw20InstantWithdrawPaused { paused }` - Pause CW20 InstantWithdraw only (independent of wrapping)
 - `InstantWithdrawCw20 { recipient, token, amount }` - CW20 `Transfer` by registered spender (not gated by `wrapping_paused`; enforces 24h pull limit)
 
-**Note**: The `SwapDeposit` message exists on the deployed Treasury contract but is not used in the current swap architecture. Users should call `Swap {}` on the Swap contract directly, which forwards USTC to Treasury and mints USTR with optional referral bonuses.
+**Note**: `SetSwapContract` and `SwapDeposit` were removed in [#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8). Users call `Swap { referral_code, leaderboard_hint }` on ustc-swap; the swap contract forwards USTC to Treasury via `BankMsg::Send` and mints USTR. Treasury migrate strips `swap_contract` from state (bundled with the [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5) migrate). See [skills/treasury-swap-removal](../skills/treasury-swap-removal/SKILL.md).
 
 **CW20 InstantWithdraw (ust1-window / vFDUSD)**: See [skills/treasury-cw20-instant-withdraw/](../skills/treasury-cw20-instant-withdraw/SKILL.md) and issues [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6) / [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7). Companion consumer: [ust1-window#20](https://gitlab.com/PlasticDigits/ust1-window/-/work_items/20). Mainnet post-migrate ops: register spender **with** `limit_24h` (or `SetCw20SpenderLimit`) before enabling window redeem — fail-closed if unset. Also needed for [ust1-window#19](https://gitlab.com/PlasticDigits/ust1-window/-/issues/19) Phase 5.
 

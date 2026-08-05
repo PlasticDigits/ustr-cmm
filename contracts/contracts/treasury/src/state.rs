@@ -8,15 +8,34 @@ use cw_storage_plus::{Item, Map};
 pub const CW20_PULL_LIMIT_WINDOW_SECONDS: u64 = 86_400;
 
 /// Contract configuration
+///
+/// # Invariants
+/// - No `swap_contract` field: treasury does **not** participate in USTC→USTR
+///   product swaps. Live path is user → `ustc-swap::Swap` → `BankMsg::Send` USTC
+///   to treasury. See [#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8).
+/// - `wrapping_paused` gates only `WrapDeposit` / native `InstantWithdraw`.
 #[cw_serde]
 pub struct Config {
     /// Current governance address (admin/DAO)
     pub governance: Addr,
     /// Duration of governance change delay in seconds (7 days = 604,800)
     pub timelock_duration: u64,
-    /// Authorized swap contract address for deposit notifications (optional)
-    pub swap_contract: Option<Addr>,
     /// Whether wrapping operations (WrapDeposit / InstantWithdraw) are paused
+    pub wrapping_paused: bool,
+}
+
+/// Pre-#8 / pre-wrap on-disk config shape used only by `migrate`.
+///
+/// Loads configs that still have `swap_contract` and/or lack `wrapping_paused`.
+/// The obsolete `swap_contract` value is discarded; never re-persisted.
+#[cw_serde]
+pub struct ConfigLegacy {
+    pub governance: Addr,
+    pub timelock_duration: u64,
+    /// Discarded on migrate (#8 / MB-1).
+    #[serde(default)]
+    pub swap_contract: Option<Addr>,
+    #[serde(default)]
     pub wrapping_paused: bool,
 }
 
