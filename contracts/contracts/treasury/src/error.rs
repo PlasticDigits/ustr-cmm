@@ -32,15 +32,6 @@ pub enum ContractError {
     #[error("Invalid amount: withdrawal amount must be greater than zero")]
     ZeroWithdrawAmount,
 
-    #[error("Swap contract not set")]
-    SwapContractNotSet,
-
-    #[error("Invalid funds: expected exactly USTC (uusd), received {received:?}")]
-    InvalidSwapFunds { received: Vec<String> },
-
-    #[error("Minimum swap deposit is 1 USTC (1,000,000 uusd), received {received}")]
-    BelowMinimumSwap { received: String },
-
     #[error("No wrapper registered for denom: {denom}")]
     NoDenomWrapper { denom: String },
 

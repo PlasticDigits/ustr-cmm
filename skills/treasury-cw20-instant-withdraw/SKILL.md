@@ -12,7 +12,7 @@ description: >-
 
 Companion to GitLab issues [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6) (spender registry) and [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7) (24h pull limit). Consumer: [ust1-window#20](https://gitlab.com/PlasticDigits/ust1-window/-/work_items/20). Phase 5 withdraw smoke: [ust1-window#19](https://gitlab.com/PlasticDigits/ust1-window/-/issues/19). Audit follow-up: [audits/INTERNAL_COMPOSER_1785465508.md](../../audits/INTERNAL_COMPOSER_1785465508.md) (H-2 / M-1).
 
-Cross-links: [docs/CONTRACTS.md](../../docs/CONTRACTS.md), [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [plans/NATIVE_TOKEN_WRAPPING.md](../../plans/NATIVE_TOKEN_WRAPPING.md).
+Cross-links: [docs/CONTRACTS.md](../../docs/CONTRACTS.md), [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [plans/NATIVE_TOKEN_WRAPPING.md](../../plans/NATIVE_TOKEN_WRAPPING.md), [treasury-swap-removal](../treasury-swap-removal/SKILL.md) ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8) — do not confuse wrap `NotifyDeposit` with removed swap path).
 
 ## Why this exists
 
@@ -54,7 +54,7 @@ On-chain 24h pull limits (#7) bound blast radius if a registered spender is bugg
 5. **Whitelist orthogonal**: InstantWithdrawCw20 does not require whitelist membership.
 6. **Timelock path unchanged**: `ProposeWithdraw` / `ExecuteWithdraw` remain for arbitrary destinations and are **not** gated by CW20 pull limits.
 7. **No arbitrary WasmMsg**: only typed Transfer to validated recipient.
-8. **Migrate**: additive maps; preserve governance, whitelist, pending withdrawals, denom wrappers, spenders. Pre-existing spenders cannot pull until a limit is set (fail-closed).
+8. **Migrate**: additive maps; preserve governance, whitelist, pending withdrawals, denom wrappers, spenders. Pre-existing spenders cannot pull until a limit is set (fail-closed). Same migrate also strips obsolete `Config.swap_contract` ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8) / [treasury-swap-removal](../treasury-swap-removal/SKILL.md)) — unrelated to CW20 pulls.
 9. **Spender rotation**: overwriting spender A→B clears A's limit/usage for that token; B starts fresh (set limit via `limit_24h` or `SetCw20SpenderLimit`).
 
 ## Security callouts for reviewers

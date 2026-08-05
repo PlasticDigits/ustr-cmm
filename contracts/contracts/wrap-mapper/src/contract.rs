@@ -124,7 +124,7 @@ pub fn execute(
 //
 // [LOW-3] Governance may also mint CW20 tokens directly on the CW20 contract
 // (bypassing WrapDeposit) when the treasury already holds sufficient native
-// backing from other sources (SwapDeposit, direct transfers, etc.). This
+// backing from other sources (ustc-swap forwards, direct transfers, etc.). This
 // avoids an extra tax event on Terra Classic. The treasury's bank balance
 // check in InstantWithdraw ensures total CW20 supply can never exceed the
 // actual native holdings.
@@ -3640,7 +3640,7 @@ mod integration_tests {
     fn setup_env_with_preexisting_funds() -> TestEnv {
         let mut env = setup_full_env();
 
-        // Simulate pre-existing treasury funds from SwapDeposit and other operations.
+        // Simulate pre-existing treasury funds from ustc-swap forwards and other ops.
         // Governance may intentionally mint CW20 backed by these funds (to avoid
         // re-taxation), but the total CW20 supply must never exceed actual holdings.
         env.app

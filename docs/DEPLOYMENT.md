@@ -261,22 +261,9 @@ terrad tx wasm execute $USTR_TOKEN \
   -y
 ```
 
-### Set Swap Contract on Treasury
+### Swap Wiring (No Treasury Step)
 
-The Treasury needs to know the Swap contract address to notify it of deposits:
-
-```bash
-terrad tx wasm execute $TREASURY \
-  '{"set_swap_contract": {"contract_addr": "'"$SWAP"'"}}' \
-  --from wallet \
-  --chain-id $CHAIN_ID \
-  --node $RPC \
-  --gas auto \
-  --gas-adjustment 1.4 \
-  --fees 100000000uluna \
-  --broadcast-mode sync \
-  -y
-```
+`set_swap_contract` was removed in [#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8). No treasury wiring is needed for swap — instantiate ustc-swap with the treasury address in `swap_init.json`. Users call `Swap` on ustc-swap; it forwards USTC to treasury via `BankMsg::Send`. See [skills/treasury-swap-removal](../skills/treasury-swap-removal/SKILL.md).
 
 ## Step 5: Transfer Initial USTC to Treasury
 
@@ -401,7 +388,7 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 - [ ] Swap contract deployed with correct configuration
 - [ ] Swap contract added as USTR minter
 - [ ] Deployer removed from USTR minters
-- [ ] Swap contract set on Treasury (`set_swap_contract`)
+- [ ] Treasury migrate strips `swap_contract` ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8); no `set_swap_contract` step)
 - [ ] Initial USTC transferred to treasury
 - [ ] All contract addresses documented
 - [ ] Frontend updated with contract addresses

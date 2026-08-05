@@ -80,7 +80,7 @@ DenomWrappers {}  // returns all denom->wrapper mappings
 
 Add to `src/contract.rs`:
 
-**`WrapDeposit {}`** -- mirrors the existing `SwapDeposit` pattern (line 474 of current contract.rs):
+**`WrapDeposit {}`** -- native deposit + notify wrapper pattern:
 
 1. Validate `info.funds`: single native coin, non-zero amount
 2. Look up `DENOM_WRAPPERS[denom]` -- error if no wrapper registered
@@ -282,7 +282,7 @@ Add to treasury's inline `#[cfg(test)] mod tests` in `contracts/contracts/treasu
 | A10 | `test_instant_withdraw_unknown_wrapper` | Error when caller is not in DENOM_WRAPPERS |
 | A11 | `test_migrate_from_old_version` | Migration sets new version, existing state preserved |
 | A12 | `test_migrate_wrong_contract` | Migration rejected for different contract name |
-| A13 | `test_existing_features_after_migrate` | SwapDeposit, ProposeWithdraw, governance still work post-migration |
+| A13 | `test_existing_features_after_migrate` | WrapDeposit, ProposeWithdraw, governance still work post-migration |
 
 ### B. Wrap-Mapper Contract Unit Tests
 
