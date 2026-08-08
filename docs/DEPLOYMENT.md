@@ -325,39 +325,47 @@ terrad query wasm contract-state smart $SWAP '{"status": {}}' \
   --node $RPC
 ```
 
-## Treasury Migrate + CW20 Spender Wiring (#6 / #7)
+## Treasury Migrate + Wrap Wiring + CW20 Spender (#5 / #6 / #7 / #8)
 
 In-place migrate keeps mainnet treasury address
 `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` stable.
 
-**Fail-closed (#7):** after migrate, InstantWithdrawCw20 requires a configured 24h pull limit for `(token, spender)`. Set the limit **with** or **before** enabling window redeem.
+**Mainnet status (2026-08-08):** treasury migrated `10673` → **`11564`**; wrap-mapper code **`11565`** live; cLUNC/cUSTC + denom wiring complete; vFDUSD → ust1-window spender registered with `limit_24h=10000000000`. See [Contract Addresses](#contract-addresses) and issue [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5).
+
+**One-shot operator script** (steps A+B+C): [`contracts/scripts/treasury-migrate-wrap-wire.sh`](../contracts/scripts/treasury-migrate-wrap-wire.sh) — signs as `cl8y2_admin` (`terra1xsecn…`). Prefer `--gas auto --gas-prices 28.325uluna` (store adj **1.5**, execute/migrate adj **1.4**). Fixed `--fees 100000000uluna` is **insufficient for wasm store** (~covers ≤3.53M gas; treasury store sim was ~3.30M raw / ~4.95M with 1.5 adj ≈ **140 LUNC**).
+
+**Fail-closed (#7):** InstantWithdrawCw20 requires a configured 24h pull limit for `(token, spender)`. Set the limit **with** or **before** enabling window redeem.
 
 ```bash
-# 1) Store new treasury wasm, then migrate (governance/admin)
+# Preferred: full A+B+C
+cd contracts/scripts
+./treasury-migrate-wrap-wire.sh --dry-run   # gas check
+./treasury-migrate-wrap-wire.sh             # mainnet (prompts)
+
+# Manual migrate-only (governance/admin = cl8y2_admin)
 terrad tx wasm migrate $TREASURY $NEW_TREASURY_CODE_ID '{}' \
-  --from governance \
+  --from cl8y2_admin \
   --chain-id $CHAIN_ID \
   --node $RPC \
   --gas auto --gas-adjustment 1.4 \
-  --fees 100000000uluna \
+  --gas-prices 28.325uluna \
   --broadcast-mode sync -y
 
-# 2) Verify new queries
-terrad query wasm contract-state smart $TREASURY '{"cw20_spenders":{}}' --node $RPC
+# Verify post-migrate
 terrad query wasm contract-state smart $TREASURY '{"config":{}}' --node $RPC
-# expect cw20_instant_withdraw_paused: false; wrapping_paused unchanged
+# expect wrapping_paused + cw20_instant_withdraw_paused; no swap_contract field (#8)
+terrad query wasm contract-state smart $TREASURY '{"denom_wrappers":{}}' --node $RPC
+terrad query wasm contract-state smart $TREASURY '{"cw20_spenders":{}}' --node $RPC
 
-# 3) After ust1-window is ready (companion issue #20 / Phase 5 of #19):
-#    Register spender WITH 24h limit (align with window inventory policy).
+# Register spender WITH 24h limit (align with window inventory policy)
 terrad tx wasm execute $TREASURY \
   "{\"set_cw20_spender\":{\"token\":\"$TERRA_VFDUSD\",\"spender\":\"$WINDOW_ADDR\",\"limit_24h\":\"$VFDUSD_PULL_LIMIT_24H\"}}" \
-  --from governance \
+  --from cl8y2_admin \
   --chain-id $CHAIN_ID --node $RPC \
   --gas auto --gas-adjustment 1.4 \
-  --fees 100000000uluna \
+  --gas-prices 28.325uluna \
   --broadcast-mode sync -y
 
-# 4) Confirm limit + unused quota
 terrad query wasm contract-state smart $TREASURY \
   "{\"cw20_spender_limit\":{\"token\":\"$TERRA_VFDUSD\",\"spender\":\"$WINDOW_ADDR\"}}" \
   --node $RPC
@@ -368,10 +376,10 @@ To change quota later without rotating the spender:
 ```bash
 terrad tx wasm execute $TREASURY \
   "{\"set_cw20_spender_limit\":{\"token\":\"$TERRA_VFDUSD\",\"spender\":\"$WINDOW_ADDR\",\"limit_24h\":\"$VFDUSD_PULL_LIMIT_24H\"}}" \
-  --from governance \
+  --from cl8y2_admin \
   --chain-id $CHAIN_ID --node $RPC \
   --gas auto --gas-adjustment 1.4 \
-  --fees 100000000uluna \
+  --gas-prices 28.325uluna \
   --broadcast-mode sync -y
 ```
 
@@ -383,23 +391,24 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 
 ## Post-Deployment Checklist
 
-- [ ] USTR token instantiated correctly
-- [ ] Treasury contract deployed with correct governance
-- [ ] Swap contract deployed with correct configuration
-- [ ] Swap contract added as USTR minter
+- [x] USTR token instantiated correctly
+- [x] Treasury contract deployed with correct governance
+- [x] Swap contract deployed with correct configuration
+- [x] Swap contract added as USTR minter
 - [ ] Deployer removed from USTR minters
-- [ ] Treasury migrate strips `swap_contract` ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8); no `set_swap_contract` step)
-- [ ] Initial USTC transferred to treasury
-- [ ] All contract addresses documented
-- [ ] Frontend updated with contract addresses
+- [x] Treasury migrate strips `swap_contract` ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8); no `set_swap_contract` step) — done 2026-08-08 code `11564`
+- [x] Initial USTC transferred to treasury
+- [x] All contract addresses documented
+- [ ] Frontend updated with contract addresses (Phase 4 — wrap mapper / cLUNC / cUSTC)
 - [ ] Monitoring/alerting configured
-- [ ] Treasury migrated with CW20 InstantWithdraw API (#6) + 24h pull limits (#7)
-- [ ] `SetCw20Spender` (+ `limit_24h` or `SetCw20SpenderLimit`) executed for vFDUSD → ust1-window
-- [ ] `Cw20SpenderLimit` query confirms production quota before enabling redeem
+- [x] Treasury migrated with CW20 InstantWithdraw API (#6) + 24h pull limits (#7)
+- [x] `SetCw20Spender` (+ `limit_24h`) executed for vFDUSD → ust1-window (`10000000000`)
+- [x] `Cw20SpenderLimit` query confirms production quota
+- [x] wrap-mapper + cLUNC/cUSTC denom wiring (#5)
+- [ ] Small mainnet wrap/unwrap smoke both denoms
+- [ ] Window redeem smoke after companion ready
 
 ## Contract Addresses
-
-After deployment, update this section with actual addresses:
 
 ### Testnet (rebel-2)
 
@@ -414,18 +423,53 @@ After deployment, update this section with actual addresses:
 | Contract | Code ID | Address |
 |----------|---------|---------|
 | USTR Token | `10184` | `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv` |
-| Treasury | `10673` | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
+| Treasury | `11564` (was `10673`) | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
+| wrap-mapper | `11565` | `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` |
+| cLUNC | `10184` | `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg` |
+| cUSTC | `10184` | `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch` |
 | USTC-Swap | `10838` | `terra16ytnkhw53elefz2rhulcr4vq8fs83nd97ht3wt05wtcq7ypcmpqqv37lel` |
 | Referral | `10700` | `terra1lxv5m2n72l4zujf0rrgek9k6m8kfky62yvm8qvlnjqgjmmlmywzqt4j0z2` |
 | Airdrop | `10700` | `terra1m758wqc6grg7ttg8cmrp72hf6a5cej5zq0w59d9d6wr5r22tulwqk3ga5r` |
+
+**Wrap / spender wiring (mainnet):**
+
+| Binding | Value |
+|---------|-------|
+| Admin / governance (`cl8y2_admin`) | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` |
+| wrap-mapper `fee_bps` | **`200` (2%)** — see [Wrap fee vs burn tax](#wrap-fee-vs-burn-tax) |
+| Per-denom rate limits | **unset** (fail-open until `SetRateLimit`) |
+| `uluna` → cLUNC → wrap-mapper | wired |
+| `uusd` → cUSTC → wrap-mapper | wired |
+| CW20 spender | vFDUSD `terra1mnl9…svj3` → ust1-window `terra1zxwpz…h3rh2` |
+| `limit_24h` | `10000000000` (10_000 vFDUSD, 6 decimals) |
+
+Artifact record: [`contracts/scripts/treasury-migrate-wrap-20260808-090524.json`](../contracts/scripts/treasury-migrate-wrap-20260808-090524.json).
+
+### Wrap fee vs burn tax
+
+Unwrap calls treasury `InstantWithdraw` → `BankMsg::Send`, which pays Terra Classic burn tax. Wrap-mapper skims `fee_bps` on **both** wrap and unwrap; the fee residual stays in treasury and must cover that tax or native backing erodes vs outstanding CW20.
+
+| Date | Event | Wrap `fee_bps` | Chain burn tax |
+|------|--------|----------------|----------------|
+| 2026-08-08 | Phase 3 instantiate | `100` (1%) | was 0.5% |
+| 2026-08-08 | [Prop #12223](https://station.terraclassic.community/proposal/columbus-5/12223) **passed** | — | **1.5%** (`0.015`) |
+| 2026-08-08 | Gov `SetFeeBps` | **`200` (2%)** | 1.5% |
+
+**Policy:** keep ~**0.5% above** on-chain tax (same cushion as 1% fee under 0.5% tax). Chose **2%** over 3% (2× tax) to avoid unnecessary round-trip friction. Governance:
+
+```bash
+terrad tx wasm execute $WRAP_MAPPER '{"set_fee_bps":{"fee_bps":200}}' \
+  --from cl8y2_admin --chain-id columbus-5 --node $RPC \
+  --gas auto --gas-adjustment 1.4 --gas-prices 28.325uluna -y
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **Insufficient Gas**
-   - Increase `--gas-adjustment` to 1.5 or higher
-   - Increase `--fees` amount
+   - Prefer `--gas auto --gas-prices 28.325uluna` (not fixed `--fees 100000000uluna` for wasm store)
+   - Increase `--gas-adjustment` to 1.5+ for store; 1.4 is usually enough for migrate/execute
 
 2. **Contract Not Found**
    - Verify code ID is correct for the network

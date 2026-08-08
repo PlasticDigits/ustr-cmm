@@ -29,9 +29,21 @@ This directory contains scripts and configuration for deploying USTR CMM contrac
 
 ## Files
 
-- `deploy.sh` - Main deployment script
+- `deploy.sh` - Main deployment script (legacy full deploy)
+- `treasury-migrate-wrap-wire.sh` - Mainnet Phase 3 one-shot (treasury migrate + wrap-mapper + CW20 spender)
+- `treasury-migrate-wrap-*.json` - Run artifacts (addresses / code IDs)
 - `instantiate.json` - Example instantiate messages for reference
 - `README.md` - This file
+
+### Phase 3 migrate + wrap (mainnet)
+
+```bash
+# Requires optimized artifacts/treasury.wasm + wrap_mapper.wasm and keyring cl8y2_admin
+./treasury-migrate-wrap-wire.sh --dry-run
+./treasury-migrate-wrap-wire.sh
+```
+
+See [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md) § Treasury Migrate + Wrap Wiring.
 
 ## Deployment
 

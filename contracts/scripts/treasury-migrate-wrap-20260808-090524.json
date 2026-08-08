@@ -1,0 +1,33 @@
+{
+  "network": "columbus-5",
+  "treasury": "terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2",
+  "admin": "terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l",
+  "fee_bps": 200,
+  "fee_bps_history": [
+    { "at": "2026-08-08T00:05:00Z", "fee_bps": 100, "note": "instantiate" },
+    { "at": "2026-08-08T00:15:00Z", "fee_bps": 200, "note": "SetFeeBps after prop 12223 burn tax 1.5%" }
+  ],
+  "burn_tax_rate": "0.015",
+  "code_ids": {
+    "treasury": "11564",
+    "wrap_mapper": "11565",
+    "cw20_mintable": "10184"
+  },
+  "contracts": {
+    "wrap_mapper": "terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2",
+    "cLUNC": "terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg",
+    "cUSTC": "terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch",
+    "vFDUSD": "terra1mnl9azefrqpmu888ar2u6zrcwr80hxlt3avf4300r576cw5ar7esvxsvj3",
+    "window": "terra1zxwpzpzpleatqn39r00grau4yt29sld8pw78s7ktvjafnj5nsaxq0h3rh2"
+  },
+  "cw20_spender": {
+    "token": "terra1mnl9azefrqpmu888ar2u6zrcwr80hxlt3avf4300r576cw5ar7esvxsvj3",
+    "spender": "terra1zxwpzpzpleatqn39r00grau4yt29sld8pw78s7ktvjafnj5nsaxq0h3rh2",
+    "limit_24h": "10000000000"
+  },
+  "gas": {
+    "gas_prices": "28.325uluna",
+    "gas_adjustment": "1.4",
+    "store_gas_adjustment": "1.5"
+  }
+}

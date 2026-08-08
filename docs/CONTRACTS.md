@@ -55,6 +55,13 @@ This document provides an overview of all USTR CMM smart contracts with links to
 
 **Description**: Secure custodian for all protocol assets. Holds USTC received from swaps and will eventually hold the diversified basket of assets backing UST1.
 
+**Deployed Code IDs**:
+- Mainnet: `11564` (migrated from `10673` on 2026-08-08; [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5))
+
+**Deployed Contract Addresses**:
+- Mainnet (columbus-5): `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2`
+- Admin / governance: `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` (`cl8y2_admin`)
+
 **Key Features**:
 - Holds native tokens (USTC, LUNC, etc.) and CW20 tokens
 - Governance address with 7-day timelock on changes
@@ -135,6 +142,33 @@ This document provides an overview of all USTR CMM smart contracts with links to
 **Withdrawal Tax Note**: Native token withdrawals use `BankMsg::Send`, which incurs TerraClassic's 0.5% burn tax. The `amount` specifies what is debited from treasury; the destination receives the post-tax amount.
 
 **Full Specification**: See [PROPOSAL.md](../PROPOSAL.md#treasury-contract) for complete interface details.
+
+---
+
+## Wrap-Mapper Contract
+
+**Location**: [`contracts/contracts/wrap-mapper/`](../../contracts/contracts/wrap-mapper/)
+
+**Source Files**:
+- [`src/contract.rs`](../../contracts/contracts/wrap-mapper/src/contract.rs)
+- [`src/msg.rs`](../../contracts/contracts/wrap-mapper/src/msg.rs)
+- [`src/state.rs`](../../contracts/contracts/wrap-mapper/src/state.rs)
+
+**Description**: Orchestrates native ↔ CW20 wrapping (cLUNC / cUSTC). Never holds native tokens — treasury keeps custody; wrap-mapper mints/burns CW20 and calls treasury `InstantWithdraw` on unwrap. Design: [plans/NATIVE_TOKEN_WRAPPING.md](../plans/NATIVE_TOKEN_WRAPPING.md).
+
+**Deployed Code IDs**:
+- Mainnet: `11565`
+
+**Deployed Contract Addresses**:
+- Mainnet wrap-mapper: `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2`
+- Mainnet cLUNC (cw20-mintable `10184`): `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg`
+- Mainnet cUSTC (cw20-mintable `10184`): `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch`
+
+**Mainnet config (verified)**: `fee_bps=200` (2% on wrap and unwrap), treasury = CMM treasury above, governance = `terra1xsecn…`, not paused. Mappings: `uluna`→cLUNC, `uusd`→cUSTC. Treasury `denom_wrappers` point both denoms at wrap-mapper. wrap-mapper is a minter on both CW20s. Per-denom rate limits unset (fail-open).
+
+Fee raised from instantiate `100` → `200` after [Prop #12223](https://station.terraclassic.community/proposal/columbus-5/12223) set burn tax to **1.5%** — keep ~0.5% cushion above tax for unwrap solvency (see [docs/DEPLOYMENT.md](./DEPLOYMENT.md#wrap-fee-vs-burn-tax)).
+
+**Do not** deploy or use `cmm-native-wrap` from ust1-window for this path.
 
 ---
 
