@@ -1,6 +1,7 @@
 [package]
 name = "wrap-mapper"
-version.workspace = true
+# Bumped for #9 asymmetric wrap/unwrap fees (breaking Config / execute ABI).
+version = "0.3.0"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true

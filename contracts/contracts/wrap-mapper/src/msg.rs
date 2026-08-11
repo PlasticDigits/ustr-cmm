@@ -8,9 +8,11 @@ use crate::state::RateLimitConfig;
 pub struct InstantiateMsg {
     pub governance: String,
     pub treasury: String,
-    /// Fee in basis points charged on wrap/unwrap (e.g. 50 = 0.5%).
-    /// Defaults to 50 if not provided.
-    pub fee_bps: Option<u16>,
+    /// Wrap fee in basis points (e.g. 200 = 2%). Defaults to 50 if omitted.
+    pub fee_wrap_bps: Option<u16>,
+    /// Unwrap fee in basis points. Defaults to 50 if omitted.
+    /// Independent of wrap; may be below burn tax under [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9).
+    pub fee_unwrap_bps: Option<u16>,
 }
 
 #[cw_serde]
@@ -66,9 +68,20 @@ pub enum ExecuteMsg {
         paused: bool,
     },
 
-    /// Updates the fee in basis points (governance-only, max 1000 = 10%)
-    SetFeeBps {
-        fee_bps: u16,
+    /// Updates wrap fee only (governance-only, max 1000 = 10%)
+    SetFeeWrapBps {
+        fee_wrap_bps: u16,
+    },
+
+    /// Updates unwrap fee only (governance-only, max 1000 = 10%)
+    SetFeeUnwrapBps {
+        fee_unwrap_bps: u16,
+    },
+
+    /// Updates both wrap and unwrap fees atomically (governance-only)
+    SetFees {
+        fee_wrap_bps: u16,
+        fee_unwrap_bps: u16,
     },
 }
 
@@ -96,12 +109,15 @@ pub enum QueryMsg {
     PendingGovernance {},
 }
 
+/// Breaking vs pre-#9: `fee_bps` removed; clients must read `fee_wrap_bps` /
+/// `fee_unwrap_bps`. Coordinated with DEX consumer [#516](https://gitlab.com/PlasticDigits/cl8y-dex-terraclassic/-/work_items/516).
 #[cw_serde]
 pub struct ConfigResponse {
     pub governance: Addr,
     pub treasury: Addr,
     pub paused: bool,
-    pub fee_bps: u16,
+    pub fee_wrap_bps: u16,
+    pub fee_unwrap_bps: u16,
 }
 
 #[cw_serde]

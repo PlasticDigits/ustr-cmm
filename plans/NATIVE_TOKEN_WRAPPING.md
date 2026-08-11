@@ -3,6 +3,8 @@
 Plan to add native token wrapping support to the ustr-cmm contracts. The treasury holds all native LUNC/USTC backing for ecosystem auditability. A new wrap-mapper contract orchestrates CW20 minting/burning but never holds native tokens itself.
 
 > **Status (implementation note):** Native wrap path (`migrate`, `DENOM_WRAPPERS`, `WrapDeposit`, native-only `InstantWithdraw { denom }`, `wrapping_paused`) is implemented. The original §1.4 sketch of `InstantWithdraw { asset: AssetInfo }` with CW20 Transfer was **not** shipped — CW20 InstantWithdraw is a **parallel** API (`InstantWithdrawCw20` + `CW20_SPENDERS`) for ust1-window / vFDUSD. See [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6) and [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md).
+>
+> **Fees ([#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9)):** wrap-mapper uses asymmetric `fee_wrap_bps` / `fee_unwrap_bps` (not a single `fee_bps`). Unwrap all-in ≈ 2% is achieved by tuning unwrap fee under burn tax **without** InstantWithdraw gross-up. Invariants + retune rule: [skills/wrap-mapper-asymmetric-fees](../skills/wrap-mapper-asymmetric-fees/SKILL.md), [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md#asymmetric-wrapunwrap-fees-vs-burn-tax).
 
 ## Architecture
 

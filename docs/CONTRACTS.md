@@ -164,11 +164,11 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Mainnet cLUNC (cw20-mintable `10184`): `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg`
 - Mainnet cUSTC (cw20-mintable `10184`): `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch`
 
-**Mainnet config (verified)**: `fee_bps=200` (2% on wrap and unwrap), treasury = CMM treasury above, governance = `terra1xsecn…`, not paused. Mappings: `uluna`→cLUNC, `uusd`→cUSTC. Treasury `denom_wrappers` point both denoms at wrap-mapper. wrap-mapper is a minter on both CW20s. Per-denom rate limits unset (fail-open).
+**Mainnet config:** historically a single `fee_bps=200` on wrap **and** unwrap. After [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9) migrate + gov: **`fee_wrap_bps=200`**, **`fee_unwrap_bps=51`** (retune for ≈2% unwrap all-in under 1.5% burn tax, **no** InstantWithdraw gross-up). Treasury = CMM treasury above, governance = `terra1xsecn…`, not paused. Mappings: `uluna`→cLUNC, `uusd`→cUSTC. Treasury `denom_wrappers` point both denoms at wrap-mapper. wrap-mapper is a minter on both CW20s. Per-denom rate limits unset (fail-open).
 
-Fee raised from instantiate `100` → `200` after [Prop #12223](https://station.terraclassic.community/proposal/columbus-5/12223) set burn tax to **1.5%** — keep ~0.5% cushion above tax for unwrap solvency (see [docs/DEPLOYMENT.md](./DEPLOYMENT.md#wrap-fee-vs-burn-tax)).
+**Fees:** wrap uses only `fee_wrap_bps` (untaxed path); unwrap uses only `fee_unwrap_bps` then receiver pays burn tax on `BankMsg::Send`. Solvency: burn `A` CW20 / withdraw `A − fee_unwrap` → surplus ≈ `+fee_unwrap`; unwrap fee need **not** cover tax. Retune rule + operator msgs: [docs/DEPLOYMENT.md](./DEPLOYMENT.md#asymmetric-wrapunwrap-fees-vs-burn-tax). Agent skill: [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md).
 
-**Do not** deploy or use `cmm-native-wrap` from ust1-window for this path.
+**Do not** deploy or use `cmm-native-wrap` from ust1-window for this path. **Do not** add InstantWithdraw gross-up for this issue.
 
 ---
 
