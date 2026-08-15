@@ -3,40 +3,28 @@
  *
  * Fetches treasury holdings from tokenlist.json plus UST1 / wrap-token supplies.
  * Key ratios use UST1 circulating (CW20 total_supply) as the liability denominator (#11).
+ * Allowlisted `type: "lp"` rows use reserve NAV; wrap legs are haircut from CR (#14).
  */
 
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { contractService } from '../services/contract';
-import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL, TOKEN_LIST_URL, TREASURY_HOLDING_SKIP_SYMBOLS } from '../utils/constants';
+import { fetchTreasuryLpPositions, type LpChainPosition } from '../services/treasuryLp';
+import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants';
 import { isTerraContractAddress } from '../utils/addresses';
-import { computeTreasuryRatios } from '../utils/treasuryRatios';
+import { isRawProtocolHolding, resolveLpLegUsd } from '../utils/lpEligibility';
+import { computeLpNav } from '../utils/lpNav';
+import { fetchTokenList } from '../utils/tokenlist';
+import { computeTreasuryRatios, type RatioAssetInput } from '../utils/treasuryRatios';
+import { isLpTokenListEntry } from '../types/tokenlist';
 import type { TreasuryData, TreasuryAsset, TokenIssuance, TreasuryRatios } from '../types/treasury';
 import { usePrices } from './usePrices';
 
 const contracts = CONTRACTS[DEFAULT_NETWORK];
-const SKIP_HOLDING = new Set<string>(TREASURY_HOLDING_SKIP_SYMBOLS);
-
-/** Token metadata from tokenlist.json */
-interface TokenListEntry {
-  symbol: string;
-  name: string;
-  denom?: string;
-  address?: string;
-  type: 'native' | 'cw20';
-  decimals: number;
-  gradient: string;
-  iconColor: string;
-}
-
-interface TokenList {
-  name: string;
-  version: string;
-  tokens: TokenListEntry[];
-}
 
 interface TreasuryChainData {
   assets: Record<string, TreasuryAsset>;
+  lpPositions: LpChainPosition[];
   ust1Issuance: TokenIssuance;
   ustrIssuance: TokenIssuance;
   cLuncIssuance: TokenIssuance | null;
@@ -45,34 +33,6 @@ interface TreasuryChainData {
   ust1SupplyRaw: bigint | null;
   ustrBacking: number;
   lastUpdated: Date;
-}
-
-let tokenListCache: TokenList | null = null;
-
-async function fetchTokenList(): Promise<TokenList> {
-  if (tokenListCache) {
-    return tokenListCache;
-  }
-
-  const response = await fetch(TOKEN_LIST_URL);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch token list: ${response.status}`);
-  }
-
-  tokenListCache = await response.json();
-  return tokenListCache!;
-}
-
-function isLiabilityOrWrapToken(token: TokenListEntry): boolean {
-  if (SKIP_HOLDING.has(token.symbol.toUpperCase())) return true;
-  const addr = token.address;
-  if (!addr) return false;
-  return (
-    addr === contracts.ust1Token ||
-    addr === contracts.cLunc ||
-    addr === contracts.cUstc ||
-    addr === contracts.ustrToken
-  );
 }
 
 function supplyOnlyIssuance(totalSupply: bigint): TokenIssuance {
@@ -97,7 +57,7 @@ async function fetchTreasuryData(): Promise<TreasuryChainData> {
   const assets: Record<string, TreasuryAsset> = {};
 
   for (const token of tokenList.tokens) {
-    if (isLiabilityOrWrapToken(token)) continue;
+    if (isLpTokenListEntry(token) || isRawProtocolHolding(token)) continue;
 
     try {
       let balance = BigInt(0);
@@ -108,6 +68,8 @@ async function fetchTreasuryData(): Promise<TreasuryChainData> {
       } else if (token.type === 'cw20' && token.address) {
         const result = await contractService.getTokenBalance(token.address, contracts.treasury);
         balance = BigInt(result.balance || '0');
+      } else {
+        continue;
       }
 
       assets[token.symbol.toLowerCase()] = {
@@ -117,11 +79,14 @@ async function fetchTreasuryData(): Promise<TreasuryChainData> {
         displayName: token.symbol,
         gradient: token.gradient,
         iconColor: token.iconColor,
+        kind: 'spot',
       };
     } catch (error) {
       console.error(`Failed to fetch ${token.symbol} balance:`, error);
     }
   }
+
+  const lpPositions = await fetchTreasuryLpPositions(tokenList, contracts.treasury);
 
   let ustrTotalSupply = BigInt(0);
   const ustrToken = tokenMap.get('USTR');
@@ -172,6 +137,7 @@ async function fetchTreasuryData(): Promise<TreasuryChainData> {
 
   return {
     assets,
+    lpPositions,
     ust1Issuance,
     ustrIssuance: {
       minted: ustrTotalSupply,
@@ -214,11 +180,59 @@ export function useTreasury() {
   const treasuryData: TreasuryData | null = useMemo(() => {
     if (!data) return null;
 
-    const ratioAssets = Object.values(data.assets).map((asset) => ({
+    const assets: Record<string, TreasuryAsset> = { ...data.assets };
+    const ratioAssets: RatioAssetInput[] = Object.values(data.assets).map((asset) => ({
       symbol: asset.displayName,
       balanceRaw: asset.balance,
       decimals: asset.decimals,
     }));
+
+    for (const pos of data.lpPositions) {
+      if (pos.lpBalance <= 0n) continue;
+
+      const nav =
+        pos.queryFailed || !pos.legs || pos.totalShare === null
+          ? {
+              displayUsd: null as number | null,
+              crUsd: null as number | null,
+              haircutLegs: [] as string[],
+              incomplete: true,
+            }
+          : computeLpNav({
+              lpBalance: pos.lpBalance,
+              totalShare: pos.totalShare,
+              legs: pos.legs.map((leg) => ({
+                symbol: leg.symbol,
+                amountRaw: leg.amountRaw,
+                decimals: leg.decimals,
+                kind: leg.kind,
+                usd: resolveLpLegUsd(leg.kind, leg.symbol, prices),
+              })),
+            });
+
+      assets[pos.symbol.toLowerCase()] = {
+        denom: pos.lpAddress,
+        balance: pos.lpBalance,
+        decimals: pos.lpDecimals,
+        displayName: pos.displayName,
+        gradient: pos.gradient,
+        iconColor: pos.iconColor,
+        kind: 'lp',
+        displayUsd: nav.displayUsd,
+        crUsd: nav.crUsd,
+        haircutLegs: nav.haircutLegs,
+        pairLabel: pos.pairLabel,
+        explorerAddress: pos.pairAddress,
+        navIncomplete: nav.incomplete,
+      };
+
+      ratioAssets.push({
+        symbol: pos.displayName,
+        balanceRaw: pos.lpBalance,
+        decimals: pos.lpDecimals,
+        crUsd: nav.crUsd,
+      });
+    }
 
     const ratios = computeTreasuryRatios({
       ust1SupplyRaw: data.ust1SupplyRaw,
@@ -231,7 +245,7 @@ export function useTreasury() {
     });
 
     return {
-      assets: data.assets,
+      assets,
       ust1Issuance: data.ust1Issuance,
       ustrIssuance: data.ustrIssuance,
       cLuncIssuance: data.cLuncIssuance,

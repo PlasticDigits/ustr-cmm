@@ -221,7 +221,7 @@ class PriceService {
  * Otherwise tries DEXes in priority order: custom -> garuda -> terraswap
  * Each returns quote asset amount per 1M token units
  * 
- * @param tokenAddress - The CW20 token contract address
+ * @param tokenAddress - The CW20 token contract address (spot token only — never an LP mint, #14)
  * @param luncUsd - LUNC price in USD
  * @param ustcUsd - USTC price in USD
  * @param pool - Optional pool config with address, dex type, and quote asset

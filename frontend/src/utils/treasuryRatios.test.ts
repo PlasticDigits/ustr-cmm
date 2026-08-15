@@ -100,6 +100,43 @@ describe('computeTreasuryRatios', () => {
     expect(result.incomplete).toBe(true);
   });
 
+  it('adds allowlisted LP crUsd to the numerator (210% fixture)', () => {
+    const result = computeTreasuryRatios({
+      ust1SupplyRaw: UST1_1M,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [
+        { symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 },
+        { symbol: 'UST1-USTR', balanceRaw: 1n, decimals: 6, crUsd: 100_000 },
+      ],
+      prices: { vFDUSD: 2 },
+      ustrBacking: 0,
+    });
+    expect(result.collateralization).toBeCloseTo(210);
+    expect(result.assetsToLiabilities).toBeCloseTo(2.1);
+    expect(result.includedSymbols).toEqual(['vFDUSD', 'UST1-USTR']);
+    expect(result.incomplete).toBe(false);
+  });
+
+  it('null LP crUsd is omitted and marks incomplete — not $0', () => {
+    const result = computeTreasuryRatios({
+      ust1SupplyRaw: UST1_1M,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [
+        { symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 },
+        { symbol: 'UST1-USTR', balanceRaw: 5n, decimals: 6, crUsd: null },
+      ],
+      prices: { vFDUSD: 2 },
+      ustrBacking: 0,
+    });
+    expect(result.collateralization).toBeCloseTo(200);
+    expect(result.missingPriceSymbols).toEqual(['UST1-USTR']);
+    expect(result.incomplete).toBe(true);
+  });
+
   it('does not invent $1/vFDUSD when vFDUSD is unpriced', () => {
     const result = computeTreasuryRatios({
       ust1SupplyRaw: UST1_1M,

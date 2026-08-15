@@ -14,6 +14,7 @@
  */
 
 import { NETWORKS, CONTRACTS, DEFAULT_NETWORK, REFERRAL_CODE, LCD_CONFIG, CW20_ENUM } from '../utils/constants';
+import { isTerraContractAddress } from '../utils/addresses';
 import { executeCw20Send, executeContractWithCoins } from './wallet';
 import { formatAmount } from '../utils/format';
 import type {
@@ -1494,6 +1495,28 @@ class ContractService {
     );
     
     return result.txHash;
+  }
+
+  /**
+   * Raw CosmWasm query (LCD `{ data }`). Addresses must be pinned terra1 strings.
+   */
+  async queryWasmData<T>(contractAddress: string, query: object): Promise<T> {
+    if (!isTerraContractAddress(contractAddress)) {
+      throw new Error('Refusing CosmWasm query for non-terra1 address');
+    }
+    const result = await this.queryContract<{ data: T }>(contractAddress, query);
+    return result.data;
+  }
+
+  /**
+   * DEX `{ pool: {} }` for allowlisted LP NAV. Unknown dex → null (no LCD).
+   */
+  async getDexPoolRaw(pairAddress: string, dex: string): Promise<unknown | null> {
+    const d = dex.toLowerCase();
+    if (d !== 'garuda' && d !== 'terraswap' && d !== 'terraport') {
+      return null;
+    }
+    return this.queryWasmData<unknown>(pairAddress, { pool: {} });
   }
 }
 

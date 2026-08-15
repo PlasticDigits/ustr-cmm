@@ -41,6 +41,12 @@ export function TreasuryPage() {
           isLoading={isLoading}
           explorerUrl={`${scanner}/address/${contracts.treasury}`}
         />
+        {Object.values(treasuryData?.assets ?? {}).some((a) => a.kind === 'lp') && (
+          <p className="text-xs text-gray-500 mt-3">
+            Protocol LP rows use reserve NAV (share of both sides). cLUNC/cUSTC legs are shown in USD
+            but omitted from collateralization — native LUNC/USTC in treasury already count.
+          </p>
+        )}
       </div>
 
       <div className="grid md:grid-cols-2 gap-6 md:gap-8 mb-8 md:mb-10">

@@ -340,8 +340,8 @@ The SSoT Dashboard is a critical system component that serves as the authoritati
 **Core Features** (Treasury page — live subset; full SSoT dashboard is still a later phase):
 - **CR Ratios Display**: Collateralization = priced treasury assets USD / UST1 circulating × 100. `∞` only when UST1 `token_info` succeeded and supply is 0; query failure is `N/A`. Incomplete prices are labeled, not treated as $0. See [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md).
 - **Current Tier Indicator**: ECONOMICS bands RED `<95` / YELLOW `95–110` / GREEN `110–190` / BLUE `>190`
-- **Basket of Assets**: Treasury holdings including vFDUSD; USD from CEX/DEX plus session-once ust1-oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md))
-- **Wrap supplies**: cLUNC / cUSTC circulating (not extra collateral)
+- **Basket of Assets**: Treasury holdings including vFDUSD; USD from CEX/DEX plus session-once ust1-oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md)). Allowlisted protocol LP shares (`UST1|USTR|cUSTC|cLUNC` pairs) use reserve NAV, not LP-mint simulate-swap ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14) / [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md)).
+- **Wrap supplies**: cLUNC / cUSTC circulating (not extra collateral). Wrap **legs inside an LP** are shown in USD but omitted from CR (native already counted).
 - **Legal clickwrap**: connected wallets must accept CL8Y terms for `ust1cmm.com` before swap/register ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12) / [skills/frontend-legal-clickwrap](../skills/frontend-legal-clickwrap/SKILL.md))
 
 **Why SSoT Matters**:
