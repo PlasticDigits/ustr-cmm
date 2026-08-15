@@ -436,29 +436,70 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 | Binding | Value |
 |---------|-------|
 | Admin / governance (`cl8y2_admin`) | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` |
-| wrap-mapper `fee_bps` | **`200` (2%)** — see [Wrap fee vs burn tax](#wrap-fee-vs-burn-tax) |
+| wrap-mapper `fee_wrap_bps` / `fee_unwrap_bps` | **Target post-#9:** `200` / `51` — see [Asymmetric wrap/unwrap fees vs burn tax](#asymmetric-wrapunwrap-fees-vs-burn-tax) |
 | Per-denom rate limits | **unset** (fail-open until `SetRateLimit`) |
 | `uluna` → cLUNC → wrap-mapper | wired |
 | `uusd` → cUSTC → wrap-mapper | wired |
 | CW20 spender | vFDUSD `terra1mnl9…svj3` → ust1-window `terra1zxwpz…h3rh2` |
 | `limit_24h` | `10000000000` (10_000 vFDUSD, 6 decimals) |
 
-Artifact record: [`contracts/scripts/treasury-migrate-wrap-20260808-090524.json`](../contracts/scripts/treasury-migrate-wrap-20260808-090524.json).
+Artifact record: [`contracts/scripts/treasury-migrate-wrap-20260808-090524.json`](../contracts/scripts/treasury-migrate-wrap-20260808-090524.json). Agent skill: [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md). Issue: [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9).
 
-### Wrap fee vs burn tax
+### Asymmetric wrap/unwrap fees vs burn tax
 
-Unwrap calls treasury `InstantWithdraw` → `BankMsg::Send`, which pays Terra Classic burn tax. Wrap-mapper skims `fee_bps` on **both** wrap and unwrap; the fee residual stays in treasury and must cover that tax or native backing erodes vs outstanding CW20.
+Unwrap calls treasury `InstantWithdraw` → `BankMsg::Send`; the **receiver** pays Terra Classic burn tax. Wrap-mapper skims **independent** fees:
 
-| Date | Event | Wrap `fee_bps` | Chain burn tax |
-|------|--------|----------------|----------------|
-| 2026-08-08 | Phase 3 instantiate | `100` (1%) | was 0.5% |
-| 2026-08-08 | [Prop #12223](https://station.terraclassic.community/proposal/columbus-5/12223) **passed** | — | **1.5%** (`0.015`) |
-| 2026-08-08 | Gov `SetFeeBps` | **`200` (2%)** | 1.5% |
+| Path | Fee field | Taxed? |
+|------|-----------|--------|
+| Wrap (`NotifyDeposit`) | `fee_wrap_bps` | No (MsgExecuteContract wrap deposit is untaxed) |
+| Unwrap | `fee_unwrap_bps` | Yes — tax on treasury → user `BankMsg::Send` |
 
-**Policy:** keep ~**0.5% above** on-chain tax (same cushion as 1% fee under 0.5% tax). Chose **2%** over 3% (2× tax) to avoid unnecessary round-trip friction. Governance:
+**Product policy ([#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9)):** no InstantWithdraw gross-up. Keep wrap at **200 bps**; tune unwrap so user all-in ≈ **2%**:
+
+```text
+(1 - fee_unwrap) × (1 - burn_tax_rate) = 0.98
+fee_unwrap_bps = round(10000 - 9800 / (1 - burn_tax_rate))
+```
+
+Worked example: `burn_tax_rate = 0.015` → **51 bps**. Prefer rounding so all-in is **≤ 2%** when ambiguous. Integer check: unwrap `10_000` → withdraw `9_949` → post-tax receive `floor(9949 × 0.985) = 9_799` (≈ 1.01% short of 9_800; within documented tolerance / slightly ≤ 2% all-in).
+
+**Solvency invariant (unchanged under this policy):** unwrap burns `A` CW20 and withdraws `A − fee_unwrap`. User-paid tax does **not** erode `native ≥ supply`; treasury surplus Δ ≈ `+fee_unwrap` per unwrap. Therefore **`fee_unwrap_bps` need not cover burn tax** — do not reintroduce a “fee ≥ tax” floor (supersedes older audit M-4 framing).
+
+If tax rises above ~2%, “2% all-in with no gross-up” is impossible without subsidizing users — escalate to product (gross-up or higher all-in target).
+
+| Date | Event | Wrap | Unwrap | Chain burn tax |
+|------|--------|------|--------|----------------|
+| 2026-08-08 | Phase 3 instantiate | `100` (single `fee_bps`) | same | was 0.5% |
+| 2026-08-08 | [Prop #12223](https://station.terraclassic.community/proposal/columbus-5/12223) **passed** | — | — | **1.5%** (`0.015`) |
+| 2026-08-08 | Gov `SetFeeBps` | **`200`** (single) | same | 1.5% |
+| (pending #9) | Migrate + `SetFees` | **`200`** | **`51`** | 1.5% |
+
+#### Mainnet migrate plan (operators — do not broadcast from agents)
+
+1. Store new wrap-mapper wasm (cw2 `0.3.0`); migrate in place `terra1xuuuh…nmd2`.
+2. Migrate maps legacy `fee_bps` → **both** `fee_wrap_bps` and `fee_unwrap_bps` (e.g. `200`/`200`). Idempotent if already asymmetric.
+3. **Same gov window:** set `200` / `51` — never leave unwrap at 200 after advertising the ≈2% all-in fix.
+4. Query `Config {}`: expect `fee_wrap_bps=200`, `fee_unwrap_bps=51`. Breaking: response no longer has `fee_bps` (DEX [#516](https://gitlab.com/PlasticDigits/cl8y-dex-terraclassic/-/work_items/516)).
 
 ```bash
-terrad tx wasm execute $WRAP_MAPPER '{"set_fee_bps":{"fee_bps":200}}' \
+export WRAP_MAPPER=terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2
+
+# After store + migrate (msg empty {}):
+terrad tx wasm execute $WRAP_MAPPER \
+  '{"set_fees":{"fee_wrap_bps":200,"fee_unwrap_bps":51}}' \
+  --from cl8y2_admin --chain-id columbus-5 --node $RPC \
+  --gas auto --gas-adjustment 1.4 --gas-prices 28.325uluna -y
+
+# Optional single-side retune later:
+# '{"set_fee_wrap_bps":{"fee_wrap_bps":200}}'
+# '{"set_fee_unwrap_bps":{"fee_unwrap_bps":51}}'
+```
+
+**Retune only** (tax change, already on asymmetric code):
+
+```bash
+terrad tx wasm execute $WRAP_MAPPER \
+  '{"set_fee_unwrap_bps":{"fee_unwrap_bps":51}}' \
   --from cl8y2_admin --chain-id columbus-5 --node $RPC \
   --gas auto --gas-adjustment 1.4 --gas-prices 28.325uluna -y
 ```

@@ -14,9 +14,9 @@ use crate::msg::{
     QueryMsg, RateLimitResponse, TreasuryExecuteMsg,
 };
 use crate::state::{
-    Config, RateLimitState, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, CW20_TO_DENOM,
-    DENOM_TO_CW20, GOVERNANCE_TIMELOCK, MAX_FEE_BPS, MIN_FEE_BPS, PENDING_GOVERNANCE,
-    RATE_LIMITS, RATE_LIMIT_STATE,
+    Config, ConfigLegacy, RateLimitState, CONFIG, CONTRACT_NAME, CONTRACT_VERSION, CW20_TO_DENOM,
+    DEFAULT_FEE_BPS, DENOM_TO_CW20, GOVERNANCE_TIMELOCK, MAX_FEE_BPS, MIN_FEE_BPS,
+    PENDING_GOVERNANCE, RATE_LIMITS, RATE_LIMIT_STATE,
 };
 
 // ============ INSTANTIATE ============
@@ -33,25 +33,17 @@ pub fn instantiate(
     let governance = deps.api.addr_validate(&msg.governance)?;
     let treasury = deps.api.addr_validate(&msg.treasury)?;
 
-    let fee_bps = msg.fee_bps.unwrap_or(50);
-    if fee_bps > MAX_FEE_BPS {
-        return Err(ContractError::FeeTooHigh {
-            fee_bps,
-            max_bps: MAX_FEE_BPS,
-        });
-    }
-    if fee_bps < MIN_FEE_BPS {
-        return Err(ContractError::FeeTooLow {
-            fee_bps,
-            min_bps: MIN_FEE_BPS,
-        });
-    }
+    let fee_wrap_bps = msg.fee_wrap_bps.unwrap_or(DEFAULT_FEE_BPS);
+    let fee_unwrap_bps = msg.fee_unwrap_bps.unwrap_or(DEFAULT_FEE_BPS);
+    validate_fee_bps(fee_wrap_bps)?;
+    validate_fee_bps(fee_unwrap_bps)?;
 
     let config = Config {
         governance: governance.clone(),
         treasury: treasury.clone(),
         paused: false,
-        fee_bps,
+        fee_wrap_bps,
+        fee_unwrap_bps,
     };
     CONFIG.save(deps.storage, &config)?;
 
@@ -59,7 +51,8 @@ pub fn instantiate(
         .add_attribute("action", "instantiate")
         .add_attribute("governance", governance)
         .add_attribute("treasury", treasury)
-        .add_attribute("fee_bps", fee_bps.to_string()))
+        .add_attribute("fee_wrap_bps", fee_wrap_bps.to_string())
+        .add_attribute("fee_unwrap_bps", fee_unwrap_bps.to_string()))
 }
 
 // ============ MIGRATE ============
@@ -73,11 +66,47 @@ pub fn migrate(deps: DepsMut, _env: Env, _msg: MigrateMsg) -> Result<Response, C
             ver.contract, CONTRACT_NAME
         ))));
     }
+
+    let (fee_wrap_bps, fee_unwrap_bps, from_legacy) = migrate_config(deps.storage)?;
+
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     Ok(Response::new()
         .add_attribute("action", "migrate")
         .add_attribute("from_version", ver.version)
-        .add_attribute("to_version", CONTRACT_VERSION))
+        .add_attribute("to_version", CONTRACT_VERSION)
+        .add_attribute("from_legacy_fee_bps", from_legacy.to_string())
+        .add_attribute("fee_wrap_bps", fee_wrap_bps.to_string())
+        .add_attribute("fee_unwrap_bps", fee_unwrap_bps.to_string()))
+}
+
+/// Rewrites on-disk `Config` from pre-#9 `{ fee_bps }` to
+/// `{ fee_wrap_bps, fee_unwrap_bps }`. Idempotent on already-new shape.
+///
+/// Legacy migrate maps `fee_bps → both fields` (safe default). Operators must
+/// then gov-set `fee_unwrap_bps=51` (retune rule) in the same window — do not
+/// leave unwrap at 200 after advertising the ≈2% all-in fix.
+fn migrate_config(
+    storage: &mut dyn cosmwasm_std::Storage,
+) -> Result<(u16, u16, bool), ContractError> {
+    // Fast path: already asymmetric shape
+    if let Ok(config) = CONFIG.load(storage) {
+        CONFIG.save(storage, &config)?;
+        return Ok((config.fee_wrap_bps, config.fee_unwrap_bps, false));
+    }
+
+    let raw = storage
+        .get(b"config")
+        .ok_or_else(|| StdError::not_found("config"))?;
+    let legacy: ConfigLegacy = from_json(&raw)?;
+    let config = Config {
+        governance: legacy.governance,
+        treasury: legacy.treasury,
+        paused: legacy.paused,
+        fee_wrap_bps: legacy.fee_bps,
+        fee_unwrap_bps: legacy.fee_bps,
+    };
+    CONFIG.save(storage, &config)?;
+    Ok((config.fee_wrap_bps, config.fee_unwrap_bps, true))
 }
 
 // ============ EXECUTE ============
@@ -116,7 +145,16 @@ pub fn execute(
             execute_cancel_governance_transfer(deps, info)
         }
         ExecuteMsg::SetPaused { paused } => execute_set_paused(deps, info, paused),
-        ExecuteMsg::SetFeeBps { fee_bps } => execute_set_fee_bps(deps, info, fee_bps),
+        ExecuteMsg::SetFeeWrapBps { fee_wrap_bps } => {
+            execute_set_fee_wrap_bps(deps, info, fee_wrap_bps)
+        }
+        ExecuteMsg::SetFeeUnwrapBps { fee_unwrap_bps } => {
+            execute_set_fee_unwrap_bps(deps, info, fee_unwrap_bps)
+        }
+        ExecuteMsg::SetFees {
+            fee_wrap_bps,
+            fee_unwrap_bps,
+        } => execute_set_fees(deps, info, fee_wrap_bps, fee_unwrap_bps),
     }
 }
 
@@ -159,7 +197,8 @@ fn execute_notify_deposit(
 
     let depositor_addr = deps.api.addr_validate(&depositor)?;
 
-    let fee = calculate_fee(amount, config.fee_bps);
+    // Wrap uses fee_wrap_bps only; unwrap fee is ignored on this path.
+    let fee = calculate_fee(amount, config.fee_wrap_bps);
     let mint_amount = amount - fee;
 
     let mint_msg = WasmMsg::Execute {
@@ -178,6 +217,7 @@ fn execute_notify_deposit(
         .add_attribute("denom", denom)
         .add_attribute("gross_amount", amount)
         .add_attribute("fee", fee)
+        .add_attribute("fee_wrap_bps", config.fee_wrap_bps.to_string())
         .add_attribute("mint_amount", mint_amount))
 }
 
@@ -218,7 +258,10 @@ fn execute_receive_cw20(
         None => deps.api.addr_validate(&cw20_msg.sender)?,
     };
 
-    let fee = calculate_fee(amount, config.fee_bps);
+    // Unwrap uses fee_unwrap_bps only; wrap fee is ignored. No InstantWithdraw
+    // gross-up: receiver pays burn tax on BankMsg::Send. Solvency: burn A CW20,
+    // withdraw A − fee → surplus += fee (tax does not erode native ≥ supply).
+    let fee = calculate_fee(amount, config.fee_unwrap_bps);
     let withdraw_amount = amount - fee;
 
     let burn_msg = WasmMsg::Execute {
@@ -246,6 +289,7 @@ fn execute_receive_cw20(
         .add_attribute("denom", denom)
         .add_attribute("gross_amount", amount)
         .add_attribute("fee", fee)
+        .add_attribute("fee_unwrap_bps", config.fee_unwrap_bps.to_string())
         .add_attribute("withdraw_amount", withdraw_amount))
 }
 
@@ -490,16 +534,7 @@ fn execute_set_paused(
         .add_attribute("paused", paused.to_string()))
 }
 
-fn execute_set_fee_bps(
-    deps: DepsMut,
-    info: MessageInfo,
-    fee_bps: u16,
-) -> Result<Response, ContractError> {
-    let mut config = CONFIG.load(deps.storage)?;
-    if info.sender != config.governance {
-        return Err(ContractError::Unauthorized);
-    }
-
+fn validate_fee_bps(fee_bps: u16) -> Result<(), ContractError> {
     if fee_bps > MAX_FEE_BPS {
         return Err(ContractError::FeeTooHigh {
             fee_bps,
@@ -512,13 +547,65 @@ fn execute_set_fee_bps(
             min_bps: MIN_FEE_BPS,
         });
     }
+    Ok(())
+}
 
-    config.fee_bps = fee_bps;
+fn execute_set_fee_wrap_bps(
+    deps: DepsMut,
+    info: MessageInfo,
+    fee_wrap_bps: u16,
+) -> Result<Response, ContractError> {
+    let mut config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+    validate_fee_bps(fee_wrap_bps)?;
+    config.fee_wrap_bps = fee_wrap_bps;
     CONFIG.save(deps.storage, &config)?;
 
     Ok(Response::new()
-        .add_attribute("action", "set_fee_bps")
-        .add_attribute("fee_bps", fee_bps.to_string()))
+        .add_attribute("action", "set_fee_wrap_bps")
+        .add_attribute("fee_wrap_bps", fee_wrap_bps.to_string()))
+}
+
+fn execute_set_fee_unwrap_bps(
+    deps: DepsMut,
+    info: MessageInfo,
+    fee_unwrap_bps: u16,
+) -> Result<Response, ContractError> {
+    let mut config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+    validate_fee_bps(fee_unwrap_bps)?;
+    config.fee_unwrap_bps = fee_unwrap_bps;
+    CONFIG.save(deps.storage, &config)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_fee_unwrap_bps")
+        .add_attribute("fee_unwrap_bps", fee_unwrap_bps.to_string()))
+}
+
+fn execute_set_fees(
+    deps: DepsMut,
+    info: MessageInfo,
+    fee_wrap_bps: u16,
+    fee_unwrap_bps: u16,
+) -> Result<Response, ContractError> {
+    let mut config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+    validate_fee_bps(fee_wrap_bps)?;
+    validate_fee_bps(fee_unwrap_bps)?;
+    config.fee_wrap_bps = fee_wrap_bps;
+    config.fee_unwrap_bps = fee_unwrap_bps;
+    CONFIG.save(deps.storage, &config)?;
+
+    Ok(Response::new()
+        .add_attribute("action", "set_fees")
+        .add_attribute("fee_wrap_bps", fee_wrap_bps.to_string())
+        .add_attribute("fee_unwrap_bps", fee_unwrap_bps.to_string()))
 }
 
 /// Truncating fee calculation: fee = amount * fee_bps / 10_000.
@@ -603,7 +690,8 @@ fn query_config(deps: Deps) -> StdResult<ConfigResponse> {
         governance: config.governance,
         treasury: config.treasury,
         paused: config.paused,
-        fee_bps: config.fee_bps,
+        fee_wrap_bps: config.fee_wrap_bps,
+        fee_unwrap_bps: config.fee_unwrap_bps,
     })
 }
 
@@ -679,7 +767,8 @@ mod tests {
         let msg = InstantiateMsg {
             governance: GOVERNANCE.to_string(),
             treasury: TREASURY.to_string(),
-            fee_bps: Some(DEFAULT_FEE_BPS),
+            fee_wrap_bps: Some(DEFAULT_FEE_BPS),
+            fee_unwrap_bps: Some(DEFAULT_FEE_BPS),
         };
         let info = mock_info("creator", &[]);
         instantiate(deps, mock_env(), info, msg).unwrap();
@@ -689,7 +778,8 @@ mod tests {
         let msg = InstantiateMsg {
             governance: GOVERNANCE.to_string(),
             treasury: TREASURY.to_string(),
-            fee_bps: Some(DEFAULT_FEE_BPS),
+            fee_wrap_bps: Some(DEFAULT_FEE_BPS),
+            fee_unwrap_bps: Some(DEFAULT_FEE_BPS),
         };
         let info = mock_info("creator", &[]);
         instantiate(deps.branch(), mock_env(), info, msg).unwrap();
@@ -717,6 +807,20 @@ mod tests {
         CW20_TO_DENOM.save(deps.storage, cw20, &denom.to_string()).unwrap();
     }
 
+    fn set_fees(deps: DepsMut, fee_wrap_bps: u16, fee_unwrap_bps: u16) {
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps,
+            mock_env(),
+            info,
+            ExecuteMsg::SetFees {
+                fee_wrap_bps,
+                fee_unwrap_bps,
+            },
+        )
+        .unwrap();
+    }
+
     // ============ B1: INSTANTIATE ============
 
     #[test]
@@ -728,7 +832,8 @@ mod tests {
         assert_eq!(config.governance.as_str(), GOVERNANCE);
         assert_eq!(config.treasury.as_str(), TREASURY);
         assert!(!config.paused);
-        assert_eq!(config.fee_bps, DEFAULT_FEE_BPS);
+        assert_eq!(config.fee_wrap_bps, DEFAULT_FEE_BPS);
+        assert_eq!(config.fee_unwrap_bps, DEFAULT_FEE_BPS);
     }
 
     #[test]
@@ -737,13 +842,37 @@ mod tests {
         let msg = InstantiateMsg {
             governance: GOVERNANCE.to_string(),
             treasury: TREASURY.to_string(),
-            fee_bps: None,
+            fee_wrap_bps: None,
+            fee_unwrap_bps: None,
         };
         let info = mock_info("creator", &[]);
         instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
 
         let config = CONFIG.load(&deps.storage).unwrap();
-        assert_eq!(config.fee_bps, 50);
+        assert_eq!(config.fee_wrap_bps, 50);
+        assert_eq!(config.fee_unwrap_bps, 50);
+    }
+
+    #[test]
+    fn test_instantiate_distinct_fees() {
+        let mut deps = mock_dependencies();
+        let msg = InstantiateMsg {
+            governance: GOVERNANCE.to_string(),
+            treasury: TREASURY.to_string(),
+            fee_wrap_bps: Some(200),
+            fee_unwrap_bps: Some(51),
+        };
+        let info = mock_info("creator", &[]);
+        instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.fee_wrap_bps, 200);
+        assert_eq!(config.fee_unwrap_bps, 51);
+
+        let res = query(deps.as_ref(), mock_env(), QueryMsg::Config {}).unwrap();
+        let response: ConfigResponse = from_json(res).unwrap();
+        assert_eq!(response.fee_wrap_bps, 200);
+        assert_eq!(response.fee_unwrap_bps, 51);
     }
 
     #[test]
@@ -752,7 +881,8 @@ mod tests {
         let msg = InstantiateMsg {
             governance: GOVERNANCE.to_string(),
             treasury: TREASURY.to_string(),
-            fee_bps: Some(1500),
+            fee_wrap_bps: Some(1500),
+            fee_unwrap_bps: None,
         };
         let info = mock_info("creator", &[]);
         let err = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap_err();
@@ -1025,61 +1155,189 @@ mod tests {
     // ============ FEE CONFIGURATION ============
 
     #[test]
-    fn test_set_fee_bps() {
+    fn test_wrap_uses_only_fee_wrap_bps() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+        set_fees(deps.as_mut(), 200, 51);
+
+        let gross = 10_000u128;
+        let expected_mint = gross - gross * 200 / 10_000; // 9_800
+
+        let info = mock_info(TREASURY, &[]);
+        let msg = ExecuteMsg::NotifyDeposit {
+            depositor: USER.to_string(),
+            denom: DENOM_LUNC.to_string(),
+            amount: Uint128::new(gross),
+        };
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) => {
+                let parsed: Cw20ExecuteMsg = from_json(msg).unwrap();
+                match parsed {
+                    Cw20ExecuteMsg::Mint { amount, .. } => {
+                        assert_eq!(amount, Uint128::new(expected_mint));
+                    }
+                    _ => panic!("Expected Cw20ExecuteMsg::Mint"),
+                }
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
+        }
+
+        let fee_attr = res.attributes.iter().find(|a| a.key == "fee").unwrap();
+        assert_eq!(fee_attr.value, "200");
+    }
+
+    #[test]
+    fn test_unwrap_uses_only_fee_unwrap_bps() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+        set_fees(deps.as_mut(), 200, 51);
+
+        let gross = 10_000u128;
+        let fee = gross * 51 / 10_000; // 51
+        let expected_withdraw = gross - fee; // 9_949
+
+        let info = mock_info(CW20_LUNC, &[]);
+        let msg = make_cw20_receive(USER, gross, &Cw20HookMsg::Unwrap { recipient: None });
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        match &res.messages[1].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) => {
+                let parsed: TreasuryExecuteMsg = from_json(msg).unwrap();
+                match parsed {
+                    TreasuryExecuteMsg::InstantWithdraw { amount, .. } => {
+                        assert_eq!(amount, Uint128::new(expected_withdraw));
+                    }
+                }
+            }
+            _ => panic!("Expected WasmMsg::Execute"),
+        }
+
+        // All-in with simulated 1.5% burn tax on receiver: floor(9949 * 0.985) = 9799
+        // ≈ 0.9799 * A (≤2% total; integer truncation may differ by 1).
+        let simulated_user_receive = expected_withdraw * 985 / 1000;
+        assert_eq!(simulated_user_receive, 9_799);
+    }
+
+    #[test]
+    fn test_set_fee_wrap_bps() {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
         let info = mock_info(GOVERNANCE, &[]);
-        let msg = ExecuteMsg::SetFeeBps { fee_bps: 100 };
-        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-        assert_eq!(res.attributes[0].value, "set_fee_bps");
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetFeeWrapBps { fee_wrap_bps: 200 },
+        )
+        .unwrap();
+        assert_eq!(res.attributes[0].value, "set_fee_wrap_bps");
+        assert!(
+            res.attributes
+                .iter()
+                .any(|a| a.key == "fee_wrap_bps" && a.value == "200")
+        );
 
         let config = CONFIG.load(&deps.storage).unwrap();
-        assert_eq!(config.fee_bps, 100);
+        assert_eq!(config.fee_wrap_bps, 200);
+        assert_eq!(config.fee_unwrap_bps, DEFAULT_FEE_BPS);
     }
 
     #[test]
-    fn test_set_fee_bps_unauthorized() {
+    fn test_set_fee_unwrap_bps() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetFeeUnwrapBps { fee_unwrap_bps: 51 },
+        )
+        .unwrap();
+        assert_eq!(res.attributes[0].value, "set_fee_unwrap_bps");
+        assert!(
+            res.attributes
+                .iter()
+                .any(|a| a.key == "fee_unwrap_bps" && a.value == "51")
+        );
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.fee_wrap_bps, DEFAULT_FEE_BPS);
+        assert_eq!(config.fee_unwrap_bps, 51);
+    }
+
+    #[test]
+    fn test_set_fees() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let res = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetFees {
+                fee_wrap_bps: 100,
+                fee_unwrap_bps: 51,
+            },
+        )
+        .unwrap();
+        assert_eq!(res.attributes[0].value, "set_fees");
+        assert!(
+            res.attributes
+                .iter()
+                .any(|a| a.key == "fee_wrap_bps" && a.value == "100")
+        );
+        assert!(
+            res.attributes
+                .iter()
+                .any(|a| a.key == "fee_unwrap_bps" && a.value == "51")
+        );
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.fee_wrap_bps, 100);
+        assert_eq!(config.fee_unwrap_bps, 51);
+    }
+
+    #[test]
+    fn test_set_fees_unauthorized() {
         let mut deps = mock_dependencies();
         setup_contract(deps.as_mut());
 
         let info = mock_info(USER, &[]);
-        let msg = ExecuteMsg::SetFeeBps { fee_bps: 100 };
-        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
-        assert_eq!(err, ContractError::Unauthorized);
-    }
-
-    #[test]
-    fn test_set_fee_bps_too_high() {
-        let mut deps = mock_dependencies();
-        setup_contract(deps.as_mut());
-
-        let info = mock_info(GOVERNANCE, &[]);
-        let msg = ExecuteMsg::SetFeeBps { fee_bps: 1500 };
-        let err = execute(deps.as_mut(), mock_env(), info, msg).unwrap_err();
-        assert_eq!(
-            err,
-            ContractError::FeeTooHigh {
-                fee_bps: 1500,
-                max_bps: 1000,
-            }
-        );
-    }
-
-    #[test]
-    fn test_set_fee_bps_zero_rejected() {
-        let mut deps = mock_dependencies();
-        setup_contract(deps.as_mut());
-
-        let info = mock_info(GOVERNANCE, &[]);
         let err = execute(
             deps.as_mut(),
             mock_env(),
             info,
-            ExecuteMsg::SetFeeBps { fee_bps: 0 },
+            ExecuteMsg::SetFees {
+                fee_wrap_bps: 100,
+                fee_unwrap_bps: 51,
+            },
         )
         .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
 
+    #[test]
+    fn test_set_fees_bounds() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        let info = mock_info(GOVERNANCE, &[]);
+
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetFees {
+                fee_wrap_bps: 0,
+                fee_unwrap_bps: 50,
+            },
+        )
+        .unwrap_err();
         assert_eq!(
             err,
             ContractError::FeeTooLow {
@@ -1087,43 +1345,77 @@ mod tests {
                 min_bps: crate::state::MIN_FEE_BPS,
             }
         );
-    }
 
-    #[test]
-    fn test_set_fee_bps_at_minimum() {
-        let mut deps = mock_dependencies();
-        setup_contract(deps.as_mut());
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetFees {
+                fee_wrap_bps: 50,
+                fee_unwrap_bps: 0,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::FeeTooLow {
+                fee_bps: 0,
+                min_bps: crate::state::MIN_FEE_BPS,
+            }
+        );
 
-        let info = mock_info(GOVERNANCE, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetFees {
+                fee_wrap_bps: 1001,
+                fee_unwrap_bps: 50,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::FeeTooHigh {
+                fee_bps: 1001,
+                max_bps: 1000,
+            }
+        );
+
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info.clone(),
+            ExecuteMsg::SetFees {
+                fee_wrap_bps: crate::state::MIN_FEE_BPS,
+                fee_unwrap_bps: crate::state::MIN_FEE_BPS,
+            },
+        )
+        .unwrap();
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.fee_wrap_bps, crate::state::MIN_FEE_BPS);
+        assert_eq!(config.fee_unwrap_bps, crate::state::MIN_FEE_BPS);
+
         execute(
             deps.as_mut(),
             mock_env(),
             info,
-            ExecuteMsg::SetFeeBps {
-                fee_bps: crate::state::MIN_FEE_BPS,
+            ExecuteMsg::SetFees {
+                fee_wrap_bps: 1000,
+                fee_unwrap_bps: 1000,
             },
         )
         .unwrap();
-
         let config = CONFIG.load(&deps.storage).unwrap();
-        assert_eq!(config.fee_bps, crate::state::MIN_FEE_BPS);
+        assert_eq!(config.fee_wrap_bps, 1000);
+        assert_eq!(config.fee_unwrap_bps, 1000);
     }
 
     #[test]
     fn test_min_fee_deduction() {
         let mut deps = mock_dependencies();
         setup_with_mapping(deps.as_mut());
-
-        let info = mock_info(GOVERNANCE, &[]);
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info,
-            ExecuteMsg::SetFeeBps {
-                fee_bps: crate::state::MIN_FEE_BPS,
-            },
-        )
-        .unwrap();
+        set_fees(deps.as_mut(), crate::state::MIN_FEE_BPS, crate::state::MIN_FEE_BPS);
 
         let gross = 1_000_000u128;
         let fee = gross * crate::state::MIN_FEE_BPS as u128 / 10_000;
@@ -1157,7 +1449,8 @@ mod tests {
         let msg = InstantiateMsg {
             governance: GOVERNANCE.to_string(),
             treasury: TREASURY.to_string(),
-            fee_bps: Some(0),
+            fee_wrap_bps: Some(0),
+            fee_unwrap_bps: None,
         };
         let info = mock_info("creator", &[]);
         let err = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap_err();
@@ -1168,6 +1461,129 @@ mod tests {
                 min_bps: crate::state::MIN_FEE_BPS,
             }
         );
+    }
+
+    #[test]
+    fn test_dust_wrap_unwrap_with_high_unwrap_fee() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+        set_fees(deps.as_mut(), 200, 51);
+
+        let info = mock_info(TREASURY, &[]);
+        for amount in [1u128, 2] {
+            let msg = ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(amount),
+            };
+            let res = execute(deps.as_mut(), mock_env(), info.clone(), msg).unwrap();
+            let fee_attr = res.attributes.iter().find(|a| a.key == "fee").unwrap();
+            assert_eq!(fee_attr.value, "0", "wrap dust amount={amount}");
+            let mint_attr = res.attributes.iter().find(|a| a.key == "mint_amount").unwrap();
+            assert_eq!(mint_attr.value, amount.to_string());
+        }
+
+        let cw20_info = mock_info(CW20_LUNC, &[]);
+        for amount in [1u128, 2] {
+            let msg = make_cw20_receive(USER, amount, &Cw20HookMsg::Unwrap { recipient: None });
+            let res = execute(deps.as_mut(), mock_env(), cw20_info.clone(), msg).unwrap();
+            let fee_attr = res.attributes.iter().find(|a| a.key == "fee").unwrap();
+            assert_eq!(fee_attr.value, "0", "unwrap dust amount={amount}");
+            match &res.messages[1].msg {
+                CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) => {
+                    let parsed: TreasuryExecuteMsg = from_json(msg).unwrap();
+                    match parsed {
+                        TreasuryExecuteMsg::InstantWithdraw { amount: withdraw, .. } => {
+                            assert_eq!(withdraw, Uint128::new(amount));
+                        }
+                    }
+                }
+                _ => panic!("Expected WasmMsg::Execute"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_solvency_surplus_with_unwrap_fee_below_tax() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+        set_fees(deps.as_mut(), 200, 51);
+
+        let amount = 10_000u128;
+        let fee = amount * 51 / 10_000; // 51
+        let expected_withdraw = amount - fee;
+
+        let info = mock_info(CW20_LUNC, &[]);
+        let msg = make_cw20_receive(USER, amount, &Cw20HookMsg::Unwrap { recipient: None });
+        let res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        // Burns full CW20 amount; treasury withdraws A - fee_unwrap. Surplus += fee.
+        // Burn tax is paid by the receiver on BankMsg::Send, not by treasury.
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) => {
+                let parsed: Cw20ExecuteMsg = from_json(msg).unwrap();
+                match parsed {
+                    Cw20ExecuteMsg::Burn { amount: burned } => {
+                        assert_eq!(burned, Uint128::new(amount));
+                    }
+                    _ => panic!("Expected Cw20ExecuteMsg::Burn"),
+                }
+            }
+            _ => panic!("Expected WasmMsg::Execute for burn"),
+        }
+        match &res.messages[1].msg {
+            CosmosMsg::Wasm(WasmMsg::Execute { msg, .. }) => {
+                let parsed: TreasuryExecuteMsg = from_json(msg).unwrap();
+                match parsed {
+                    TreasuryExecuteMsg::InstantWithdraw { amount: withdrawn, .. } => {
+                        assert_eq!(withdrawn, Uint128::new(expected_withdraw));
+                    }
+                }
+            }
+            _ => panic!("Expected WasmMsg::Execute for withdraw"),
+        }
+        let fee_attr = res.attributes.iter().find(|a| a.key == "fee").unwrap();
+        assert_eq!(fee_attr.value, fee.to_string());
+    }
+
+    #[test]
+    fn test_pause_still_blocks_wrap_and_unwrap_with_asymmetric_fees() {
+        let mut deps = mock_dependencies();
+        setup_with_mapping(deps.as_mut());
+        set_fees(deps.as_mut(), 200, 51);
+
+        let info = mock_info(GOVERNANCE, &[]);
+        execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::SetPaused { paused: true },
+        )
+        .unwrap();
+
+        let treasury_info = mock_info(TREASURY, &[]);
+        let wrap_err = execute(
+            deps.as_mut(),
+            mock_env(),
+            treasury_info,
+            ExecuteMsg::NotifyDeposit {
+                depositor: USER.to_string(),
+                denom: DENOM_LUNC.to_string(),
+                amount: Uint128::new(1_000),
+            },
+        )
+        .unwrap_err();
+        assert_eq!(wrap_err, ContractError::Paused);
+
+        let cw20_info = mock_info(CW20_LUNC, &[]);
+        let unwrap_err = execute(
+            deps.as_mut(),
+            mock_env(),
+            cw20_info,
+            make_cw20_receive(USER, 1_000, &Cw20HookMsg::Unwrap { recipient: None }),
+        )
+        .unwrap_err();
+        assert_eq!(unwrap_err, ContractError::Paused);
     }
 
     // ============ B12-B15: RATE LIMITS ============
@@ -1662,7 +2078,8 @@ mod tests {
         assert_eq!(response.governance.as_str(), GOVERNANCE);
         assert_eq!(response.treasury.as_str(), TREASURY);
         assert!(!response.paused);
-        assert_eq!(response.fee_bps, DEFAULT_FEE_BPS);
+        assert_eq!(response.fee_wrap_bps, DEFAULT_FEE_BPS);
+        assert_eq!(response.fee_unwrap_bps, DEFAULT_FEE_BPS);
     }
 
     #[test]
@@ -2066,15 +2483,7 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_with_mapping(deps.as_mut());
 
-        // Set fee to max (10%)
-        let info = mock_info(GOVERNANCE, &[]);
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info,
-            ExecuteMsg::SetFeeBps { fee_bps: 1000 },
-        )
-        .unwrap();
+        set_fees(deps.as_mut(), 1000, 1000);
 
         let info = mock_info(TREASURY, &[]);
         let msg = ExecuteMsg::NotifyDeposit {
@@ -2091,38 +2500,66 @@ mod tests {
     }
 
     #[test]
-    fn test_fee_exact_boundary_bps() {
+    fn test_migrate_legacy_fee_bps_to_asymmetric() {
+        use cosmwasm_std::to_json_vec;
+        use cosmwasm_std::Storage;
+        use crate::state::ConfigLegacy;
+
         let mut deps = mock_dependencies();
-        setup_contract(deps.as_mut());
+        let legacy = ConfigLegacy {
+            governance: cosmwasm_std::Addr::unchecked(GOVERNANCE),
+            treasury: cosmwasm_std::Addr::unchecked(TREASURY),
+            paused: false,
+            fee_bps: 200,
+        };
+        deps.storage
+            .set(b"config", &to_json_vec(&legacy).unwrap());
+        cw2::set_contract_version(&mut deps.storage, CONTRACT_NAME, "0.2.1").unwrap();
 
-        let info = mock_info(GOVERNANCE, &[]);
-
-        // Exactly at MAX_FEE_BPS (1000) should succeed
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info.clone(),
-            ExecuteMsg::SetFeeBps { fee_bps: 1000 },
-        )
-        .unwrap();
-        let config = CONFIG.load(&deps.storage).unwrap();
-        assert_eq!(config.fee_bps, 1000);
-
-        // One over should fail
-        let err = execute(
-            deps.as_mut(),
-            mock_env(),
-            info,
-            ExecuteMsg::SetFeeBps { fee_bps: 1001 },
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            ContractError::FeeTooHigh {
-                fee_bps: 1001,
-                max_bps: 1000,
-            }
+        let res = migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+        assert_eq!(res.attributes[0].value, "migrate");
+        assert!(
+            res.attributes
+                .iter()
+                .any(|a| a.key == "from_legacy_fee_bps" && a.value == "true")
         );
+        assert!(
+            res.attributes
+                .iter()
+                .any(|a| a.key == "fee_wrap_bps" && a.value == "200")
+        );
+        assert!(
+            res.attributes
+                .iter()
+                .any(|a| a.key == "fee_unwrap_bps" && a.value == "200")
+        );
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.fee_wrap_bps, 200);
+        assert_eq!(config.fee_unwrap_bps, 200);
+
+        let ver = cw2::get_contract_version(&deps.storage).unwrap();
+        assert_eq!(ver.version, "0.3.0");
+    }
+
+    #[test]
+    fn test_migrate_idempotent_new_shape() {
+        let mut deps = mock_dependencies();
+        let msg = InstantiateMsg {
+            governance: GOVERNANCE.to_string(),
+            treasury: TREASURY.to_string(),
+            fee_wrap_bps: Some(200),
+            fee_unwrap_bps: Some(51),
+        };
+        let info = mock_info("creator", &[]);
+        instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
+
+        migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+        migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
+
+        let config = CONFIG.load(&deps.storage).unwrap();
+        assert_eq!(config.fee_wrap_bps, 200);
+        assert_eq!(config.fee_unwrap_bps, 51);
     }
 
     #[test]
@@ -2459,19 +2896,13 @@ mod tests {
         let mut deps = mock_dependencies();
         setup_with_mapping(deps.as_mut());
 
-        let info = mock_info(GOVERNANCE, &[]);
-        execute(
-            deps.as_mut(),
-            mock_env(),
-            info,
-            ExecuteMsg::SetFeeBps { fee_bps: 100 },
-        )
-        .unwrap();
+        set_fees(deps.as_mut(), 100, 100);
 
         migrate(deps.as_mut(), mock_env(), MigrateMsg {}).unwrap();
 
         let config = CONFIG.load(&deps.storage).unwrap();
-        assert_eq!(config.fee_bps, 100);
+        assert_eq!(config.fee_wrap_bps, 100);
+        assert_eq!(config.fee_unwrap_bps, 100);
         assert_eq!(config.governance.as_str(), GOVERNANCE);
         assert_eq!(config.treasury.as_str(), TREASURY);
 
@@ -2720,7 +3151,8 @@ mod integration_tests {
                 &crate::msg::InstantiateMsg {
                     governance: GOVERNANCE.to_string(),
                     treasury: treasury_addr.to_string(),
-                    fee_bps: Some(50), // 0.5%
+                    fee_wrap_bps: Some(50), // 0.5%
+                    fee_unwrap_bps: Some(50),
                 },
                 &[],
                 "wrap-mapper",
@@ -4158,7 +4590,10 @@ mod integration_tests {
             .execute_contract(
                 Addr::unchecked(GOVERNANCE),
                 env.wrapper_addr.clone(),
-                &crate::msg::ExecuteMsg::SetFeeBps { fee_bps: 100 },
+                &crate::msg::ExecuteMsg::SetFees {
+                    fee_wrap_bps: 100,
+                    fee_unwrap_bps: 100,
+                },
                 &[],
             )
             .unwrap();

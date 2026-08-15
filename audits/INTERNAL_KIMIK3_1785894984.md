@@ -200,7 +200,7 @@ IDs are global to this report; per-domain agent IDs in parentheses. Locations us
 - **M-1 — Self-referral leak (E-1, S-4).** `ustc-swap/src/contract.rs:257-289`. No `referrer != info.sender` check. Registration costs 10 USTR once; the referrer bonus is +10% of every swap forever. Break-even is a single ~100-USTR swap, so every rational swapper self-refers: the protocol pays the full 20% bonus inflation while acquiring zero new users. *Fix:* reject self-referral, or accept and reprice the bonus (e.g. 5%+5%).
 - **M-2 — Per-tx mint cap does not bound aggregate inflation (E-2, S-5).** Each swap may mint up to 5% of *current* supply; the ceiling grows with supply. Over the 100-day window total minting is bounded only by USTC inflow and the (currently uncapped, per H-3) token cap. *Fix:* global `max_total_minted` in swap config; set a hard cap on the cw20 minter entry.
 - **M-3 — Uncapped additional minters + surviving renounce (E-3, C-1, C-5).** `cw20-mintable` `AddMinter` grants minting with **no per-minter cap** (only the global `total_supply ≤ cap`, if set); `UpdateMinter(None)` renounces the primary minter but **additional minters keep minting** (`contract.rs:386-422, 597-650`; confirmed by `test_remove_primary_minter_additional_still_mints`). *Fix:* clear `MINTERS` on renounce or add explicit `renounce_all_minters`; cap additional minters; document.
-- **M-4 — `MIN_FEE_BPS = 1` permits fee below the 0.5% TerraClassic burn tax (W-1).** `wrap-mapper/src/state.rs:27`. The code comment states the fee must cover the chain tax on unwrap `BankMsg::Send`, but the enforced floor doesn't. A misconfigured/compromised governance setting `fee_bps < 50` slowly erodes native backing below outstanding CW20 supply → late unwrappers hit `InsufficientBalance`. *Fix:* `MIN_FEE_BPS ≥ 50` or tax-aware dynamic floor.
+- **M-4 — `MIN_FEE_BPS = 1` permits fee below the 0.5% TerraClassic burn tax (W-1).** `wrap-mapper/src/state.rs` (historical single `fee_bps`). The code comment stated the fee must cover the chain tax on unwrap `BankMsg::Send`, but the enforced floor didn't. Under a **gross-up / fee-covers-tax** model, `fee_bps < tax` would erode native backing. **Superseded by [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9):** asymmetric `fee_wrap_bps` / `fee_unwrap_bps`, **no** InstantWithdraw gross-up; tax incidence stays on the unwrap receiver; solvency surplus Δ ≈ `+fee_unwrap` so unwrap fee **may** be below tax (target `51` under 1.5% tax). Do **not** reintroduce “unwrap fee ≥ tax” as a code floor. See [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md).
 - **M-5 — Stats/accounting drift from burn tax (I→M borderline).** Swap records `total_ustc_received` as the **gross** amount while treasury receives net-of-tax; USTR is minted on gross — the protocol subsidizes the tax gap. Reconciliation dashboards reading `Stats` will overstate treasury holdings. *Fix:* document, or track net via treasury balance queries.
 
 #### Contract design / access control
@@ -310,7 +310,7 @@ Fees accumulate as **untracked native surplus** in treasury (wrap fee stays; unw
 
 ### 6.5 Chain-level dependencies
 
-TerraClassic burn-tax rate/cap are chain-governance parameters: a tax increase above `fee_bps` silently breaks wrap solvency (M-4). Validator set quality affects timestamp precision (negligible here) and tx inclusion (liveness only). Recommend monitoring tax-param governance proposals.
+TerraClassic burn-tax rate/cap are chain-governance parameters. Under [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9) (no gross-up), a tax increase does **not** silently erode `native ≥ supply`; it worsens **user** unwrap all-in until governance retunes `fee_unwrap_bps` (or product accepts a higher all-in / revisits gross-up). Validator set quality affects timestamp precision (negligible here) and tx inclusion (liveness only). Recommend monitoring tax-param governance proposals and applying the DEPLOYMENT retune rule.
 
 ---
 
@@ -368,7 +368,7 @@ Adjacent surfaces that substitute for a backend and *were* audited: LCD/RPC endp
 | **P1** | Add swap instantiate validation (`start_rate>0`, `end_rate>start_rate`, `duration>0`) | H-4 |
 | **P1** | On-chain cap for native `InstantWithdraw` per wrapper (or fail-closed wrap-mapper rate limits + documented sizing) | H-1 |
 | **P1** | Timelock queue for spender/wrapper/limit/fee changes | H-2, M-9 |
-| **P1** | `MIN_FEE_BPS ≥ 50` (or tax-aware floor) | M-4 |
+| **P1** | ~~`MIN_FEE_BPS ≥ 50` (or tax-aware floor)~~ — **superseded by [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9)** asymmetric fees + no gross-up; retune `fee_unwrap_bps` instead | M-4 |
 | **P1** | CI: `cargo test` + tarpaulin + `npm audit` + gitleaks; husky runs contract tests on `contracts/**` changes | M-15 |
 | **P2** | Fix referral UX (validate before showing bonus; remove client-side fallback); drive display rate from on-chain queries | M-13, M-17 |
 | **P2** | Remove unused `@terra-money/terra.js`; patch npm criticals/highs | M-14 |

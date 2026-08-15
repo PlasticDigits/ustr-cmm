@@ -2,12 +2,18 @@
   "network": "columbus-5",
   "treasury": "terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2",
   "admin": "terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l",
-  "fee_bps": 200,
+  "fee_wrap_bps": 200,
+  "fee_unwrap_bps": 51,
+  "fee_note": "Post-#9 target: wrap 200 / unwrap 51 for ≈2% unwrap all-in under burn_tax 0.015 without InstantWithdraw gross-up. Migrate maps legacy fee_bps→both; gov SetFees required same window.",
+  "issue": "https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9",
+  "skill": "skills/wrap-mapper-asymmetric-fees/SKILL.md",
   "fee_bps_history": [
-    { "at": "2026-08-08T00:05:00Z", "fee_bps": 100, "note": "instantiate" },
-    { "at": "2026-08-08T00:15:00Z", "fee_bps": 200, "note": "SetFeeBps after prop 12223 burn tax 1.5%" }
+    { "at": "2026-08-08T00:05:00Z", "fee_bps": 100, "note": "instantiate (single fee_bps)" },
+    { "at": "2026-08-08T00:15:00Z", "fee_bps": 200, "note": "SetFeeBps after prop 12223 burn tax 1.5%" },
+    { "at": "pending-#9", "fee_wrap_bps": 200, "fee_unwrap_bps": 51, "note": "migrate + SetFees asymmetric (no gross-up)" }
   ],
   "burn_tax_rate": "0.015",
+  "retune_rule": "fee_unwrap_bps = round(10000 - 9800 / (1 - burn_tax_rate))",
   "code_ids": {
     "treasury": "11564",
     "wrap_mapper": "11565",
