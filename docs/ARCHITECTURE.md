@@ -10,7 +10,7 @@ The USTR CMM system consists of smart contracts that work together to implement 
 - **Treasury** — Secure asset custody with 7-day governance timelock
 - **USTC-Swap** — Time-limited USTC→USTR exchange with linear rate decay
 - **Airdrop** — Batch CW20 distribution for preregistration rewards
-- **UST1 Token** — (Phase 2) Collateralized stablecoin
+- **UST1 Token** — Live CW20 unstablecoin (`terra1f0eq…fy72`); minted/burned by ust1-window against treasury vFDUSD
 
 ## Contract Diagram
 
@@ -38,10 +38,10 @@ The USTR CMM system consists of smart contracts that work together to implement 
 │  │  Passive custodian — holds USTC forwarded from ustc-swap    │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │
-│  ┌──────────────┐     [PHASE 2]                                    │
+│  ┌──────────────┐     LIVE (ust1-window)                           │
 │  │  UST1 TOKEN  │     Collateralized unstablecoin                  │
-│  │  (CW20)      │     minted against treasury assets               │
-│  └──────────────┘     (incl. RWAs + synthetic assets)              │
+│  │  (CW20)      │     minted/burned vs treasury vFDUSD             │
+│  └──────────────┘     CR = priced treasury USD / outstanding UST1  │
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -117,20 +117,22 @@ Treasury is a passive custodian for swap USTC; it does not participate in swap e
 **Dependencies**:
 - CW20 token contract (for TransferFrom)
 
-### UST1 Token Contract (Phase 2)
+### UST1 Token Contract
 
-**Purpose**: Collateralized unstablecoin backed by diversified basket including RWAs and synthetic assets
+**Purpose**: Collateralized unstablecoin. Mainnet CW20 `10184` at `terra1f0eqgy9w7e5e7up97vjudqwx38tesf8ylx75x2lv3nwm0clry0pqmgfy72` (6 decimals). Outstanding supply is `token_info.total_supply` (minted − burned on this token).
 
 **Key Functions**:
-- Mint against collateral
-- Redeem for collateral
-- Collateralization ratio management
+- Mint / burn via ust1-window (vFDUSD deposit → mint; redeem → burn)
+- Public Treasury page shows circulating + CR (frontend; not an on-chain CR contract)
 
 **Dependencies**:
-- Treasury (collateral source)
-- Oracle (price feeds)
+- Treasury (collateral custody, including bridged vFDUSD)
+- ust1-oracle (Venus-normalized vFDUSD rate for USD display / CR numerator)
+- ust1-window (minter / burner)
 
-**Decimal Handling**: The system uses each token's on-chain decimal configuration for CR calculations, ensuring oracle prices match regardless of decimal count (6 for native `uusd`, 18 for most CW20s, etc.).
+**Decimal Handling**: The system uses each token's on-chain decimal configuration for CR calculations, ensuring oracle prices match regardless of decimal count (6 for native `uusd` / UST1 / vFDUSD, 18 for USTR). Frontend splits bigint before JS `Number` — see [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md).
+
+**Do not double-count wraps:** cLUNC / cUSTC outstanding is informational; native LUNC / USTC in treasury are the CR assets.
 
 ## Data Flow
 
@@ -335,12 +337,12 @@ Key frontend examples in `frontend-dapp/`:
 
 The SSoT Dashboard is a critical system component that serves as the authoritative reference for CMM state:
 
-**Core Features**:
-- **CR Ratios Display**: Real-time collateralization ratio with historical trend line
-- **Current Tier Indicator**: Visual display of RED/YELLOW/GREEN/BLUE status
-- **Basket of Assets**: Complete treasury holdings breakdown with valuations
-- **Whitelist Status**: Shows which CW20 tokens are counted toward CR calculations
-- **Oracle Price Feeds**: Current prices used for valuations
+**Core Features** (Treasury page — live subset; full SSoT dashboard is still a later phase):
+- **CR Ratios Display**: Collateralization = priced treasury assets USD / UST1 circulating × 100. `∞` only when UST1 `token_info` succeeded and supply is 0; query failure is `N/A`. Incomplete prices are labeled, not treated as $0. See [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md).
+- **Current Tier Indicator**: ECONOMICS bands RED `<95` / YELLOW `95–110` / GREEN `110–190` / BLUE `>190`
+- **Basket of Assets**: Treasury holdings including vFDUSD; USD from CEX/DEX plus session-once ust1-oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md))
+- **Wrap supplies**: cLUNC / cUSTC circulating (not extra collateral)
+- **Legal clickwrap**: connected wallets must accept CL8Y terms for `ust1cmm.com` before swap/register ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12) / [skills/frontend-legal-clickwrap](../skills/frontend-legal-clickwrap/SKILL.md))
 
 **Why SSoT Matters**:
 - Eliminates reliance on third-party data aggregators that may report incorrectly

@@ -24,7 +24,8 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - Testnet: `1641`
 
 **Deployed Contract Addresses**:
-- Mainnet (columbus-5): `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv`
+- USTR mainnet (columbus-5): `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv`
+- UST1 mainnet (columbus-5): `terra1f0eqgy9w7e5e7up97vjudqwx38tesf8ylx75x2lv3nwm0clry0pqmgfy72` (6 decimals; outstanding = `token_info.total_supply`)
 
 **Key Features**:
 - Standard CW20 operations (transfer, burn, allowance)

@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { priceService } from '../services/price';
 import { PRICE_CACHE, TOKEN_LIST_URL } from '../utils/constants';
+import { isVfdusdToken } from '../utils/oracleTokens';
 
 /** Token entry from tokenlist.json */
 interface TokenListEntry {
@@ -73,8 +74,11 @@ export function usePrices(): {
       const tokenList = await fetchTokenList();
       const cw20Tokens = tokenList.tokens.filter(t => t.type === 'cw20' && t.address);
 
-      // Fetch prices for each CW20 token
+      // Fetch prices for each CW20 token (vFDUSD is oracle-only — never DEX simulate)
       for (const token of cw20Tokens) {
+        if (isVfdusdToken(token.symbol, token.address)) {
+          continue;
+        }
         // Pass pool config if available for direct querying
         const pool = token.pool ? { address: token.pool.address, dex: token.pool.dex, quoteAsset: token.pool.quoteAsset } : undefined;
         const price = await priceService.getTokenPriceUsd(token.address!, basePrices.lunc, basePrices.ustc, pool);
@@ -98,6 +102,23 @@ export function usePrices(): {
     placeholderData: (prev) => prev,
   });
 
+  // Session-once oracle USD for vFDUSD — no interval, no window-focus refetch
+  const vfdusdQuery = useQuery({
+    queryKey: ['prices', 'vfdusd-oracle'],
+    queryFn: () => priceService.getVfdusdUsdSessionOnce(),
+    staleTime: Infinity,
+    gcTime: Infinity,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    refetchInterval: false,
+    retry: false,
+  });
+
+  const prices: Record<string, number> = { ...(tokensQuery.data ?? {}) };
+  if (vfdusdQuery.data !== undefined && vfdusdQuery.data !== null && vfdusdQuery.data > 0) {
+    prices['vFDUSD'] = vfdusdQuery.data;
+  }
+
   // Determine loading state (true if either query is loading)
   const isLoading = baseQuery.isLoading || tokensQuery.isLoading;
 
@@ -109,7 +130,7 @@ export function usePrices(): {
     : null;
 
   return {
-    prices: tokensQuery.data ?? {},
+    prices,
     luncUsd: baseQuery.data?.lunc ?? 0,
     ustcUsd: baseQuery.data?.ustc ?? 0,
     isLoading,

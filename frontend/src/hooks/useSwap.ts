@@ -12,11 +12,13 @@ import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { contractService } from '../services/contract';
 import { useWallet } from './useWallet';
+import { assertLegalAccepted, useLegalAcceptance } from './useLegalAcceptance';
 import { POLLING_INTERVAL, SWAP_CONFIG } from '../utils/constants';
 import type { SwapSimulation } from '../types/contracts';
 
 export function useSwap() {
   const { address, connected, refreshBalances } = useWallet();
+  const legal = useLegalAcceptance();
   const queryClient = useQueryClient();
   
   const [inputAmount, setInputAmount] = useState<string>('');
@@ -74,6 +76,7 @@ export function useSwap() {
   const swapMutation = useMutation({
     mutationFn: async (ustcAmount: string) => {
       if (!address) throw new Error('Wallet not connected');
+      assertLegalAccepted(legal.allowed, legal.loading);
       
       // Convert to micro units
       const microAmount = Math.floor(parseFloat(ustcAmount) * 1_000_000).toString();
@@ -123,6 +126,7 @@ export function useSwap() {
   // Check if swap is currently possible
   const canSwap = useCallback((): boolean => {
     if (!connected) return false;
+    if (!legal.allowed) return false;
     if (!swapStatus) return false;
     if (!swapStatus.started) return false;
     if (swapStatus.ended) return false;
@@ -130,7 +134,7 @@ export function useSwap() {
     if (!inputAmount || parseFloat(inputAmount) < 1) return false; // Min 1 USTC
     if (parseFloat(inputAmount) > SWAP_CONFIG.maxUstcPerSwap) return false; // Max per swap
     return true;
-  }, [connected, swapStatus, inputAmount]);
+  }, [connected, swapStatus, inputAmount, legal.allowed]);
 
   return {
     // Input state

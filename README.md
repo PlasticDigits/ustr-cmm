@@ -7,7 +7,7 @@ A collateralized CW20 stablecoin system for TerraClassic, introducing USTR and U
 USTR CMM creates a pathway for USTC holders to participate in a new collateralized stablecoin ecosystem. See the full [Proposal](./PROPOSAL.md) for detailed specifications.
 
 - **USTR**: Utility/governance token acquired through time-limited USTC swap
-- **UST1**: Future collateralized stablecoin backed by USTC and diversified crypto assets
+- **UST1**: Live collateralized unstablecoin (CW20); circulating supply and CR on the Treasury page
 - **Treasury**: Secure, governance-controlled asset custody with 7-day timelock
 
 ## Deployments
@@ -24,8 +24,12 @@ USTR CMM creates a pathway for USTC holders to participate in a new collateraliz
 | USTC-Swap | `10838` | `terra16ytnkhw53elefz2rhulcr4vq8fs83nd97ht3wt05wtcq7ypcmpqqv37lel` |
 | Referral | `10700` | `terra1lxv5m2n72l4zujf0rrgek9k6m8kfky62yvm8qvlnjqgjmmlmywzqt4j0z2` |
 | Airdrop | `10700` | `terra1m758wqc6grg7ttg8cmrp72hf6a5cej5zq0w59d9d6wr5r22tulwqk3ga5r` |
+| UST1 | `10184` | `terra1f0eqgy9w7e5e7up97vjudqwx38tesf8ylx75x2lv3nwm0clry0pqmgfy72` |
+| vFDUSD | `10184` | `terra1mnl9azefrqpmu888ar2u6zrcwr80hxlt3avf4300r576cw5ar7esvxsvj3` |
+| ust1-oracle | — | `terra1fmht0t6svq3n24zx03nkfja0m40zhfyyxkdcvlrkl6u7gfe6aagq4gch8n` |
+| ust1-window | `11566` | `terra1zxwpzpzpleatqn39r00grau4yt29sld8pw78s7ktvjafnj5nsaxq0h3rh2` |
 
-See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for wrap/spender wiring and the 2026-08-08 migrate record.
+See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for wrap/spender wiring and the 2026-08-08 migrate record. Frontend Treasury + Legal: [skills/frontend-vfdusd-oracle](./skills/frontend-vfdusd-oracle/SKILL.md), [skills/frontend-ust1-ratios](./skills/frontend-ust1-ratios/SKILL.md), [skills/frontend-legal-clickwrap](./skills/frontend-legal-clickwrap/SKILL.md).
 
 ## Project Structure
 

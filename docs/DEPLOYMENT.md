@@ -399,7 +399,7 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 - [x] Treasury migrate strips `swap_contract` ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8); no `set_swap_contract` step) — done 2026-08-08 code `11564`
 - [x] Initial USTC transferred to treasury
 - [x] All contract addresses documented
-- [ ] Frontend updated with contract addresses (Phase 4 — wrap mapper / cLUNC / cUSTC)
+- [x] Frontend updated with contract addresses (Phase 4 — wrap mapper / cLUNC / cUSTC / UST1 / vFDUSD / ust1-oracle; [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10), [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11))
 - [ ] Monitoring/alerting configured
 - [x] Treasury migrated with CW20 InstantWithdraw API (#6) + 24h pull limits (#7)
 - [x] `SetCw20Spender` (+ `limit_24h`) executed for vFDUSD → ust1-window (`10000000000`)
@@ -430,6 +430,10 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 | USTC-Swap | `10838` | `terra16ytnkhw53elefz2rhulcr4vq8fs83nd97ht3wt05wtcq7ypcmpqqv37lel` |
 | Referral | `10700` | `terra1lxv5m2n72l4zujf0rrgek9k6m8kfky62yvm8qvlnjqgjmmlmywzqt4j0z2` |
 | Airdrop | `10700` | `terra1m758wqc6grg7ttg8cmrp72hf6a5cej5zq0w59d9d6wr5r22tulwqk3ga5r` |
+| UST1 | `10184` | `terra1f0eqgy9w7e5e7up97vjudqwx38tesf8ylx75x2lv3nwm0clry0pqmgfy72` |
+| vFDUSD | `10184` | `terra1mnl9azefrqpmu888ar2u6zrcwr80hxlt3avf4300r576cw5ar7esvxsvj3` |
+| ust1-oracle | — | `terra1fmht0t6svq3n24zx03nkfja0m40zhfyyxkdcvlrkl6u7gfe6aagq4gch8n` |
+| ust1-window | `11566` | `terra1zxwpzpzpleatqn39r00grau4yt29sld8pw78s7ktvjafnj5nsaxq0h3rh2` |
 
 **Wrap / spender wiring (mainnet):**
 
@@ -462,6 +466,23 @@ terrad tx wasm execute $WRAP_MAPPER '{"set_fee_bps":{"fee_bps":200}}' \
   --from cl8y2_admin --chain-id columbus-5 --node $RPC \
   --gas auto --gas-adjustment 1.4 --gas-prices 28.325uluna -y
 ```
+
+### Frontend address wiring (#10 / #11)
+
+`frontend/src/utils/constants.ts` `CONTRACTS.mainnet` and `frontend/public/assets/tokenlist.json` pin the addresses above. Treasury UI:
+
+- vFDUSD balance + session-once ust1-oracle USD — [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md)
+- UST1 / cLUNC / cUSTC `token_info.total_supply` and CR — [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md)
+
+Do **not** add UST1 / cLUNC / cUSTC to the treasury-holdings tokenlist loop (liability / wrap receipts).
+
+### Legal clickwrap (#12)
+
+Production property is **`ust1cmm.com`**. SDK `@plasticdigits/cl8y-clickwrap` (GitLab npm 82547916). See [skills/frontend-legal-clickwrap](../skills/frontend-legal-clickwrap/SKILL.md).
+
+**Coolify / prod env (this frontend):** do **not** set `VITE_PLAYWRIGHT_E2E`. Optional staging only: `VITE_LEGAL_PROPERTY`.
+
+**Legal platform (separate repo):** register property `ust1cmm.com`, add `https://ust1cmm.com` to API `CORS_ORIGINS` and portal `VITE_REDIRECT_URI_ALLOWLIST`.
 
 ## Troubleshooting
 

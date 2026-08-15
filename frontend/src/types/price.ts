@@ -14,7 +14,7 @@ export interface TokenPrice {
   /** Price in USD */
   usdPrice: number;
   /** Source of the price data */
-  source: 'binance' | 'garuda' | 'terraswap' | 'custom' | 'calculated';
+  source: 'binance' | 'garuda' | 'terraswap' | 'custom' | 'calculated' | 'oracle';
   /** Timestamp when the price was fetched */
   lastUpdated: Date;
 }

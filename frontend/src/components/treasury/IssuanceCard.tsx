@@ -21,9 +21,23 @@ interface IssuanceCardProps {
   isLoading?: boolean;
   notLaunched?: boolean;
   explorerUrl?: string;
+  /** When true, minted/burned are not lifetime counters (CW20 total_supply only). */
+  lifetimeUnknown?: boolean;
+  heading?: string;
 }
 
-export function IssuanceCard({ tokenName, tokenSymbol, issuance, decimals, gradient, isLoading = false, notLaunched = false, explorerUrl }: IssuanceCardProps) {
+export function IssuanceCard({
+  tokenName,
+  tokenSymbol,
+  issuance,
+  decimals,
+  gradient,
+  isLoading = false,
+  notLaunched = false,
+  explorerUrl,
+  lifetimeUnknown = false,
+  heading,
+}: IssuanceCardProps) {
   const mintedFormatted = formatAmount(issuance.minted, decimals, 0);
   const burnedFormatted = formatAmount(issuance.burned, decimals, 0);
   const supplyFormatted = formatAmount(issuance.supply, decimals, 0);
@@ -34,7 +48,7 @@ export function IssuanceCard({ tokenName, tokenSymbol, issuance, decimals, gradi
         <div className="flex items-center gap-3 mb-5">
           <TokenIcon symbol={tokenSymbol} size="md" gradient={gradient} />
           <div>
-            <h3 className="text-lg font-semibold text-white">{tokenName} Issuance</h3>
+            <h3 className="text-lg font-semibold text-white">{heading ?? `${tokenName} Issuance`}</h3>
             <p className="text-sm text-gray-400">{tokenSymbol}</p>
           </div>
           {notLaunched ? (
@@ -62,7 +76,7 @@ export function IssuanceCard({ tokenName, tokenSymbol, issuance, decimals, gradi
               <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
               </svg>
-              <span className="text-sm text-gray-300">Total Minted</span>
+              <span className="text-sm text-gray-300">{lifetimeUnknown ? 'Outstanding (as minted)' : 'Total Minted'}</span>
             </div>
             <span className="font-mono-numbers font-semibold text-white">
               {isLoading ? (
@@ -78,7 +92,7 @@ export function IssuanceCard({ tokenName, tokenSymbol, issuance, decimals, gradi
               <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" />
               </svg>
-              <span className="text-sm text-gray-300">Total Burned</span>
+              <span className="text-sm text-gray-300">{lifetimeUnknown ? 'Burned (not tracked)' : 'Total Burned'}</span>
             </div>
             <span className="font-mono-numbers font-semibold text-white">
               {isLoading ? (
@@ -105,6 +119,12 @@ export function IssuanceCard({ tokenName, tokenSymbol, issuance, decimals, gradi
             </span>
           </div>
         </div>
+        {lifetimeUnknown && !notLaunched && (
+          <p className="mt-3 text-xs text-gray-500">
+            Circulating equals on-chain CW20 <span className="font-mono">total_supply</span>.
+            Lifetime mint/burn counters are not available — burned is shown as 0, not a historical total.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

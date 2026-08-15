@@ -202,6 +202,25 @@ rm -rf node_modules package-lock.json
 npm install
 ```
 
+## Tests
+
+```bash
+npm test
+```
+
+Unit tests cover vFDUSD oracle parse/session cache, UST1 CR math, and Legal redirect allowlisting ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)–[#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12)).
+
+## Legal clickwrap
+
+`@plasticdigits/cl8y-clickwrap` is installed via GitLab npm (see `.npmrc`). Production property is `ust1cmm.com`.
+
+| Env | Purpose |
+|-----|---------|
+| `VITE_LEGAL_PROPERTY` | Staging property override only |
+| `VITE_PLAYWRIGHT_E2E=true` | Skip the gate for automation — **unset on ust1cmm.com / Coolify prod** |
+
+Playbook: [skills/frontend-legal-clickwrap](../skills/frontend-legal-clickwrap/SKILL.md).
+
 ## License
 
 AGPL-3.0

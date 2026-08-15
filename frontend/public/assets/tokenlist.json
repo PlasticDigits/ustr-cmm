@@ -1,6 +1,6 @@
 {
   "name": "USTR CMM Token List",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "tokens": [
     {
       "symbol": "USTC",
@@ -68,6 +68,15 @@
       },
       "gradient": "from-orange-500 to-slate-700",
       "iconColor": "text-orange-400"
+    },
+    {
+      "symbol": "vFDUSD",
+      "name": "Venus FDUSD (bridged)",
+      "address": "terra1mnl9azefrqpmu888ar2u6zrcwr80hxlt3avf4300r576cw5ar7esvxsvj3",
+      "type": "cw20",
+      "decimals": 6,
+      "gradient": "from-emerald-500 to-teal-500",
+      "iconColor": "text-emerald-400"
     }
   ]
 }

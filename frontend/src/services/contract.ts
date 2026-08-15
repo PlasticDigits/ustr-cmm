@@ -920,6 +920,24 @@ class ContractService {
     }
   }
 
+  /**
+   * token_info that does **not** swallow errors or invent supply 0.
+   * Required for UST1 CR: a failed query must be unknown (N/A), never ∞.
+   */
+  async getTokenInfoStrict(tokenAddress: string): Promise<Cw20TokenInfo> {
+    if (!tokenAddress) {
+      throw new Error('Token address not configured');
+    }
+    const result = await this.queryContract<{ data: Cw20TokenInfo }>(
+      tokenAddress,
+      { token_info: {} }
+    );
+    if (!result?.data || result.data.total_supply === undefined || result.data.total_supply === null) {
+      throw new Error('Malformed token_info response');
+    }
+    return result.data;
+  }
+
   async getTokenBalance(tokenAddress: string, walletAddress: string): Promise<Cw20Balance> {
     if (!tokenAddress) {
       console.warn('Token address not configured, returning 0 balance');

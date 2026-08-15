@@ -12,6 +12,13 @@ interface ImportMetaEnv {
    * post-launch state for UX testing. Only use in development.
    */
   readonly VITE_DEV_MODE: string;
+  /** Staging Legal property override. Production default is ust1cmm.com. */
+  readonly VITE_LEGAL_PROPERTY: string;
+  /**
+   * When 'true', skip ConnectedTermsGate for Playwright. Must be unset on
+   * ust1cmm.com / Coolify production builds.
+   */
+  readonly VITE_PLAYWRIGHT_E2E: string;
 }
 
 interface ImportMeta {

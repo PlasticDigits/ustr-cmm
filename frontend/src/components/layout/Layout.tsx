@@ -9,6 +9,7 @@
 
 import { Header } from './Header';
 import { Footer } from './Footer';
+import { ConnectedTermsGate } from '../legal/ConnectedTermsGate';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -35,7 +36,7 @@ export function Layout({ children }: LayoutProps) {
       <Header />
       
       <main className="flex-1 container mx-auto px-4 py-6 md:py-8 relative z-10">
-        {children}
+        <ConnectedTermsGate>{children}</ConnectedTermsGate>
       </main>
       
       <Footer />
