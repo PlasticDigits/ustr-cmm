@@ -33,6 +33,8 @@ export interface TreasuryAsset {
   /** Pair or LP contract for finder (pinned). */
   explorerAddress?: string;
   navIncomplete?: boolean;
+  /** LP share / pool total_share for display (0–1). */
+  poolShare?: number | null;
 }
 
 /**

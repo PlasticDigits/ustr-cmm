@@ -133,16 +133,29 @@ describe('computeLpNav', () => {
     expect(result.crUsd).toBeNull();
   });
 
-  it('unpriced CR-eligible USTR → crUsd null, incomplete', () => {
+  it('unpriced USTR implies from priced UST1 peer (reserve ratio, not $1)', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
       legs: [ust1Leg(1000), ustrLeg(2000, null)],
     });
+    // 1000 UST1 × $1 / 2000 USTR → $0.50; 10% claim → $100 + $100
+    expect(result.ok).toBe(true);
+    expect(result.displayUsd).toBeCloseTo(200);
+    expect(result.crUsd).toBeCloseTo(200);
+    expect(result.incomplete).toBe(false);
+    expect(result.includedLegs).toEqual(['UST1', 'USTR']);
+  });
+
+  it('unpriced USTR with unpriced UST1 still fail-closed', () => {
+    const result = computeLpNav({
+      lpBalance: TEN_PCT,
+      totalShare: SHARE,
+      legs: [ust1Leg(1000, null), ustrLeg(2000, null)],
+    });
     expect(result.crUsd).toBeNull();
     expect(result.incomplete).toBe(true);
-    expect(result.missingPriceLegs).toContain('USTR');
-    expect(result.displayUsd).toBeCloseTo(100); // UST1 side still shown
+    expect(result.displayUsd).toBeNull();
   });
 
   it('unpriced wrap leg: CR still counts UST1, display incomplete', () => {

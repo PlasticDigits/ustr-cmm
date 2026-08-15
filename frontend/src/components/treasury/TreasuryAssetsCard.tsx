@@ -8,7 +8,7 @@
 import { Card, CardContent } from '../common/Card';
 import { TokenIcon } from '../common/TokenIcon';
 import { TreasuryAsset } from '../../types/treasury';
-import { formatAmount } from '../../utils/format';
+import { formatAmount, formatPoolShare } from '../../utils/format';
 import { usePrices } from '../../hooks/usePrices';
 import { DEFAULT_NETWORK, NETWORKS } from '../../utils/constants';
 
@@ -216,7 +216,9 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                 </div>
                 <div className="text-right min-w-0 flex-1">
                   <div className={`text-sm sm:text-base lg:text-lg font-mono-numbers font-semibold truncate ${asset.iconColor}`}>
-                    {formatAmount(asset.balance, asset.decimals)}
+                    {asset.kind === 'lp'
+                      ? formatPoolShare(asset.poolShare)
+                      : formatAmount(asset.balance, asset.decimals)}
                   </div>
                   {valueUsd > 0 && (
                     <div className="text-xs text-gray-400 truncate">

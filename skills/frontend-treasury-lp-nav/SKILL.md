@@ -35,7 +35,7 @@ Supported dex strings: `cl8y`, `garuda`, `terraswap`, `terraport`. CL8Y LP CW20 
 1. **Allowlist**: a pair is in the grid/CR only if `tokenlist.json` has `type: "lp"` with pinned `address` (LP CW20) + `pool.address` (pair) + `pool.assets` that match on-chain reserves.
 2. **No factory crawl**: do not paginate `pairs`. Factory `pair` may be an ops checker only — never CR input.
 3. **Skip list is exact**: `TREASURY_HOLDING_SKIP_SYMBOLS` is `USTR|UST1|CLUNC|CUSTC`. `UST1-USTR` is not skipped. `type: "lp"` never uses the raw-protocol skip.
-4. **NAV not spot**: `claim_i = floor(reserve_i * lp_balance / total_share)`. Never `getTokenPriceUsd(lpAddress)`.
+4. **NAV not spot**: `claim_i = floor(reserve_i * lp_balance / total_share)`. Never `getTokenPriceUsd(lpAddress)`. Unpriced **ustr/other** legs may use the priced peer reserve ratio (CL8Y UST1/USTR). Do not imply wrap or unknown. Asset row shows **% of pool**, not 18dp LP dust.
 5. **UST1 leg = $1** for CR and display (liability unit). Do not use a DEX UST1 print.
 6. **Wrap haircut**: pinned cLUNC/cUSTC legs are in `displayUsd`, **out** of `crUsd`. Haircut **only** pinned wrap addresses (fake `cUSTC` is `unknown` → not CR).
 7. **USTR in LP is collateral**; raw USTR is still not a holding.
@@ -57,7 +57,7 @@ Supported dex strings: `cl8y`, `garuda`, `terraswap`, `terraport`. CL8Y LP CW20 
   "pool": {
     "address": "<pair>",
     "dex": "cl8y",
-    "name": "CL8Y UST1/USTR",
+    "name": "LP UST1/USTR",
     "assets": [
       { "symbol": "UST1", "address": "terra1f0eq…fy72" },
       { "symbol": "USTR", "address": "terra1vy3k…setxv" }

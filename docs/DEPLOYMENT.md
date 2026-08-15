@@ -526,7 +526,7 @@ Do **not** add raw UST1 / cLUNC / cUSTC to the treasury-holdings tokenlist loop 
 
 **LP pins (ops):** when a CL8Y / Garuda / Terraswap / Terraport pair exists for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, or `cLUNC/xxx`, add a `type: "lp"` entry (see the skill for the JSON shape). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` (`pair_address` + `lp_token`). Then governance `AddCw20` the **LP CW20** (CL8Y/Garuda: `pair.liquidity_token`, often ≠ pair). Unlisted factory pairs must never enter CR.
 
-**Live CL8Y pins (tokenlist `1.3.0`, queried indexer 2026-08-15):**
+**Live CL8Y pins (tokenlist `1.3.1`, queried indexer 2026-08-15):**
 
 | Pair | Pair contract | LP CW20 (18 decimals) |
 |------|---------------|------------------------|

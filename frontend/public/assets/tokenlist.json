@@ -1,6 +1,6 @@
 {
   "name": "USTR CMM Token List",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "tokens": [
     {
       "symbol": "USTC",
@@ -89,7 +89,7 @@
       "pool": {
         "address": "terra16vxrhpvpcucu05y0nr862vf9hnqeh274uaff4s7hz4n0ea74006qf5hgqy",
         "dex": "cl8y",
-        "name": "CL8Y UST1/USTR",
+        "name": "LP UST1/USTR",
         "assets": [
           {
             "symbol": "UST1",
@@ -113,7 +113,7 @@
       "pool": {
         "address": "terra1ceprjsxp86ggftf5e38wwt34l83e5gq7penkdnv4wsatkwcs8v6qccw55f",
         "dex": "cl8y",
-        "name": "CL8Y UST1/cUSTC",
+        "name": "LP UST1/cUSTC",
         "assets": [
           {
             "symbol": "UST1",

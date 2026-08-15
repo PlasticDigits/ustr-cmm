@@ -97,6 +97,17 @@ export function formatPercent(value: number, decimals: number = 2): string {
   return `${(value * 100).toFixed(decimals)}%`;
 }
 
+/** LP ownership of the pool. Tiny 18dp share amounts are not useful next to NAV. */
+export function formatPoolShare(share: number | null | undefined): string {
+  if (share === null || share === undefined || !Number.isFinite(share) || share < 0) {
+    return '—';
+  }
+  if (share >= 0.99995) return '100% of pool';
+  if (share >= 0.01) return `${(share * 100).toFixed(2)}% of pool`;
+  if (share > 0) return `${(share * 100).toFixed(4)}% of pool`;
+  return '0% of pool';
+}
+
 /**
  * Format a timestamp to locale string
  */

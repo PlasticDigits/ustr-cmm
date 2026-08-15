@@ -224,6 +224,10 @@ export function useTreasury() {
         pairLabel: pos.pairLabel,
         explorerAddress: pos.pairAddress,
         navIncomplete: nav.incomplete,
+        poolShare:
+          pos.totalShare !== null && pos.totalShare > 0n
+            ? Number((pos.lpBalance * 1_000_000n) / pos.totalShare) / 1_000_000
+            : null,
       };
 
       ratioAssets.push({

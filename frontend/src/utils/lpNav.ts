@@ -45,6 +45,30 @@ export interface LpNavResult {
   reason?: LpNavFailReason;
 }
 
+/**
+ * If a ustr/other leg has no USD but the peer reserve is priced, use the AMM
+ * reserve ratio (peer_whole × peer_usd / this_whole). Does not invent $1 for
+ * USTR, does not price wraps or unknown legs, does not simulate-swap the LP mint.
+ */
+export function applyImpliedLpLegUsd(legs: LpNavLegInput[]): LpNavLegInput[] {
+  if (legs.length !== 2) return legs;
+  const wholes = legs.map((leg) => rawToWholeNumber(leg.amountRaw, leg.decimals));
+  return legs.map((leg, i) => {
+    if (isValidPositivePrice(leg.usd)) return leg;
+    if (leg.kind !== 'ustr' && leg.kind !== 'other') return leg;
+    const peer = legs[1 - i];
+    const mine = wholes[i];
+    const peerWhole = wholes[1 - i];
+    if (!isValidPositivePrice(peer.usd)) return leg;
+    if (!Number.isFinite(mine) || mine <= 0 || !Number.isFinite(peerWhole) || peerWhole <= 0) {
+      return leg;
+    }
+    const implied = (peerWhole * peer.usd) / mine;
+    if (!isValidPositivePrice(implied)) return leg;
+    return { ...leg, usd: implied };
+  });
+}
+
 function fail(reason: LpNavFailReason, extra?: Partial<LpNavResult>): LpNavResult {
   return {
     ok: false,
@@ -86,6 +110,8 @@ export function computeLpNav(args: ComputeLpNavArgs): LpNavResult {
     return fail('bad-legs');
   }
 
+  const pricedLegs = applyImpliedLpLegUsd(legs);
+
   let displayUsd = 0;
   let crUsd = 0;
   let displayPriced = 0;
@@ -96,7 +122,7 @@ export function computeLpNav(args: ComputeLpNavArgs): LpNavResult {
   let crPricedCount = 0;
   let crUnpriced = false;
 
-  for (const leg of legs) {
+  for (const leg of pricedLegs) {
     if (leg.amountRaw < 0n) {
       return fail('bad-reserve');
     }
