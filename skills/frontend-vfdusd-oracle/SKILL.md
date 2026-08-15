@@ -8,7 +8,7 @@ description: >-
 
 # Frontend vFDUSD session-once oracle (#10)
 
-Companion: [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10). Liability/CR consumer: [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [frontend-ust1-ratios](../frontend-ust1-ratios/SKILL.md). Window inventory: [treasury-cw20-instant-withdraw](../treasury-cw20-instant-withdraw/SKILL.md).
+Companion: [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10). Liability/CR consumer: [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [frontend-ust1-ratios](../frontend-ust1-ratios/SKILL.md). Protocol LP NAV: [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14) / [frontend-treasury-lp-nav](../frontend-treasury-lp-nav/SKILL.md). Window inventory: [treasury-cw20-instant-withdraw](../treasury-cw20-instant-withdraw/SKILL.md).
 
 Cross-links: [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [frontend/src/utils/vfdusdOracle.ts](../../frontend/src/utils/vfdusdOracle.ts), [frontend/src/services/price.ts](../../frontend/src/services/price.ts).
 

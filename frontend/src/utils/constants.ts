@@ -169,6 +169,15 @@ export const VFDUSD_ORACLE = {
 /** Symbols/addresses that are liabilities or wrap receipts — never treasury CR holdings. */
 export const TREASURY_HOLDING_SKIP_SYMBOLS = ['USTR', 'UST1', 'CLUNC', 'CUSTC'] as const;
 
+/**
+ * 1 UST1 = $1 liability (ECONOMICS / #11). LP UST1 legs use this for CR and display —
+ * never a DEX UST1 print (#14).
+ */
+export const UST1_LIABILITY_USD = 1;
+
+/** DEX ids that may appear on tokenlist `type: "lp"` pool.dex. Unknown → fail closed. */
+export const SUPPORTED_LP_DEXES = ['garuda', 'terraswap', 'terraport'] as const;
+
 /** ECONOMICS.md CR color tiers (percent). */
 export const CR_TIERS = {
   redBelow: 95,

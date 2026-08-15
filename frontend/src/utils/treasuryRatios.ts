@@ -6,7 +6,8 @@
  * - ∞ only when UST1 query succeeded and outstanding === 0. Query failure → NaN (UI: N/A), never ∞.
  * - When supply > 0, compute — never return the stub 0.
  * - 1 UST1 = $1 liability. collateralization% = (priced assets USD / whole UST1) * 100.
- * - Do not count cLUNC/cUSTC or UST1 as assets (wraps double-count native; UST1 is the liability).
+ * - Do not count raw cLUNC/cUSTC or raw UST1 as assets (wraps double-count native; UST1 is the liability).
+ * - Allowlisted LP shares enter via `crUsd` (reserve NAV, wrap legs already haircut) — never a DEX LP spot.
  * - Missing USD is omitted from the sum and flagged incomplete — never treated as $0 or $1.
  */
 
@@ -18,6 +19,11 @@ export interface RatioAssetInput {
   symbol: string;
   balanceRaw: bigint;
   decimals: number;
+  /**
+   * When set, CR uses this USD instead of `balance * prices[symbol]`.
+   * `null` = known-incomplete (omit + flag). `undefined` = spot price path.
+   */
+  crUsd?: number | null;
 }
 
 export interface ComputeTreasuryRatiosArgs {
@@ -101,6 +107,26 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
   let pricedCount = 0;
 
   for (const asset of assets) {
+    if (asset.crUsd === undefined && asset.balanceRaw <= 0n) continue;
+
+    if (asset.crUsd === null) {
+      if (asset.balanceRaw > 0n) missingPriceSymbols.push(asset.symbol);
+      continue;
+    }
+    if (typeof asset.crUsd === 'number') {
+      if (!Number.isFinite(asset.crUsd) || asset.crUsd < 0) {
+        if (asset.balanceRaw > 0n) missingPriceSymbols.push(asset.symbol);
+        continue;
+      }
+      if (asset.crUsd === 0 && asset.balanceRaw <= 0n) continue;
+      assetsUsd += asset.crUsd;
+      if (asset.crUsd > 0) {
+        includedSymbols.push(asset.symbol);
+        pricedCount += 1;
+      }
+      continue;
+    }
+
     if (asset.balanceRaw <= 0n) continue;
     const whole = rawToWholeNumber(asset.balanceRaw, asset.decimals);
     const price = prices[asset.symbol];
@@ -148,6 +174,11 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
 
 function symbolsMissingPrice(assets: RatioAssetInput[], prices: Record<string, number>): string[] {
   return assets
-    .filter((asset) => asset.balanceRaw > 0n && !isValidPositivePrice(prices[asset.symbol]))
+    .filter((asset) => {
+      if (asset.balanceRaw <= 0n && asset.crUsd === undefined) return false;
+      if (asset.crUsd === null) return asset.balanceRaw > 0n;
+      if (typeof asset.crUsd === 'number') return !Number.isFinite(asset.crUsd) || asset.crUsd < 0;
+      return asset.balanceRaw > 0n && !isValidPositivePrice(prices[asset.symbol]);
+    })
     .map((asset) => asset.symbol);
 }

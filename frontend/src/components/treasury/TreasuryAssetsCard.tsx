@@ -10,6 +10,7 @@ import { TokenIcon } from '../common/TokenIcon';
 import { TreasuryAsset } from '../../types/treasury';
 import { formatAmount } from '../../utils/format';
 import { usePrices } from '../../hooks/usePrices';
+import { DEFAULT_NETWORK, NETWORKS } from '../../utils/constants';
 
 interface TreasuryAssetsCardProps {
   assets: Record<string, TreasuryAsset>;
@@ -19,6 +20,7 @@ interface TreasuryAssetsCardProps {
 
 export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: TreasuryAssetsCardProps) {
   const { prices, luncUsd, ustcUsd } = usePrices();
+  const scanner = NETWORKS[DEFAULT_NETWORK].scanner;
   
   // Helper to resolve USD price (native LUNC/USTC can use base prices before tokensQuery finishes)
   const getPriceUsd = (displayName: string): number => {
@@ -31,6 +33,9 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
 
   // Helper to compute USD value for an asset
   const getUsdValue = (asset: TreasuryAsset): number => {
+    if (asset.kind === 'lp') {
+      return asset.displayUsd && asset.displayUsd > 0 ? asset.displayUsd : 0;
+    }
     const displayBalance = Number(asset.balance) / Math.pow(10, asset.decimals);
     const priceUsd = getPriceUsd(asset.displayName);
     return displayBalance * priceUsd;
@@ -39,6 +44,10 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
   // Prefer hiding sub-$1 dust when we have USD prices; if price is unavailable (0), still show non-zero balances
   const shouldShowAsset = (asset: TreasuryAsset): boolean => {
     if (asset.balance <= 0n) return false;
+    if (asset.kind === 'lp') {
+      if (asset.displayUsd === null || asset.displayUsd === undefined) return true;
+      return asset.displayUsd >= 1;
+    }
     const px = getPriceUsd(asset.displayName);
     if (px <= 0) return true;
     return getUsdValue(asset) >= 1;
@@ -191,7 +200,19 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                       </span>
                     )}
                   </div>
-                  <span className="font-medium text-white">{asset.displayName}</span>
+                  <div className="min-w-0">
+                    <span className="font-medium text-white">{asset.pairLabel || asset.displayName}</span>
+                    {asset.kind === 'lp' && asset.explorerAddress && (
+                      <a
+                        href={`${scanner}/address/${asset.explorerAddress}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block text-[10px] text-gray-500 hover:text-amber-400 truncate"
+                      >
+                        Pair
+                      </a>
+                    )}
+                  </div>
                 </div>
                 <div className="text-right min-w-0 flex-1">
                   <div className={`text-sm sm:text-base lg:text-lg font-mono-numbers font-semibold truncate ${asset.iconColor}`}>
@@ -206,6 +227,14 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                         </span>
                       )}
                     </div>
+                  )}
+                  {asset.kind === 'lp' && asset.haircutLegs && asset.haircutLegs.length > 0 && asset.crUsd !== null && asset.crUsd !== undefined && (
+                    <div className="text-[10px] text-gray-500 truncate" title="Wrap receipts are already backed by native LUNC/USTC in treasury">
+                      CR counts {formatUsd(asset.crUsd)} ({asset.haircutLegs.join(', ')} omitted)
+                    </div>
+                  )}
+                  {asset.kind === 'lp' && asset.navIncomplete && (
+                    <div className="text-[10px] text-amber-400/80 truncate">NAV incomplete</div>
                   )}
                 </div>
               </div>

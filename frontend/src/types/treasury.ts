@@ -21,6 +21,18 @@ export interface TreasuryAsset {
   gradient: string;
   /** Tailwind text color class for the icon */
   iconColor: string;
+  /** `lp` = allowlisted protocol pair share (#14). Default spot token. */
+  kind?: 'spot' | 'lp';
+  /** Full reserve NAV USD for display. null = unpriced / failed pool. */
+  displayUsd?: number | null;
+  /** CR numerator USD (wrap legs haircut). null = omit from CR. */
+  crUsd?: number | null;
+  /** Wrap symbols shown in NAV but excluded from CR. */
+  haircutLegs?: string[];
+  pairLabel?: string;
+  /** Pair or LP contract for finder (pinned). */
+  explorerAddress?: string;
+  navIncomplete?: boolean;
 }
 
 /**

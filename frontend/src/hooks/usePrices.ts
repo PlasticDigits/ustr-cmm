@@ -1,33 +1,10 @@
 import { useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { priceService } from '../services/price';
-import { PRICE_CACHE, TOKEN_LIST_URL } from '../utils/constants';
+import { PRICE_CACHE } from '../utils/constants';
 import { isVfdusdToken } from '../utils/oracleTokens';
-
-/** Token entry from tokenlist.json */
-interface TokenListEntry {
-  symbol: string;
-  address?: string;
-  type: 'native' | 'cw20';
-  pool?: {
-    address: string;
-    dex: string;
-    name: string;
-    quoteAsset?: string;
-  };
-}
-
-/** Cached token list data */
-let tokenListCache: { tokens: TokenListEntry[] } | null = null;
-
-/** Fetch tokenlist for address-to-symbol mapping */
-async function fetchTokenList(): Promise<{ tokens: TokenListEntry[] }> {
-  if (tokenListCache) return tokenListCache;
-  const response = await fetch(TOKEN_LIST_URL);
-  if (!response.ok) throw new Error('Failed to fetch token list');
-  tokenListCache = await response.json();
-  return tokenListCache!;
-}
+import { fetchTokenList } from '../utils/tokenlist';
+import { isLpTokenListEntry } from '../types/tokenlist';
 
 /**
  * usePrices Hook
@@ -77,7 +54,10 @@ export function usePrices(): {
 
       // Fetch tokenlist to get all CW20 tokens
       const tokenList = await fetchTokenList();
-      const cw20Tokens = tokenList.tokens.filter(t => t.type === 'cw20' && t.address);
+      // Spot CW20s only — never simulate-swap an LP mint (#14)
+      const cw20Tokens = tokenList.tokens.filter(
+        (t) => t.type === 'cw20' && t.address && !isLpTokenListEntry(t)
+      );
 
       // Fetch prices for each CW20 token (vFDUSD is oracle-only — never DEX simulate)
       for (const token of cw20Tokens) {
