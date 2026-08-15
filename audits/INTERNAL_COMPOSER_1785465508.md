@@ -161,7 +161,7 @@ wrap-mapper does **not** call `InstantWithdrawCw20`. Paths are parallel.
 | ID | Finding |
 |----|---------|
 | **MB-1** | Legacy treasury `SwapDeposit` emits `NotifyDeposit` but live ustc-swap exposes `Swap` — path fails atomically if called (dead code / footgun). |
-| **MB-2** | wrap-mapper `MIN_FEE_BPS=1` may under-cover Terra Classic tax → slow solvency erosion. |
+| **MB-2** | wrap-mapper `MIN_FEE_BPS=1` may under-cover Terra Classic tax → slow solvency erosion. **Superseded by [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9):** asymmetric fees, no gross-up; tax on receiver; see [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md). |
 | **MB-3** | wrap-mapper minter verification uses `limit: 30` — false reject if mapper not in first page. |
 | **MB-4** | ustc-swap admin pause / post-period `RecoverAsset` centralization. |
 | **MB-5** | airdrop: unused `admin`; unbounded recipients (gas DoS). |

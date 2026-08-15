@@ -191,7 +191,7 @@ None. No unprivileged path bypasses spender auth, exceeds configured quota on In
 | ID | Finding |
 |----|---------|
 | **MB-1** | wrap-mapper `window_seconds=0` resets every call (accepted/tested); treasury hardcodes 86400 (safer). |
-| **MB-2** | wrap-mapper `MIN_FEE_BPS=1` may under-cover Terra Classic tax → slow solvency erosion. |
+| **MB-2** | wrap-mapper `MIN_FEE_BPS=1` may under-cover Terra Classic tax → slow solvency erosion. **Superseded by [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9):** asymmetric fees, no gross-up; tax on receiver; see [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md). |
 | **MB-3** | wrap-mapper minter verification `limit: 30` — false reject if mapper not in first page. |
 | **MB-4** | ustc-swap admin pause / post-period `RecoverAsset` centralization; no `start_rate`/`end_rate` validation at instantiate. |
 | **MB-5** | airdrop: unused `admin`; unbounded recipients (gas DoS). |
