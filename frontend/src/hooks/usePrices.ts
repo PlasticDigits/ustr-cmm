@@ -66,9 +66,14 @@ export function usePrices(): {
       // Start with previous prices as fallback
       const prices: Record<string, number> = { ...lastPricesRef.current };
 
-      // Include LUNC and USTC in prices (always update from fresh data)
-      prices['LUNC'] = basePrices.lunc;
-      prices['USTC'] = basePrices.ustc;
+      // Only overwrite LUNC/USTC when we got a real price — never wipe a good
+      // cached value with 0 (CEX blips used to blank LUNC while CW20s kept stale USD).
+      if (basePrices.lunc > 0) {
+        prices['LUNC'] = basePrices.lunc;
+      }
+      if (basePrices.ustc > 0) {
+        prices['USTC'] = basePrices.ustc;
+      }
 
       // Fetch tokenlist to get all CW20 tokens
       const tokenList = await fetchTokenList();
@@ -82,12 +87,13 @@ export function usePrices(): {
         // Pass pool config if available for direct querying
         const pool = token.pool ? { address: token.pool.address, dex: token.pool.dex, quoteAsset: token.pool.quoteAsset } : undefined;
         const price = await priceService.getTokenPriceUsd(token.address!, basePrices.lunc, basePrices.ustc, pool);
-        // Only update price if we got a valid response
+        // Only update price if we got a valid positive response
         // null means query failed - we preserve the previous price from lastPricesRef
-        if (price !== null) {
+        // 0 means DEX returned a quote but base USD was missing - also preserve previous
+        if (price !== null && price > 0) {
           prices[token.symbol] = price;
         }
-        // If price is null and we have a previous price, it's already in prices from spread
+        // If price is null/0 and we have a previous price, it's already in prices from spread
       }
 
       // Update the ref with latest successful prices
@@ -131,8 +137,14 @@ export function usePrices(): {
 
   return {
     prices,
-    luncUsd: baseQuery.data?.lunc ?? 0,
-    ustcUsd: baseQuery.data?.ustc ?? 0,
+    luncUsd:
+      baseQuery.data?.lunc && baseQuery.data.lunc > 0
+        ? baseQuery.data.lunc
+        : prices['LUNC'] ?? 0,
+    ustcUsd:
+      baseQuery.data?.ustc && baseQuery.data.ustc > 0
+        ? baseQuery.data.ustc
+        : prices['USTC'] ?? 0,
     isLoading,
     error,
     refetch: () => {

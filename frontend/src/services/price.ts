@@ -55,28 +55,58 @@ class PriceService {
   }
 
   /**
+   * Parse Binance-style ticker price response into LUNC/USTC USD.
+   */
+  private parseBinanceTickers(
+    data: { symbol: string; price: string } | { symbol: string; price: string }[]
+  ): { lunc: number; ustc: number } {
+    const rows = (Array.isArray(data) ? data : [data]).map((item) => ({
+      symbol: item.symbol,
+      price: parseFloat(item.price),
+    }));
+    return {
+      lunc: rows.find((p) => p.symbol === 'LUNCUSDT')?.price ?? 0,
+      ustc: rows.find((p) => p.symbol === 'USTCUSDT')?.price ?? 0,
+    };
+  }
+
+  /**
+   * Fetch LUNC/USTC from a Binance-compatible ticker endpoint.
+   */
+  private async fetchBinanceBasePrices(
+    baseUrl: string
+  ): Promise<{ lunc: number; ustc: number } | null> {
+    const symbols = encodeURIComponent('["LUNCUSDT","USTCUSDT"]');
+    const response = await fetch(`${baseUrl}?symbols=${symbols}`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as
+      | { symbol: string; price: string }
+      | { symbol: string; price: string }[];
+    return this.parseBinanceTickers(data);
+  }
+
+  /**
    * Fetch LUNC and USTC USD prices.
-   * Tries Binance spot first (USDT pairs), then CryptoCompare for any missing symbol.
+   * Tries Binance spot, then data-api.binance.vision, then CoinGecko.
+   * Throws when every source fails so React Query can keep the last good prices.
    */
   async fetchBasePrices(): Promise<{ lunc: number; ustc: number }> {
     let lunc = 0;
     let ustc = 0;
 
-    try {
-      const symbols = encodeURIComponent('["LUNCUSDT","USTCUSDT"]');
-      const response = await fetch(`${PRICE_API.binance}?symbols=${symbols}`);
-
-      if (response.ok) {
-        const data = (await response.json()) as { symbol: string; price: string } | { symbol: string; price: string }[];
-        const rows = (Array.isArray(data) ? data : [data]).map((item) => ({
-          symbol: item.symbol,
-          price: parseFloat(item.price),
-        }));
-        lunc = rows.find((p) => p.symbol === 'LUNCUSDT')?.price ?? 0;
-        ustc = rows.find((p) => p.symbol === 'USTCUSDT')?.price ?? 0;
+    const binanceUrls = [PRICE_API.binance, PRICE_API.binanceDataApi];
+    for (const url of binanceUrls) {
+      if (lunc > 0 && ustc > 0) break;
+      try {
+        const prices = await this.fetchBinanceBasePrices(url);
+        if (!prices) continue;
+        if (lunc <= 0) lunc = prices.lunc;
+        if (ustc <= 0) ustc = prices.ustc;
+      } catch (error) {
+        console.warn(`Binance base prices failed (${url}):`, error);
       }
-    } catch (error) {
-      console.warn('Binance base prices failed:', error);
     }
 
     if (lunc > 0 && ustc > 0) {
@@ -84,29 +114,30 @@ class PriceService {
     }
 
     try {
-      const response = await fetch(PRICE_API.cryptocompare);
+      const response = await fetch(PRICE_API.coingecko);
       if (response.ok) {
-        const data = (await response.json()) as {
-          LUNC?: { USD?: number };
-          USTC?: { USD?: number };
-        };
+        const data = (await response.json()) as Record<
+          string,
+          { usd?: number } | undefined
+        >;
         if (lunc <= 0) {
-          lunc = data.LUNC?.USD ?? 0;
+          lunc = data[PRICE_API.coingeckoIds.lunc]?.usd ?? 0;
         }
         if (ustc <= 0) {
-          ustc = data.USTC?.USD ?? 0;
+          ustc = data[PRICE_API.coingeckoIds.ustc]?.usd ?? 0;
         }
+      } else {
+        console.warn('CoinGecko base prices failed:', response.status);
       }
     } catch (error) {
-      console.warn('CryptoCompare base prices failed:', error);
+      console.warn('CoinGecko base prices failed:', error);
     }
 
     if (lunc > 0 || ustc > 0) {
       return { lunc, ustc };
     }
 
-    console.error('Failed to fetch LUNC/USTC base prices from Binance and CryptoCompare');
-    return { lunc: 0, ustc: 0 };
+    throw new Error('Failed to fetch LUNC/USTC base prices from Binance and CoinGecko');
   }
 
   /**

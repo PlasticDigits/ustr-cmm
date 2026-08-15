@@ -18,19 +18,28 @@ interface TreasuryAssetsCardProps {
 }
 
 export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: TreasuryAssetsCardProps) {
-  const { prices } = usePrices();
+  const { prices, luncUsd, ustcUsd } = usePrices();
   
+  // Helper to resolve USD price (native LUNC/USTC can use base prices before tokensQuery finishes)
+  const getPriceUsd = (displayName: string): number => {
+    const fromMap = prices[displayName];
+    if (fromMap !== undefined && fromMap > 0) return fromMap;
+    if (displayName === 'LUNC' && luncUsd > 0) return luncUsd;
+    if (displayName === 'USTC' && ustcUsd > 0) return ustcUsd;
+    return fromMap ?? 0;
+  };
+
   // Helper to compute USD value for an asset
   const getUsdValue = (asset: TreasuryAsset): number => {
     const displayBalance = Number(asset.balance) / Math.pow(10, asset.decimals);
-    const priceUsd = prices[asset.displayName] ?? 0;
+    const priceUsd = getPriceUsd(asset.displayName);
     return displayBalance * priceUsd;
   };
 
   // Prefer hiding sub-$1 dust when we have USD prices; if price is unavailable (0), still show non-zero balances
   const shouldShowAsset = (asset: TreasuryAsset): boolean => {
     if (asset.balance <= 0n) return false;
-    const px = prices[asset.displayName] ?? 0;
+    const px = getPriceUsd(asset.displayName);
     if (px <= 0) return true;
     return getUsdValue(asset) >= 1;
   };

@@ -129,12 +129,18 @@ export const DEX_ROUTERS = {
   },
 } as const;
 
-// Price API: prefer Binance spot for LUNC/USTC; CryptoCompare fills gaps (Binance can fail in-browser via CORS/451).
+// Price API: Binance spot first; data-api.binance.vision / CoinGecko fill gaps
+// (api.binance.com can fail in-browser via geo/451; CryptoCompare now requires an API key).
 export const PRICE_API = {
-  cryptocompare:
-    'https://min-api.cryptocompare.com/data/pricemulti?fsyms=LUNC,USTC&tsyms=USD',
   binance: 'https://api.binance.com/api/v3/ticker/price',
+  binanceDataApi: 'https://data-api.binance.vision/api/v3/ticker/price',
+  coingecko:
+    'https://api.coingecko.com/api/v3/simple/price?ids=terra-luna,terrausd&vs_currencies=usd',
   symbols: ['LUNCUSDT', 'USTCUSDT'],
+  coingeckoIds: {
+    lunc: 'terra-luna',
+    ustc: 'terrausd',
+  },
 } as const;
 
 // Price cache configuration
