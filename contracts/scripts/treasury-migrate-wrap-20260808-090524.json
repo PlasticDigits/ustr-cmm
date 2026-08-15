@@ -4,19 +4,25 @@
   "admin": "terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l",
   "fee_wrap_bps": 200,
   "fee_unwrap_bps": 51,
-  "fee_note": "Post-#9 target: wrap 200 / unwrap 51 for ≈2% unwrap all-in under burn_tax 0.015 without InstantWithdraw gross-up. Migrate maps legacy fee_bps→both; gov SetFees required same window.",
+  "fee_note": "Live 2026-08-15 (#13): wrap 200 / unwrap 51 for ≈2% unwrap all-in under burn_tax 0.015 without InstantWithdraw gross-up.",
   "issue": "https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9",
+  "ops_issue": "https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13",
   "skill": "skills/wrap-mapper-asymmetric-fees/SKILL.md",
   "fee_bps_history": [
     { "at": "2026-08-08T00:05:00Z", "fee_bps": 100, "note": "instantiate (single fee_bps)" },
     { "at": "2026-08-08T00:15:00Z", "fee_bps": 200, "note": "SetFeeBps after prop 12223 burn tax 1.5%" },
-    { "at": "pending-#9", "fee_wrap_bps": 200, "fee_unwrap_bps": 51, "note": "migrate + SetFees asymmetric (no gross-up)" }
+    { "at": "2026-08-15T11:58:00Z", "fee_wrap_bps": 200, "fee_unwrap_bps": 51, "note": "#13 store 11574 + migrate 200/200 + SetFees 200/51 (no gross-up)", "txs": {
+      "store": "9B30580007763DB44DA215975D25B8046C134A46436217D462354655B5B9DA40",
+      "migrate": "8F05225E53D67C3666C1E9B0929EB69A172FA3EDD2F1B750F456995820ACD107",
+      "set_fees": "740CB152259CE5D02E225064CEEFB09870FD1D07779926391B2E81FA4B5FBDF3"
+    } }
   ],
   "burn_tax_rate": "0.015",
   "retune_rule": "fee_unwrap_bps = round(10000 - 9800 / (1 - burn_tax_rate))",
   "code_ids": {
     "treasury": "11564",
-    "wrap_mapper": "11565",
+    "wrap_mapper": "11574",
+    "wrap_mapper_was": "11565",
     "cw20_mintable": "10184"
   },
   "contracts": {

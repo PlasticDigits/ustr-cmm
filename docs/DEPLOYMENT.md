@@ -330,7 +330,7 @@ terrad query wasm contract-state smart $SWAP '{"status": {}}' \
 In-place migrate keeps mainnet treasury address
 `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` stable.
 
-**Mainnet status (2026-08-08):** treasury migrated `10673` → **`11564`**; wrap-mapper code **`11565`** live; cLUNC/cUSTC + denom wiring complete; vFDUSD → ust1-window spender registered with `limit_24h=10000000000`. See [Contract Addresses](#contract-addresses) and issue [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5).
+**Mainnet status (2026-08-15):** treasury migrated `10673` → **`11564`**; wrap-mapper code **`11574`** (was `11565`; cw2 `0.3.0`, [#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13)); cLUNC/cUSTC + denom wiring complete; vFDUSD → ust1-window spender registered with `limit_24h=10000000000`. See [Contract Addresses](#contract-addresses) and issue [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5).
 
 **One-shot operator script** (steps A+B+C): [`contracts/scripts/treasury-migrate-wrap-wire.sh`](../contracts/scripts/treasury-migrate-wrap-wire.sh) — signs as `cl8y2_admin` (`terra1xsecn…`). Prefer `--gas auto --gas-prices 28.325uluna` (store adj **1.5**, execute/migrate adj **1.4**). Fixed `--fees 100000000uluna` is **insufficient for wasm store** (~covers ≤3.53M gas; treasury store sim was ~3.30M raw / ~4.95M with 1.5 adj ≈ **140 LUNC**).
 
@@ -405,6 +405,7 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 - [x] `SetCw20Spender` (+ `limit_24h`) executed for vFDUSD → ust1-window (`10000000000`)
 - [x] `Cw20SpenderLimit` query confirms production quota
 - [x] wrap-mapper + cLUNC/cUSTC denom wiring (#5)
+- [x] wrap-mapper migrate + `SetFees` 200/51 ([#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13); code `11574`, 2026-08-15)
 - [ ] Small mainnet wrap/unwrap smoke both denoms
 - [ ] Window redeem smoke after companion ready
 
@@ -424,7 +425,7 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 |----------|---------|---------|
 | USTR Token | `10184` | `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv` |
 | Treasury | `11564` (was `10673`) | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
-| wrap-mapper | `11565` | `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` |
+| wrap-mapper | `11574` (was `11565`) | `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` |
 | cLUNC | `10184` | `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg` |
 | cUSTC | `10184` | `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch` |
 | USTC-Swap | `10838` | `terra16ytnkhw53elefz2rhulcr4vq8fs83nd97ht3wt05wtcq7ypcmpqqv37lel` |
@@ -440,14 +441,14 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 | Binding | Value |
 |---------|-------|
 | Admin / governance (`cl8y2_admin`) | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` |
-| wrap-mapper `fee_wrap_bps` / `fee_unwrap_bps` | **Target post-#9:** `200` / `51` — see [Asymmetric wrap/unwrap fees vs burn tax](#asymmetric-wrapunwrap-fees-vs-burn-tax) |
+| wrap-mapper `fee_wrap_bps` / `fee_unwrap_bps` | **Live:** `200` / `51` ([#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13), 2026-08-15) — see [Asymmetric wrap/unwrap fees vs burn tax](#asymmetric-wrapunwrap-fees-vs-burn-tax) |
 | Per-denom rate limits | **unset** (fail-open until `SetRateLimit`) |
 | `uluna` → cLUNC → wrap-mapper | wired |
 | `uusd` → cUSTC → wrap-mapper | wired |
 | CW20 spender | vFDUSD `terra1mnl9…svj3` → ust1-window `terra1zxwpz…h3rh2` |
 | `limit_24h` | `10000000000` (10_000 vFDUSD, 6 decimals) |
 
-Artifact record: [`contracts/scripts/treasury-migrate-wrap-20260808-090524.json`](../contracts/scripts/treasury-migrate-wrap-20260808-090524.json). Agent skill: [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md). Issue: [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9).
+Artifact record: [`contracts/scripts/treasury-migrate-wrap-20260808-090524.json`](../contracts/scripts/treasury-migrate-wrap-20260808-090524.json). Agent skill: [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md). Code: [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9). Ops: [#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13).
 
 ### Asymmetric wrap/unwrap fees vs burn tax
 
@@ -476,14 +477,19 @@ If tax rises above ~2%, “2% all-in with no gross-up” is impossible without s
 | 2026-08-08 | Phase 3 instantiate | `100` (single `fee_bps`) | same | was 0.5% |
 | 2026-08-08 | [Prop #12223](https://station.terraclassic.community/proposal/columbus-5/12223) **passed** | — | — | **1.5%** (`0.015`) |
 | 2026-08-08 | Gov `SetFeeBps` | **`200`** (single) | same | 1.5% |
-| (pending #9) | Migrate + `SetFees` | **`200`** | **`51`** | 1.5% |
+| 2026-08-15 | [#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13) store + migrate + `SetFees` | **`200`** | **`51`** | 1.5% |
 
-#### Mainnet migrate plan (operators — do not broadcast from agents)
+#### Mainnet migrate record (#13 — done 2026-08-15)
 
-1. Store new wrap-mapper wasm (cw2 `0.3.0`); migrate in place `terra1xuuuh…nmd2`.
-2. Migrate maps legacy `fee_bps` → **both** `fee_wrap_bps` and `fee_unwrap_bps` (e.g. `200`/`200`). Idempotent if already asymmetric.
-3. **Same gov window:** set `200` / `51` — never leave unwrap at 200 after advertising the ≈2% all-in fix.
-4. Query `Config {}`: expect `fee_wrap_bps=200`, `fee_unwrap_bps=51`. Breaking: response no longer has `fee_bps` (DEX [#516](https://gitlab.com/PlasticDigits/cl8y-dex-terraclassic/-/work_items/516)).
+Live wrap-mapper is code **`11574`**, cw2 `0.3.0`, `Config { fee_wrap_bps: 200, fee_unwrap_bps: 51 }` (no `fee_bps`). Address unchanged.
+
+| Step | Height | Tx |
+|------|--------|----|
+| Store wasm | `29958794` | [`9B305800…DA40`](https://finder.terraclassic.community/columbus-5/tx/9B30580007763DB44DA215975D25B8046C134A46436217D462354655B5B9DA40) → code `11574` |
+| Migrate `{}` | `29958809` | [`8F05225E…D107`](https://finder.terraclassic.community/columbus-5/tx/8F05225E53D67C3666C1E9B0929EB69A172FA3EDD2F1B750F456995820ACD107) — `0.2.1` → `0.3.0`, legacy `fee_bps` → 200/200 |
+| `SetFees` 200/51 | `29958810` | [`740CB152…BDF3`](https://finder.terraclassic.community/columbus-5/tx/740CB152259CE5D02E225064CEEFB09870FD1D07779926391B2E81FA4B5FBDF3) |
+
+Replay (already executed; agents must not rebroadcast):
 
 ```bash
 export WRAP_MAPPER=terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2

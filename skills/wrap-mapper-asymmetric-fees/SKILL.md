@@ -31,7 +31,7 @@ A single `fee_bps=200` on wrap **and** unwrap plus 1.5% burn tax made unwrap all
 | `SetFeeWrapBps` / `SetFeeUnwrapBps` / `SetFees` | Governance-only |
 | cw2 version | `0.3.0` (wrap-mapper package) |
 
-Prefer coordinated DEX release before declaring production done. No dual-read `fee_bps` window.
+Mainnet wrap-mapper is on this ABI (code `11574`, 2026-08-15). No dual-read `fee_bps` window. DEX consumer: [#516](https://gitlab.com/PlasticDigits/cl8y-dex-terraclassic/-/work_items/516) / Coolify still needs the same-window frontend rebuild.
 
 ## Invariants (must hold)
 
@@ -39,7 +39,7 @@ Prefer coordinated DEX release before declaring production done. No dual-read `f
 2. **No gross-up:** treasury `InstantWithdraw` still sends post-fee amount; receiver pays burn tax. Do not add tax-oracle gross-up for this issue.
 3. **Solvency:** unwrap burns `A` CW20 and withdraws `A − fee_unwrap`. User-paid tax does **not** erode `native ≥ supply`; surplus Δ ≈ `+fee_unwrap`. Therefore **do not** enforce `fee_unwrap ≥ burn_tax`.
 4. **Bounds:** `MIN_FEE_BPS=1` … `MAX_FEE_BPS=1000` for each fee; zero rejected. `MIN_FEE_BPS` is **not** a tax-coverage floor.
-5. **Migrate:** legacy `{fee_bps}` → both fields equal; idempotent on new shape. Operators must gov-set **200/51** in the same window after migrate from 200/200.
+5. **Migrate:** legacy `{fee_bps}` → both fields equal; idempotent on new shape. Operators must gov-set **200/51** in the same window after migrate from 200/200. **Done on columbus-5** (2026-08-15, [#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13)).
 6. **Pause / rate-limit / mapping** behavior unchanged by the fee split.
 7. **Governance only** for fee changes (`terra1xsecn…`); agents must not broadcast mainnet gov txs.
 
@@ -55,10 +55,9 @@ Aim: `receive/A = 0.98`. Example: `0.015` → **51**. Prefer ≤ 2% all-in when 
 
 ## Ops (no secrets; human operators broadcast)
 
-Mainnet wrap-mapper: `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2`.
+Mainnet wrap-mapper: `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` — code **`11574`**, live fees **200 / 51**.
 
-1. Store wasm → migrate `{}` → query Config (expect both fees = legacy `fee_bps` if first migrate).
-2. Same window:
+First-time migrate (already executed 2026-08-15): store wasm → migrate `{}` (maps legacy `fee_bps` → both fields) → same-window `SetFees`:
 
 ```bash
 terrad tx wasm execute $WRAP_MAPPER \

@@ -158,14 +158,14 @@ This document provides an overview of all USTR CMM smart contracts with links to
 **Description**: Orchestrates native ↔ CW20 wrapping (cLUNC / cUSTC). Never holds native tokens — treasury keeps custody; wrap-mapper mints/burns CW20 and calls treasury `InstantWithdraw` on unwrap. Design: [plans/NATIVE_TOKEN_WRAPPING.md](../plans/NATIVE_TOKEN_WRAPPING.md).
 
 **Deployed Code IDs**:
-- Mainnet: `11565`
+- Mainnet: `11574` (was `11565`; cw2 `0.3.0`)
 
 **Deployed Contract Addresses**:
 - Mainnet wrap-mapper: `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2`
 - Mainnet cLUNC (cw20-mintable `10184`): `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg`
 - Mainnet cUSTC (cw20-mintable `10184`): `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch`
 
-**Mainnet config:** historically a single `fee_bps=200` on wrap **and** unwrap. After [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9) migrate + gov: **`fee_wrap_bps=200`**, **`fee_unwrap_bps=51`** (retune for ≈2% unwrap all-in under 1.5% burn tax, **no** InstantWithdraw gross-up). Treasury = CMM treasury above, governance = `terra1xsecn…`, not paused. Mappings: `uluna`→cLUNC, `uusd`→cUSTC. Treasury `denom_wrappers` point both denoms at wrap-mapper. wrap-mapper is a minter on both CW20s. Per-denom rate limits unset (fail-open).
+**Mainnet config (live 2026-08-15, [#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13)):** **`fee_wrap_bps=200`**, **`fee_unwrap_bps=51`** (≈2% unwrap all-in under 1.5% burn tax, **no** InstantWithdraw gross-up). Previously a single `fee_bps=200` on both paths until [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9) code + this migrate. Treasury = CMM treasury above, governance = `terra1xsecn…`, not paused. Mappings: `uluna`→cLUNC, `uusd`→cUSTC. Treasury `denom_wrappers` point both denoms at wrap-mapper. wrap-mapper is a minter on both CW20s. Per-denom rate limits unset (fail-open).
 
 **Fees:** wrap uses only `fee_wrap_bps` (untaxed path); unwrap uses only `fee_unwrap_bps` then receiver pays burn tax on `BankMsg::Send`. Solvency: burn `A` CW20 / withdraw `A − fee_unwrap` → surplus ≈ `+fee_unwrap`; unwrap fee need **not** cover tax. Retune rule + operator msgs: [docs/DEPLOYMENT.md](./DEPLOYMENT.md#asymmetric-wrapunwrap-fees-vs-burn-tax). Agent skill: [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md).
 
