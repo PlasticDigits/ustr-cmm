@@ -58,12 +58,25 @@ export const CONTRACTS = {
     treasury: '',
     ustcSwap: '',
     referral: '',
+    vfdusd: '',
+    ust1Oracle: '',
+    ust1Token: '',
+    cLunc: '',
+    cUstc: '',
+    ust1Window: '',
   },
   mainnet: {
     ustrToken: 'terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv',
     treasury: 'terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2',
     ustcSwap: 'terra16ytnkhw53elefz2rhulcr4vq8fs83nd97ht3wt05wtcq7ypcmpqqv37lel',
     referral: 'terra1lxv5m2n72l4zujf0rrgek9k6m8kfky62yvm8qvlnjqgjmmlmywzqt4j0z2',
+    // Pins: issues #10 / #11 — do not invent replacements
+    vfdusd: 'terra1mnl9azefrqpmu888ar2u6zrcwr80hxlt3avf4300r576cw5ar7esvxsvj3',
+    ust1Oracle: 'terra1fmht0t6svq3n24zx03nkfja0m40zhfyyxkdcvlrkl6u7gfe6aagq4gch8n',
+    ust1Token: 'terra1f0eqgy9w7e5e7up97vjudqwx38tesf8ylx75x2lv3nwm0clry0pqmgfy72',
+    cLunc: 'terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg',
+    cUstc: 'terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch',
+    ust1Window: 'terra1zxwpzpzpleatqn39r00grau4yt29sld8pw78s7ktvjafnj5nsaxq0h3rh2',
   },
 } as const;
 
@@ -130,4 +143,42 @@ export const PRICE_CACHE = {
   basePrices: 60000,    // 60 seconds for CEX prices
   dexRates: 120000,     // 120 seconds for DEX rates
   staleTime: 30000,     // 30 seconds before considered stale
+  /** sessionStorage key for vFDUSD oracle USD (schema version in value, not key suffix) */
+  vfdusdSessionKey: 'ustr-cmm:vfdusd-oracle:v1',
+} as const;
+
+/**
+ * ust1-oracle Venus-normalized rate: on-chain field is `rate` (issue text calls it R).
+ * usd = (rate / 1e18) * FDUSD_USD. FDUSD is treated as $1.00 — no second CEX poll.
+ * Sanity band rejects LCD MITM / garbage R. Outside the band → no USD (never assume $1/vFDUSD).
+ */
+export const VFDUSD_ORACLE = {
+  rateScale: 1e18,
+  minFdusdPerVfdusd: 0.5,
+  maxFdusdPerVfdusd: 10,
+  fdusdUsd: 1,
+  sessionSchemaVersion: 1,
+} as const;
+
+/** Symbols/addresses that are liabilities or wrap receipts — never treasury CR holdings. */
+export const TREASURY_HOLDING_SKIP_SYMBOLS = ['USTR', 'UST1', 'CLUNC', 'CUSTC'] as const;
+
+/** ECONOMICS.md CR color tiers (percent). */
+export const CR_TIERS = {
+  redBelow: 95,
+  yellowBelow: 110,
+  greenAtMost: 190,
+} as const;
+
+/**
+ * CL8Y Legal clickwrap (#12). Production property is the site hostname.
+ * Override only via VITE_LEGAL_PROPERTY for staging. Never default to cl8y.com / dex.cl8y.com.
+ */
+export const LEGAL_CLICKWRAP = {
+  defaultProperty: 'ust1cmm.com',
+  redirectAllowlist: ['https://ust1cmm.com'] as readonly string[],
+  termsPortal: 'https://terms.cl8y.com',
+  termsApi: 'https://api.terms.cl8y.com',
+  appName: 'USTR CMM',
+  network: 'TerraClassic' as const,
 } as const;

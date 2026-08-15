@@ -113,5 +113,7 @@ For the complete project proposal including specifications, development phases, 
 
 These documents are maintained alongside the codebase. If you find discrepancies or have suggestions for improvement, please open an issue or submit a pull request.
 
-**Last Updated**: December 2024
+**Last Updated**: August 2026
+
+Agent playbooks (invariants + pins): [skills/README.md](../skills/README.md) — including frontend vFDUSD oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)), UST1 CR ([#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11)), and Legal clickwrap ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12)).
 

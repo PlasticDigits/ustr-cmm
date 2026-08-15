@@ -15,6 +15,7 @@ export {
 } from './useContract';
 export { useTreasury } from './useTreasury';
 export { usePrices } from './usePrices';
+export { useLegalAcceptance } from './useLegalAcceptance';
 
 export {
   useTokenHolders,

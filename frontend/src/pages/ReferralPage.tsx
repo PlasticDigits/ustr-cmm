@@ -9,6 +9,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useWallet } from '../hooks/useWallet';
+import { assertLegalAccepted, useLegalAcceptance } from '../hooks/useLegalAcceptance';
 import { contractService } from '../services/contract';
 import { Card, CardContent, CardHeader } from '../components/common/Card';
 import { Button } from '../components/common/Button';
@@ -153,6 +154,7 @@ function validateCodeFormat(code: string): ValidationResult {
 
 function RegisterCodeSection() {
   const { connected, address, ustrBalance } = useWallet();
+  const legal = useLegalAcceptance();
   const [code, setCode] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [validationState, setValidationState] = useState<ValidateResponse | null>(null);
@@ -211,6 +213,12 @@ function RegisterCodeSection() {
   // Handle registration
   const handleRegister = useCallback(async () => {
     if (!address || !clientValidation.isValid) return;
+    try {
+      assertLegalAccepted(legal.allowed, legal.loading);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Legal terms must be accepted first');
+      return;
+    }
     
     setIsRegistering(true);
     setError(null);
@@ -234,7 +242,7 @@ function RegisterCodeSection() {
     } finally {
       setIsRegistering(false);
     }
-  }, [address, clientValidation]);
+  }, [address, clientValidation, legal.allowed, legal.loading]);
   
   const canValidate = clientValidation.isValid && !isValidating;
   

@@ -191,6 +191,11 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                   {valueUsd > 0 && (
                     <div className="text-xs text-gray-400 truncate">
                       {formatUsd(valueUsd)}
+                      {asset.displayName === 'vFDUSD' && (
+                        <span className="ml-1 text-gray-500" title="Venus-normalized oracle rate, cached for this browser session">
+                          · session oracle
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>

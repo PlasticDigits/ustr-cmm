@@ -37,16 +37,29 @@ export interface TokenIssuance {
 
 /**
  * Financial ratios for treasury health metrics
+ *
+ * collateralization / ustcPerUst1 / assetsToLiabilities:
+ * - Infinity only when UST1 token_info succeeded and total_supply === 0
+ * - NaN when UST1 supply is unknown (query failed) or CR cannot be computed
+ * - finite percent / multiple when supply > 0
  */
 export interface TreasuryRatios {
-  /** Collateralization percentage (e.g., 150 means 150% backed) */
+  /** Collateralization percentage (e.g., 150 means 150% backed). NaN → N/A, Infinity → ∞ */
   collateralization: number;
   /** USTC backing per UST1 token */
   ustcPerUst1: number;
-  /** Total assets to total liabilities ratio */
+  /** Total priced assets USD / outstanding UST1 (same ratio as CR, shown as × not %) */
   assetsToLiabilities: number;
   /** Assets backing per USTR token */
   ustrBacking: number;
+  /** True when some non-zero treasury balances were omitted from the CR numerator */
+  incomplete: boolean;
+  /** Symbols that entered assetsUsd */
+  includedSymbols: string[];
+  /** Non-zero balances without a valid USD price */
+  missingPriceSymbols: string[];
+  /** UST1 supply query outcome */
+  ust1SupplyStatus: 'zero' | 'positive' | 'unknown';
 }
 
 /**
@@ -55,10 +68,15 @@ export interface TreasuryRatios {
 export interface TreasuryData {
   /** Assets in the treasury keyed by denomination */
   assets: Record<string, TreasuryAsset>;
-  /** UST1 token issuance metrics */
+  /** UST1 token issuance metrics (circulating = CW20 total_supply) */
   ust1Issuance: TokenIssuance;
   /** USTR token issuance metrics */
   ustrIssuance: TokenIssuance;
+  /** Wrap-token outstanding supply (informational — not CR collateral) */
+  cLuncIssuance: TokenIssuance | null;
+  cUstcIssuance: TokenIssuance | null;
+  /** True when minted/burned are not lifetime counters (CW20 has no cumulative mint/burn) */
+  issuanceLifetimeUnknown: boolean;
   /** Financial ratios and health metrics */
   ratios: TreasuryRatios;
   /** Timestamp when the data was last updated */

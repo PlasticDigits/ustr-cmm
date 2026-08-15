@@ -1,26 +1,28 @@
 /**
  * useTreasury Hook
- * 
- * Fetches treasury data from on-chain using tokenlist.json for metadata:
- * - Treasury's native balances (USTC, etc.)
- * - Treasury's CW20 balances (ALPHA, etc.)
- * - USTR total supply
- * - Calculated ratios
+ *
+ * Fetches treasury holdings from tokenlist.json plus UST1 / wrap-token supplies.
+ * Key ratios use UST1 circulating (CW20 total_supply) as the liability denominator (#11).
  */
 
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { contractService } from '../services/contract';
-import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL, TOKEN_LIST_URL } from '../utils/constants';
-import type { TreasuryData, TreasuryAsset } from '../types/treasury';
+import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL, TOKEN_LIST_URL, TREASURY_HOLDING_SKIP_SYMBOLS } from '../utils/constants';
+import { isTerraContractAddress } from '../utils/addresses';
+import { computeTreasuryRatios } from '../utils/treasuryRatios';
+import type { TreasuryData, TreasuryAsset, TokenIssuance, TreasuryRatios } from '../types/treasury';
+import { usePrices } from './usePrices';
 
 const contracts = CONTRACTS[DEFAULT_NETWORK];
+const SKIP_HOLDING = new Set<string>(TREASURY_HOLDING_SKIP_SYMBOLS);
 
 /** Token metadata from tokenlist.json */
 interface TokenListEntry {
   symbol: string;
   name: string;
-  denom?: string;      // For native tokens
-  address?: string;    // For CW20 tokens
+  denom?: string;
+  address?: string;
   type: 'native' | 'cw20';
   decimals: number;
   gradient: string;
@@ -33,54 +35,81 @@ interface TokenList {
   tokens: TokenListEntry[];
 }
 
-/** Cached token list */
+interface TreasuryChainData {
+  assets: Record<string, TreasuryAsset>;
+  ust1Issuance: TokenIssuance;
+  ustrIssuance: TokenIssuance;
+  cLuncIssuance: TokenIssuance | null;
+  cUstcIssuance: TokenIssuance | null;
+  issuanceLifetimeUnknown: boolean;
+  ust1SupplyRaw: bigint | null;
+  ustrBacking: number;
+  lastUpdated: Date;
+}
+
 let tokenListCache: TokenList | null = null;
 
-/**
- * Fetch token list from public assets
- */
 async function fetchTokenList(): Promise<TokenList> {
   if (tokenListCache) {
     return tokenListCache;
   }
-  
+
   const response = await fetch(TOKEN_LIST_URL);
   if (!response.ok) {
     throw new Error(`Failed to fetch token list: ${response.status}`);
   }
-  
+
   tokenListCache = await response.json();
   return tokenListCache!;
 }
 
-/**
- * Fetch treasury data from chain
- */
-async function fetchTreasuryData(): Promise<TreasuryData> {
-  // Load token list for metadata
+function isLiabilityOrWrapToken(token: TokenListEntry): boolean {
+  if (SKIP_HOLDING.has(token.symbol.toUpperCase())) return true;
+  const addr = token.address;
+  if (!addr) return false;
+  return (
+    addr === contracts.ust1Token ||
+    addr === contracts.cLunc ||
+    addr === contracts.cUstc ||
+    addr === contracts.ustrToken
+  );
+}
+
+function supplyOnlyIssuance(totalSupply: bigint): TokenIssuance {
+  // CW20-mintable / window have no lifetime mint/burn counters.
+  // minted = supply, burned = 0 so minted - burned === supply, with UI disclaimer.
+  return {
+    minted: totalSupply,
+    burned: 0n,
+    supply: totalSupply,
+  };
+}
+
+async function fetchSupplyIssuance(address: string): Promise<TokenIssuance> {
+  const info = await contractService.getTokenInfoStrict(address);
+  return supplyOnlyIssuance(BigInt(info.total_supply || '0'));
+}
+
+async function fetchTreasuryData(): Promise<TreasuryChainData> {
   const tokenList = await fetchTokenList();
-  const tokenMap = new Map(tokenList.tokens.map(t => [t.symbol, t]));
-  
+  const tokenMap = new Map(tokenList.tokens.map((t) => [t.symbol, t]));
+
   const assets: Record<string, TreasuryAsset> = {};
-  
-  // Fetch balances for all tokens in tokenlist (except USTR which is handled separately)
+
   for (const token of tokenList.tokens) {
-    // Skip USTR - it's handled separately for issuance tracking
-    if (token.symbol === 'USTR') continue;
-    
+    if (isLiabilityOrWrapToken(token)) continue;
+
     try {
       let balance = BigInt(0);
-      
+
       if (token.type === 'native' && token.denom) {
-        // Native token - query bank balance
         const balanceStr = await contractService.getNativeBalance(contracts.treasury, token.denom);
         balance = BigInt(balanceStr || '0');
       } else if (token.type === 'cw20' && token.address) {
-        // CW20 token - query token contract
         const result = await contractService.getTokenBalance(token.address, contracts.treasury);
         balance = BigInt(result.balance || '0');
       }
-      
+
       assets[token.symbol.toLowerCase()] = {
         denom: token.denom || token.address || token.symbol.toLowerCase(),
         balance,
@@ -93,8 +122,7 @@ async function fetchTreasuryData(): Promise<TreasuryData> {
       console.error(`Failed to fetch ${token.symbol} balance:`, error);
     }
   }
-  
-  // Get USTR token info (total supply)
+
   let ustrTotalSupply = BigInt(0);
   const ustrToken = tokenMap.get('USTR');
   try {
@@ -103,67 +131,124 @@ async function fetchTreasuryData(): Promise<TreasuryData> {
   } catch (error) {
     console.error('Failed to fetch USTR token info:', error);
   }
-  
-  // Calculate USTR backing ratio
-  // USTR backing = USTC balance / USTR supply (in comparable units)
+
   let ustrBacking = 0;
   const ustcAsset = assets.ustc;
   if (ustrTotalSupply > 0n && ustcAsset) {
-    // Convert USTC to comparable decimals (6 -> 18)
     const ustrDecimals = ustrToken?.decimals || 18;
     const ustcInUstrDecimals = ustcAsset.balance * BigInt(10 ** (ustrDecimals - ustcAsset.decimals));
     ustrBacking = Number(ustcInUstrDecimals * 100n / ustrTotalSupply) / 100;
   }
-  
-  // When UST1 supply is 0, ratios that divide by liabilities are infinite
-  // (assets / 0 liabilities = infinite collateralization)
-  const ust1Supply = BigInt(0); // Currently no UST1 issued
-  const hasUst1Issued = ust1Supply > 0n;
-  
+
+  let ust1Issuance: TokenIssuance = { minted: 0n, burned: 0n, supply: 0n };
+  let ust1SupplyRaw: bigint | null = null;
+  if (isTerraContractAddress(contracts.ust1Token)) {
+    try {
+      ust1Issuance = await fetchSupplyIssuance(contracts.ust1Token);
+      ust1SupplyRaw = ust1Issuance.supply;
+    } catch (error) {
+      console.error('Failed to fetch UST1 token info:', error);
+      ust1SupplyRaw = null;
+    }
+  }
+
+  let cLuncIssuance: TokenIssuance | null = null;
+  if (isTerraContractAddress(contracts.cLunc)) {
+    try {
+      cLuncIssuance = await fetchSupplyIssuance(contracts.cLunc);
+    } catch (error) {
+      console.error('Failed to fetch cLUNC token info:', error);
+    }
+  }
+
+  let cUstcIssuance: TokenIssuance | null = null;
+  if (isTerraContractAddress(contracts.cUstc)) {
+    try {
+      cUstcIssuance = await fetchSupplyIssuance(contracts.cUstc);
+    } catch (error) {
+      console.error('Failed to fetch cUSTC token info:', error);
+    }
+  }
+
   return {
     assets,
-    ust1Issuance: {
-      minted: BigInt(0),
-      burned: BigInt(0),
-      supply: ust1Supply,
-    },
+    ust1Issuance,
     ustrIssuance: {
       minted: ustrTotalSupply,
-      burned: BigInt(0), // Currently 0, no burn mechanism yet
+      burned: 0n,
       supply: ustrTotalSupply,
     },
-    ratios: {
-      // With no UST1 liabilities, collateralization is infinite
-      collateralization: hasUst1Issued ? 0 : Infinity,
-      // USTC backing per UST1 is infinite when no UST1 exists
-      ustcPerUst1: hasUst1Issued ? 0 : Infinity,
-      // Assets / Liabilities is infinite when liabilities = 0
-      assetsToLiabilities: hasUst1Issued ? 0 : Infinity,
-      ustrBacking,
-    },
+    cLuncIssuance,
+    cUstcIssuance,
+    issuanceLifetimeUnknown: true,
+    ust1SupplyRaw,
+    ustrBacking,
     lastUpdated: new Date(),
   };
 }
 
+const EMPTY_RATIOS: TreasuryRatios = {
+  collateralization: Number.NaN,
+  ustcPerUst1: Number.NaN,
+  assetsToLiabilities: Number.NaN,
+  ustrBacking: 0,
+  incomplete: true,
+  includedSymbols: [],
+  missingPriceSymbols: [],
+  ust1SupplyStatus: 'unknown',
+};
+
 export function useTreasury() {
+  const { prices } = usePrices();
+
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['treasury', 'fullData'],
     queryFn: fetchTreasuryData,
-    refetchInterval: POLLING_INTERVAL * 3, // Every 30 seconds
+    refetchInterval: POLLING_INTERVAL * 3,
     staleTime: POLLING_INTERVAL,
-    // Keep previous data while refetching to prevent UI flickering
     placeholderData: (previousData) => previousData,
-    // Don't retry at React Query level - contract service handles fallbacks
     retry: false,
-    // Don't refetch on window focus to reduce unnecessary requests
     refetchOnWindowFocus: false,
   });
 
+  const treasuryData: TreasuryData | null = useMemo(() => {
+    if (!data) return null;
+
+    const ratioAssets = Object.values(data.assets).map((asset) => ({
+      symbol: asset.displayName,
+      balanceRaw: asset.balance,
+      decimals: asset.decimals,
+    }));
+
+    const ratios = computeTreasuryRatios({
+      ust1SupplyRaw: data.ust1SupplyRaw,
+      ust1Decimals: 6,
+      ustcBalanceRaw: data.assets.ustc?.balance ?? 0n,
+      ustcDecimals: data.assets.ustc?.decimals ?? 6,
+      assets: ratioAssets,
+      prices,
+      ustrBacking: data.ustrBacking,
+    });
+
+    return {
+      assets: data.assets,
+      ust1Issuance: data.ust1Issuance,
+      ustrIssuance: data.ustrIssuance,
+      cLuncIssuance: data.cLuncIssuance,
+      cUstcIssuance: data.cUstcIssuance,
+      issuanceLifetimeUnknown: data.issuanceLifetimeUnknown,
+      ratios,
+      lastUpdated: data.lastUpdated,
+    };
+  }, [data, prices]);
+
   return {
-    treasuryData: data ?? null,
-    isLoading: isLoading && !data, // Only show loading if no data at all
-    isFetching, // True when refetching in background
-    error: error && !data ? (error as Error).message : null, // Only show error if no data
+    treasuryData,
+    isLoading: isLoading && !data,
+    isFetching,
+    error: error && !data ? (error as Error).message : null,
     refetch,
   };
 }
+
+export { EMPTY_RATIOS };

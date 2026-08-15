@@ -12,7 +12,7 @@ description: >-
 
 Companion to GitLab issues [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6) (spender registry) and [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7) (24h pull limit). Consumer: [ust1-window#20](https://gitlab.com/PlasticDigits/ust1-window/-/work_items/20). Phase 5 withdraw smoke: [ust1-window#19](https://gitlab.com/PlasticDigits/ust1-window/-/issues/19). Audit follow-up: [audits/INTERNAL_COMPOSER_1785465508.md](../../audits/INTERNAL_COMPOSER_1785465508.md) (H-2 / M-1).
 
-Cross-links: [docs/CONTRACTS.md](../../docs/CONTRACTS.md), [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [plans/NATIVE_TOKEN_WRAPPING.md](../../plans/NATIVE_TOKEN_WRAPPING.md), [treasury-swap-removal](../treasury-swap-removal/SKILL.md) ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8) — do not confuse wrap `NotifyDeposit` with removed swap path).
+Cross-links: [docs/CONTRACTS.md](../../docs/CONTRACTS.md), [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [plans/NATIVE_TOKEN_WRAPPING.md](../../plans/NATIVE_TOKEN_WRAPPING.md), [treasury-swap-removal](../treasury-swap-removal/SKILL.md) ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8) — do not confuse wrap `NotifyDeposit` with removed swap path), [frontend-vfdusd-oracle](../frontend-vfdusd-oracle/SKILL.md) ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) — public Treasury USD for the same vFDUSD inventory).
 
 ## Why this exists
 
