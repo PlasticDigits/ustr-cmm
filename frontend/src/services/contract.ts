@@ -1513,10 +1513,22 @@ class ContractService {
    */
   async getDexPoolRaw(pairAddress: string, dex: string): Promise<unknown | null> {
     const d = dex.toLowerCase();
-    if (d !== 'garuda' && d !== 'terraswap' && d !== 'terraport') {
+    if (d !== 'cl8y' && d !== 'garuda' && d !== 'terraswap' && d !== 'terraport') {
       return null;
     }
-    return this.queryWasmData<unknown>(pairAddress, { pool: {} });
+    const pool = await this.queryWasmData<unknown>(pairAddress, { pool: {} });
+    // CL8Y `pool {}` is Terraswap-shaped; LP mint lives on `pair {}` (≠ pair address).
+    if (d === 'cl8y' && pool && typeof pool === 'object' && !Array.isArray(pool)) {
+      try {
+        const pair = await this.queryWasmData<{ liquidity_token?: string }>(pairAddress, { pair: {} });
+        if (typeof pair.liquidity_token === 'string') {
+          return { ...(pool as Record<string, unknown>), liquidity_token: pair.liquidity_token };
+        }
+      } catch (error) {
+        console.error('Failed to query CL8Y pair liquidity_token:', error);
+      }
+    }
+    return pool;
   }
 }
 

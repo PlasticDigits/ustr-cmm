@@ -524,9 +524,16 @@ terrad tx wasm execute $WRAP_MAPPER \
 
 Do **not** add raw UST1 / cLUNC / cUSTC to the treasury-holdings tokenlist loop (liability / wrap receipts). LP rows are a separate `type: "lp"` with pinned pair + LP CW20.
 
-**LP pins (ops):** when a Garuda / Terraswap / Terraport pair exists for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, or `cLUNC/xxx`, add a `type: "lp"` entry (see the skill for the JSON shape). Then governance `AddCw20` the **LP CW20** (Garuda: `pool.liquidity_token`, often ≠ pair). Unlisted factory pairs must never enter CR.
+**LP pins (ops):** when a CL8Y / Garuda / Terraswap / Terraport pair exists for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, or `cLUNC/xxx`, add a `type: "lp"` entry (see the skill for the JSON shape). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` (`pair_address` + `lp_token`). Then governance `AddCw20` the **LP CW20** (CL8Y/Garuda: `pair.liquidity_token`, often ≠ pair). Unlisted factory pairs must never enter CR.
 
-At implementation of #14, Garuda `pair` lookups for those protocol tokens × tokenlist quotes returned **no live pairs** — tokenlist has the schema (`version` 1.2.0) and zero LP rows until ops pin them.
+**Live CL8Y pins (tokenlist `1.3.0`, queried indexer 2026-08-15):**
+
+| Pair | Pair contract | LP CW20 (18 decimals) |
+|------|---------------|------------------------|
+| UST1/USTR | `terra16vxrh…5hgqy` | `terra1ak8w9…2ty4p` |
+| UST1/cUSTC | `terra1ceprj…cw55f` | `terra1jv6y0…dzdgy` |
+
+Treasury LP balances were **0** at pin time — no asset-grid row until the treasury holds shares. No other indexer pairs involved UST1/USTR/cUSTC/cLUNC (EMBER/CORAL/… gems are out of scope).
 
 ### Legal clickwrap (#12)
 

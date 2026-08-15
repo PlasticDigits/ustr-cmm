@@ -90,7 +90,8 @@ describe('resolveLpLegUsd', () => {
 });
 
 describe('isSupportedLpDex', () => {
-  it('allowlists garuda/terraswap/terraport only', () => {
+  it('allowlists cl8y/garuda/terraswap/terraport only', () => {
+    expect(isSupportedLpDex('cl8y')).toBe(true);
     expect(isSupportedLpDex('garuda')).toBe(true);
     expect(isSupportedLpDex('Terraport')).toBe(true);
     expect(isSupportedLpDex('astroport')).toBe(false);

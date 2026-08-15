@@ -26,9 +26,9 @@ Treasury may hold DEX LP for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, `cLUNC/xxx`. S
 | cLUNC | `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg` | Wrap; LP leg display only |
 | cUSTC | `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch` | Wrap; LP leg display only |
 
-Pair / LP CW20 addresses are **tokenlist `type: "lp"` pins only**. Do not invent factory results into CR. Garuda LP mint is often **not** the pair (`liquidity_token`).
+Pair / LP CW20 addresses are **tokenlist `type: "lp"` pins only**. Do not invent factory results into CR. Garuda / CL8Y LP mint is often **not** the pair (`liquidity_token`). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` — still pin into tokenlist; indexer is not CR input.
 
-Supported dex strings: `garuda`, `terraswap`, `terraport`.
+Supported dex strings: `cl8y`, `garuda`, `terraswap`, `terraport`. CL8Y LP CW20 decimals are **18** (confirm `token_info`).
 
 ## Invariants (must hold)
 
@@ -41,7 +41,7 @@ Supported dex strings: `garuda`, `terraswap`, `terraport`.
 7. **USTR in LP is collateral**; raw USTR is still not a holding.
 8. **Fail closed**: unknown dex, `total_share == 0`, `lp_balance > total_share`, reserve/declared mismatch, LP token ≠ `liquidity_token`, unpriced CR-eligible leg → `crUsd = null`, incomplete. Never missing USD as `$0` or `$1`.
 9. **vFDUSD** as an LP quote still uses the session oracle — never DEX-simulate vFDUSD.
-10. **Decimals**: `rawToWholeNumber` only. UST1/wraps/native 6; USTR 18.
+10. **Decimals**: `rawToWholeNumber` only. UST1/wraps/native 6; USTR 18. CL8Y LP mint is 18.
 11. **Ops**: governance `AddCw20` each LP CW20 so `AllBalances` stays consistent. UI does not silently drop a pin if whitelist lags.
 12. **Addresses**: pinned `terra1…` only (`isTerraContractAddress`).
 
@@ -53,11 +53,11 @@ Supported dex strings: `garuda`, `terraswap`, `terraport`.
   "name": "UST1/USTR LP",
   "type": "lp",
   "address": "<lp cw20>",
-  "decimals": 6,
+  "decimals": 18,
   "pool": {
     "address": "<pair>",
-    "dex": "garuda",
-    "name": "GARUDA UST1/USTR",
+    "dex": "cl8y",
+    "name": "CL8Y UST1/USTR",
     "assets": [
       { "symbol": "UST1", "address": "terra1f0eq…fy72" },
       { "symbol": "USTR", "address": "terra1vy3k…setxv" }

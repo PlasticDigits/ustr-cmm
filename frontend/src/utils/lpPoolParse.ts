@@ -1,7 +1,8 @@
 /**
- * Normalize Garuda / Terraswap / Terraport `{ pool: {} }` into reserves + LP share (#14).
+ * Normalize Garuda / CL8Y / Terraswap / Terraport `{ pool: {} }` into reserves + LP share (#14).
  *
  * Garuda: asset1/asset2 + reserve1/reserve2 + total_supply + liquidity_token (LP ≠ pair).
+ * CL8Y: Terraswap assets[] + total_share; LP mint is `pair.liquidity_token` (≠ pair).
  * Terraswap/Terraport: assets[] + total_share (pair is usually the LP mint).
  */
 
@@ -91,7 +92,8 @@ function parseTerraswapPool(data: Record<string, unknown>): ParsedPoolState | nu
   }
   const share = parseAmount(data.total_share);
   if (share === null) return null;
-  return { reserves, totalShare: share };
+  const liquidityToken = typeof data.liquidity_token === 'string' ? data.liquidity_token : undefined;
+  return { reserves, totalShare: share, liquidityToken };
 }
 
 export function parseDexPoolState(dex: string, raw: unknown): ParsedPoolState | null {

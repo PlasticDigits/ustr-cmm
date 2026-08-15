@@ -1,6 +1,6 @@
 {
   "name": "USTR CMM Token List",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "tokens": [
     {
       "symbol": "USTC",
@@ -77,6 +77,54 @@
       "decimals": 6,
       "gradient": "from-emerald-500 to-teal-500",
       "iconColor": "text-emerald-400"
+    },
+    {
+      "symbol": "UST1-USTR",
+      "name": "UST1/USTR LP",
+      "type": "lp",
+      "address": "terra1ak8w9k34ex237h9pmquxqjevhzvflqaatuaj9pr8ym287n7atj6qw2ty4p",
+      "decimals": 18,
+      "gradient": "from-amber-500 to-yellow-500",
+      "iconColor": "text-amber-400",
+      "pool": {
+        "address": "terra16vxrhpvpcucu05y0nr862vf9hnqeh274uaff4s7hz4n0ea74006qf5hgqy",
+        "dex": "cl8y",
+        "name": "CL8Y UST1/USTR",
+        "assets": [
+          {
+            "symbol": "UST1",
+            "address": "terra1f0eqgy9w7e5e7up97vjudqwx38tesf8ylx75x2lv3nwm0clry0pqmgfy72"
+          },
+          {
+            "symbol": "USTR",
+            "address": "terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv"
+          }
+        ]
+      }
+    },
+    {
+      "symbol": "UST1-cUSTC",
+      "name": "UST1/cUSTC LP",
+      "type": "lp",
+      "address": "terra1jv6y058w6qx0xzcspcuv0du4qj95amwhvy4lftlf7mlyjj24v9ms8dzdgy",
+      "decimals": 18,
+      "gradient": "from-blue-500 to-amber-500",
+      "iconColor": "text-blue-400",
+      "pool": {
+        "address": "terra1ceprjsxp86ggftf5e38wwt34l83e5gq7penkdnv4wsatkwcs8v6qccw55f",
+        "dex": "cl8y",
+        "name": "CL8Y UST1/cUSTC",
+        "assets": [
+          {
+            "symbol": "UST1",
+            "address": "terra1f0eqgy9w7e5e7up97vjudqwx38tesf8ylx75x2lv3nwm0clry0pqmgfy72"
+          },
+          {
+            "symbol": "cUSTC",
+            "address": "terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch"
+          }
+        ]
+      }
     }
   ]
 }

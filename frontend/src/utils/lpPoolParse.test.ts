@@ -42,6 +42,16 @@ describe('parseDexPoolState', () => {
     expect(parseDexPoolState('terraswap', TERRAPORT_SPACE)?.totalShare).toBe(9966829339n);
   });
 
+  it('parses CL8Y pool like Terraswap and keeps pair.liquidity_token', () => {
+    const parsed = parseDexPoolState('cl8y', {
+      ...TERRAPORT_SPACE,
+      liquidity_token: 'terra1ak8w9k34ex237h9pmquxqjevhzvflqaatuaj9pr8ym287n7atj6qw2ty4p',
+    });
+    expect(parsed?.totalShare).toBe(9966829339n);
+    expect(parsed?.liquidityToken).toBe('terra1ak8w9k34ex237h9pmquxqjevhzvflqaatuaj9pr8ym287n7atj6qw2ty4p');
+    expect(parsed?.reserves[0]?.address).toContain('terra1cvd5c');
+  });
+
   it('unknown dex or garbage → null (fail closed)', () => {
     expect(parseDexPoolState('astroport', GARUDA_USTRIX)).toBeNull();
     expect(parseDexPoolState('garuda', { reserve1: '-1' })).toBeNull();

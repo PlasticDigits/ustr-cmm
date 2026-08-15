@@ -176,7 +176,7 @@ export const TREASURY_HOLDING_SKIP_SYMBOLS = ['USTR', 'UST1', 'CLUNC', 'CUSTC'] 
 export const UST1_LIABILITY_USD = 1;
 
 /** DEX ids that may appear on tokenlist `type: "lp"` pool.dex. Unknown → fail closed. */
-export const SUPPORTED_LP_DEXES = ['garuda', 'terraswap', 'terraport'] as const;
+export const SUPPORTED_LP_DEXES = ['cl8y', 'garuda', 'terraswap', 'terraport'] as const;
 
 /** ECONOMICS.md CR color tiers (percent). */
 export const CR_TIERS = {
