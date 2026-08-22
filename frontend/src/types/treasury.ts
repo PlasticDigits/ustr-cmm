@@ -30,6 +30,8 @@ export interface TreasuryAsset {
   /** Wrap symbols shown in NAV but excluded from CR. */
   haircutLegs?: string[];
   pairLabel?: string;
+  /** Both sides of an LP pair, used for overlapping icons. */
+  pairSymbols?: [string, string];
   /** Pair or LP contract for finder (pinned). */
   explorerAddress?: string;
   navIncomplete?: boolean;

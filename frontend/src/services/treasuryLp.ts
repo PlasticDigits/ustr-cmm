@@ -31,6 +31,7 @@ export interface LpChainPosition {
   symbol: string;
   displayName: string;
   pairLabel: string;
+  pairSymbols?: [string, string];
   lpAddress: string;
   pairAddress: string;
   dex: string;
@@ -108,6 +109,10 @@ export async function fetchTreasuryLpPositions(
       symbol: token.symbol,
       displayName: token.symbol,
       pairLabel: token.pool?.name || token.name || token.symbol,
+      pairSymbols:
+        declared && declared.length === 2 && declared[0].symbol && declared[1].symbol
+          ? ([declared[0].symbol, declared[1].symbol] as [string, string])
+          : undefined,
       lpAddress: lpAddress ?? '',
       pairAddress: pairAddress ?? '',
       dex,
@@ -191,6 +196,8 @@ export async function fetchTreasuryLpPositions(
 
       out.push({
         ...base,
+        pairSymbols:
+          legs.length === 2 ? [legs[0].symbol, legs[1].symbol] : base.pairSymbols,
         lpBalance,
         totalShare: parsed.totalShare,
         legs,

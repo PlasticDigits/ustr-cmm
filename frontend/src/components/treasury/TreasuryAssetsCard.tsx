@@ -18,6 +18,14 @@ interface TreasuryAssetsCardProps {
   explorerUrl?: string;
 }
 
+function pairSymbolsForAsset(asset: TreasuryAsset): [string, string] | undefined {
+  if (asset.kind !== 'lp') return undefined;
+  if (asset.pairSymbols?.[0] && asset.pairSymbols[1]) return asset.pairSymbols;
+  const parts = asset.displayName.split('-');
+  if (parts.length === 2 && parts[0] && parts[1]) return [parts[0], parts[1]];
+  return undefined;
+}
+
 export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: TreasuryAssetsCardProps) {
   const { prices, luncUsd, ustcUsd } = usePrices();
   const scanner = NETWORKS[DEFAULT_NETWORK].scanner;
@@ -189,7 +197,8 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <div className="relative">
                     <TokenIcon 
-                      symbol={asset.displayName} 
+                      symbol={asset.displayName}
+                      pairSymbols={pairSymbolsForAsset(asset)}
                       size="md" 
                       gradient={asset.gradient}
                       className="group-hover:scale-105 transition-transform"

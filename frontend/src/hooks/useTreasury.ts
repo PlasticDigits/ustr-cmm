@@ -222,6 +222,7 @@ export function useTreasury() {
         crUsd: nav.crUsd,
         haircutLegs: nav.haircutLegs,
         pairLabel: pos.pairLabel,
+        pairSymbols: pos.pairSymbols,
         explorerAddress: pos.pairAddress,
         navIncomplete: nav.incomplete,
         poolShare:
