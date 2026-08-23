@@ -29,6 +29,7 @@ describe('holding skip list', () => {
     expect(isExactSkipHoldingSymbol('CLUNC')).toBe(true);
     expect(isExactSkipHoldingSymbol('CUSTC')).toBe(true);
     expect(isExactSkipHoldingSymbol('UST1-USTR')).toBe(false);
+    expect(isExactSkipHoldingSymbol('UST1-SpaceUSD')).toBe(false);
     expect(isExactSkipHoldingSymbol('UST1/USTR')).toBe(false);
   });
 
