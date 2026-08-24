@@ -514,12 +514,12 @@ terrad tx wasm execute $WRAP_MAPPER \
   --gas auto --gas-adjustment 1.4 --gas-prices 28.325uluna -y
 ```
 
-### Frontend address wiring (#10 / #11 / #14)
+### Frontend address wiring (#10 / #11 / #14 / #16)
 
 `frontend/src/utils/constants.ts` `CONTRACTS.mainnet` and `frontend/public/assets/tokenlist.json` pin the addresses above. Treasury UI:
 
 - vFDUSD balance + session-once ust1-oracle USD — [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md)
-- UST1 / cLUNC / cUSTC `token_info.total_supply` and CR — [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md)
+- UST1 / cLUNC / cUSTC available supply and CR — [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md) / [skills/frontend-treasury-available-supply](../skills/frontend-treasury-available-supply/SKILL.md) / [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)
 - Protocol LP shares (allowlisted `type: "lp"`) — [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md) / [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14)
 
 Do **not** add raw UST1 / cLUNC / cUSTC to the treasury-holdings tokenlist loop (liability / wrap receipts). LP rows are a separate `type: "lp"` with pinned pair + LP CW20.

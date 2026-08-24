@@ -461,7 +461,9 @@ The CMM system handles tokens with varying decimal configurations:
 
 **CR Calculation**: The system queries each token's on-chain decimal count and normalizes all values before calculating collateralization ratios. This ensures oracle prices (typically in USD per whole token) match the internal accounting regardless of decimal configuration.
 
-**Protocol LP (#14)**: Allowlisted DEX LP shares (`tokenlist.json` `type: "lp"`) enter the frontend CR numerator as reserve NAV (`share × Σ reserve_i × usd_i`). Pinned cLUNC/cUSTC legs are omitted from that sum (wrap receipts; native already counted). UST1 legs use $1. Unlisted factory pairs are ignored. See [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md). Live CR remains frontend-only until a Phase 2 on-chain CR contract exists; still `AddCw20` each LP CW20 so `AllBalances` stays consistent.
+**Protocol LP (#14, revised by #16)**: Allowlisted DEX LP shares (`tokenlist.json` `type: "lp"`) use reserve NAV for display (`share × Σ reserve_i × usd_i`). Only `other` legs (LUNC, USTC, ALPHA, vFDUSD, …) enter the frontend CR numerator. Pinned UST1 / USTR / cLUNC / cUSTC legs are omitted (treasury stock / wrap receipts). Unlisted factory pairs are ignored. See [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md) and [skills/frontend-treasury-available-supply](../skills/frontend-treasury-available-supply/SKILL.md). Live CR remains frontend-only until a Phase 2 on-chain CR contract exists; still `AddCw20` each LP CW20 so `AllBalances` stays consistent.
+
+**Available supply (#16)**: CR denominator is UST1 available supply = `token_info.total_supply` − treasury spot − allowlisted LP claims. Issuance cards show `+ Outstanding − CMM-owned = Available Supply`. Protocol tokens are never CR assets.
 
 ---
 
