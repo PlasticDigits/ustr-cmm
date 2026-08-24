@@ -2,14 +2,18 @@
  * Wallet Button Component
  * 
  * Handles wallet connection UI with:
- * - Multiple wallet type support (Station, Keplr, LUNC Dash, etc.)
+ * - Multiple wallet type support (Station, Keplr / Trust-compatible, LUNC Dash, etc.)
  * - Glass morphism modal
  * - Animated hover states
+ *
+ * Trust Wallet has no separate controller: both the Keplr and Trust rows call
+ * WalletName.KEPLR after keplrCompatible.ensureKeplrCompatibleProvider (#4).
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useWallet, WalletName, WalletType } from '../../hooks/useWallet';
+import { KEPLR_COMPATIBLE_COPY } from '../../services/keplrCompatible';
 import { formatAddress, formatAmount } from '../../utils/format';
 
 export function WalletButton() {
@@ -32,6 +36,7 @@ export function WalletButton() {
   
   const [showDropdown, setShowDropdown] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingOption, setPendingOption] = useState<string | null>(null);
 
   // Sync local modal state with global store state
   const showModal = showWalletModal;
@@ -41,6 +46,7 @@ export function WalletButton() {
   const closeModal = useCallback(() => {
     setShowModal(false);
     setError(null);
+    setPendingOption(null);
     if (connecting) {
       cancelConnection();
     }
@@ -60,13 +66,20 @@ export function WalletButton() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [showModal, closeModal]);
 
-  const handleConnect = async (walletName: WalletName, walletType: WalletType = WalletType.EXTENSION) => {
+  const handleConnect = async (
+    optionId: string,
+    walletName: WalletName,
+    walletType: WalletType = WalletType.EXTENSION
+  ) => {
     setError(null);
+    setPendingOption(optionId);
     try {
       await connect(walletName, walletType);
       setShowModal(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Connection failed');
+    } finally {
+      setPendingOption(null);
     }
   };
 
@@ -188,8 +201,11 @@ export function WalletButton() {
                 </div>
               )}
               
-              {/* Browser Extension Wallets */}
-              <p className="text-xs text-amber-500/70 uppercase tracking-wider mb-2 font-medium">Browser Extension</p>
+              {/* Injected wallets (extension or in-app browser) */}
+              <p className="text-xs text-amber-500/70 uppercase tracking-wider mb-2 font-medium">Browser / in-app</p>
+              <p className="text-xs text-gray-500 mb-2">
+                Trust Wallet and other Cosmos in-app browsers use the Keplr-compatible option.
+              </p>
               
               {/* Terra Station */}
               <WalletOption
@@ -197,19 +213,30 @@ export function WalletButton() {
                 icon={<StationIcon />}
                 description={isStationAvailable ? "Recommended" : "Not installed"}
                 available={isStationAvailable}
-                loading={connectingWallet === WalletName.STATION}
-                onClick={() => handleConnect(WalletName.STATION, WalletType.EXTENSION)}
+                loading={pendingOption === 'station' || connectingWallet === WalletName.STATION}
+                onClick={() => handleConnect('station', WalletName.STATION, WalletType.EXTENSION)}
                 disabled={connecting}
               />
               
-              {/* Keplr */}
+              {/* Keplr — also the path for Trust and other Keplr-compatible injects */}
               <WalletOption
                 name="Keplr"
                 icon={<KeplrIcon />}
-                description={isKeplrAvailable ? "Keplr, Trust Wallet & compatible" : "Not installed"}
+                description={isKeplrAvailable ? KEPLR_COMPATIBLE_COPY.keplrAvailable : KEPLR_COMPATIBLE_COPY.keplrMissing}
                 available={isKeplrAvailable}
-                loading={connectingWallet === WalletName.KEPLR}
-                onClick={() => handleConnect(WalletName.KEPLR, WalletType.EXTENSION)}
+                loading={pendingOption === 'keplr'}
+                onClick={() => handleConnect('keplr', WalletName.KEPLR, WalletType.EXTENSION)}
+                disabled={connecting}
+              />
+
+              {/* Trust Wallet — same WalletName.KEPLR path; shown so users find themselves */}
+              <WalletOption
+                name="Trust Wallet"
+                icon={<TrustIcon />}
+                description={isKeplrAvailable ? KEPLR_COMPATIBLE_COPY.trustAvailable : KEPLR_COMPATIBLE_COPY.trustMissing}
+                available={isKeplrAvailable}
+                loading={pendingOption === 'trust'}
+                onClick={() => handleConnect('trust', WalletName.KEPLR, WalletType.EXTENSION)}
                 disabled={connecting}
               />
               
@@ -219,8 +246,8 @@ export function WalletButton() {
                 icon={<LeapIcon />}
                 description={isLeapAvailable ? "Multi-chain" : "Not installed"}
                 available={isLeapAvailable}
-                loading={connectingWallet === WalletName.LEAP}
-                onClick={() => handleConnect(WalletName.LEAP, WalletType.EXTENSION)}
+                loading={pendingOption === 'leap' || connectingWallet === WalletName.LEAP}
+                onClick={() => handleConnect('leap', WalletName.LEAP, WalletType.EXTENSION)}
                 disabled={connecting}
               />
               
@@ -230,8 +257,8 @@ export function WalletButton() {
                 icon={<CosmostationIcon />}
                 description={isCosmostationAvailable ? "Cosmos wallet" : "Not installed"}
                 available={isCosmostationAvailable}
-                loading={connectingWallet === WalletName.COSMOSTATION}
-                onClick={() => handleConnect(WalletName.COSMOSTATION, WalletType.EXTENSION)}
+                loading={pendingOption === 'cosmostation' || connectingWallet === WalletName.COSMOSTATION}
+                onClick={() => handleConnect('cosmostation', WalletName.COSMOSTATION, WalletType.EXTENSION)}
                 disabled={connecting}
               />
               
@@ -244,8 +271,8 @@ export function WalletButton() {
                 icon={<LuncDashIcon />}
                 description="Mobile wallet"
                 available={true}
-                loading={connectingWallet === WalletName.LUNCDASH}
-                onClick={() => handleConnect(WalletName.LUNCDASH, WalletType.WALLETCONNECT)}
+                loading={pendingOption === 'luncdash' || connectingWallet === WalletName.LUNCDASH}
+                onClick={() => handleConnect('luncdash', WalletName.LUNCDASH, WalletType.WALLETCONNECT)}
                 disabled={connecting}
               />
               
@@ -255,19 +282,31 @@ export function WalletButton() {
                 icon={<GalaxyIcon />}
                 description="Mobile wallet"
                 available={true}
-                loading={connectingWallet === WalletName.GALAXYSTATION}
-                onClick={() => handleConnect(WalletName.GALAXYSTATION, WalletType.WALLETCONNECT)}
+                loading={pendingOption === 'galaxystation' || connectingWallet === WalletName.GALAXYSTATION}
+                onClick={() => handleConnect('galaxystation', WalletName.GALAXYSTATION, WalletType.WALLETCONNECT)}
                 disabled={connecting}
               />
             </div>
             
             {/* Footer */}
-            <div className="relative px-6 py-4 border-t border-white/5">
+            <div className="relative px-6 py-4 border-t border-white/5 space-y-2">
               <p className="text-xs text-gray-400 text-center">
+                {KEPLR_COMPATIBLE_COPY.modalHint}
+              </p>
+              <p className="text-xs text-gray-500 text-center">
+                <a
+                  href={KEPLR_COMPATIBLE_COPY.docsHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-amber-400 hover:text-amber-300"
+                >
+                  {KEPLR_COMPATIBLE_COPY.docsLabel}
+                </a>
+                {' · '}
                 New to Terra? Get{' '}
-                <a 
-                  href="https://station.terra.money" 
-                  target="_blank" 
+                <a
+                  href="https://station.terra.money"
+                  target="_blank"
                   rel="noopener noreferrer"
                   className="text-amber-400 hover:text-amber-300"
                 >
@@ -348,6 +387,17 @@ function KeplrIcon() {
     <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
       <svg className="w-6 h-6 text-purple-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
         <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+      </svg>
+    </div>
+  );
+}
+
+function TrustIcon() {
+  return (
+    <div className="w-10 h-10 rounded-xl bg-sky-500/20 flex items-center justify-center">
+      <svg className="w-6 h-6 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="2">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l7 3v6c0 5-3.5 8.5-7 9.5C8.5 20.5 5 17 5 12V6l7-3z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4" />
       </svg>
     </div>
   );

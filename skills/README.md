@@ -12,5 +12,6 @@ Project skills for third-party / Cursor agents working in this repo.
 | [frontend-treasury-lp-nav](./frontend-treasury-lp-nav/SKILL.md) | Allowlisted protocol LP shares as treasury assets; reserve NAV USD; only `other` legs enter CR ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14), revised by [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)) |
 | [frontend-treasury-available-supply](./frontend-treasury-available-supply/SKILL.md) | CMM-owned inventory, available-supply CR, protocol-leg haircut, gated Key Ratios color tiers ([#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)) |
 | [frontend-legal-clickwrap](./frontend-legal-clickwrap/SKILL.md) | CL8Y Legal TermsGate for connected Terra Classic wallets on `ust1cmm.com`; SDK-only; fail-closed ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12)) |
+| [frontend-keplr-compatible-wallets](./frontend-keplr-compatible-wallets/SKILL.md) | Trust Wallet / Keplr-compatible injects (`window.keplr` or `window.trustwallet.cosmos`); one `WalletName.KEPLR` path ([#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4)) |
 
-Human-facing contract docs: [docs/CONTRACTS.md](../docs/CONTRACTS.md), [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md), [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md).
+Human-facing docs: [docs/CONTRACTS.md](../docs/CONTRACTS.md), [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md), [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), [docs/WALLETS.md](../docs/WALLETS.md).
