@@ -115,5 +115,5 @@ These documents are maintained alongside the codebase. If you find discrepancies
 
 **Last Updated**: August 2026
 
-Agent playbooks (invariants + pins): [skills/README.md](../skills/README.md) — including frontend vFDUSD oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)), UST1 CR ([#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11)), Legal clickwrap ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12)), and protocol LP NAV ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14)).
+Agent playbooks (invariants + pins): [skills/README.md](../skills/README.md) — including frontend vFDUSD oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)), UST1 CR ([#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11)), Legal clickwrap ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12)), protocol LP NAV ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14)), and available-supply CR + gated tiers ([#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)).
 

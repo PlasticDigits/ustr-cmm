@@ -1,16 +1,19 @@
 /**
- * Treasury key-ratio math (#11).
+ * Treasury key-ratio math (#11, denominator + numerator revised by #16).
  *
  * Invariants:
- * - CR denominator is UST1 CW20 `token_info.total_supply` (outstanding), never USTR, never window volume.
- * - ∞ only when UST1 query succeeded and outstanding === 0. Query failure → NaN (UI: N/A), never ∞.
- * - When supply > 0, compute — never return the stub 0.
- * - 1 UST1 = $1 liability. collateralization% = (priced assets USD / whole UST1) * 100.
- * - Do not count raw cLUNC/cUSTC or raw UST1 as assets (wraps double-count native; UST1 is the liability).
- * - Allowlisted LP shares enter via `crUsd` (reserve NAV, wrap legs already haircut) — never a DEX LP spot.
- * - Missing USD is omitted from the sum and flagged incomplete — never treated as $0 or $1.
+ * - CR denominator is UST1 **available supply** (outstanding − CMM-owned), never raw
+ *   `total_supply`, never USTR, never window volume.
+ * - ∞ only when available-supply queries succeeded and available === 0. Query /
+ *   inventory failure → NaN, never ∞.
+ * - Numerator = priced non-protocol spot USD + LP `other` NAV (`crUsd`). UST1 / USTR /
+ *   wrap legs are not assets.
+ * - 1 UST1 = $1 liability unit for the ratio only. Do not put UST1 in the numerator.
+ * - Missing USD is omitted and flagged incomplete — never treated as $0 or $1.
+ * - $0 numerator with no missing CR prices is a valid complete CR (0% / RED).
  */
 
+import { crColorTier, type CrColorTier } from './crTiers';
 import { isValidPositivePrice, rawToWholeNumber } from './decimals';
 
 export type Ust1SupplyStatus = 'zero' | 'positive' | 'unknown';
@@ -27,90 +30,132 @@ export interface RatioAssetInput {
 }
 
 export interface ComputeTreasuryRatiosArgs {
-  /** null = token_info failed or address unset */
-  ust1SupplyRaw: bigint | null;
+  /** null = token_info failed, CMM-owned unknown, or available could not be certified */
+  ust1AvailableRaw: bigint | null;
   ust1Decimals: number;
   ustcBalanceRaw: bigint;
   ustcDecimals: number;
   assets: RatioAssetInput[];
   prices: Record<string, number>;
-  ustrBacking: number;
 }
 
 export interface ComputedTreasuryRatios {
   collateralization: number;
   ustcPerUst1: number;
   assetsToLiabilities: number;
-  ustrBacking: number;
   incomplete: boolean;
+  pricesReady: boolean;
   includedSymbols: string[];
   missingPriceSymbols: string[];
   ust1SupplyStatus: Ust1SupplyStatus;
+  tier: CrColorTier | null;
 }
 
 const NA = Number.NaN;
 
+function withTier(base: Omit<ComputedTreasuryRatios, 'tier' | 'pricesReady'>): ComputedTreasuryRatios {
+  const pricesReady = !base.incomplete && base.ust1SupplyStatus !== 'unknown';
+  return {
+    ...base,
+    pricesReady,
+    tier: pricesReady ? crColorTier(base.collateralization) : null,
+  };
+}
+
 export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): ComputedTreasuryRatios {
   const {
-    ust1SupplyRaw,
+    ust1AvailableRaw,
     ust1Decimals,
     ustcBalanceRaw,
     ustcDecimals,
     assets,
     prices,
-    ustrBacking,
   } = args;
 
-  if (ust1SupplyRaw === null) {
-    return {
+  if (ust1AvailableRaw === null) {
+    return withTier({
       collateralization: NA,
       ustcPerUst1: NA,
       assetsToLiabilities: NA,
-      ustrBacking,
       incomplete: true,
       includedSymbols: [],
       missingPriceSymbols: symbolsMissingPrice(assets, prices),
       ust1SupplyStatus: 'unknown',
-    };
+    });
   }
 
-  const wholeUst1 = rawToWholeNumber(ust1SupplyRaw, ust1Decimals);
+  const wholeUst1 = rawToWholeNumber(ust1AvailableRaw, ust1Decimals);
   if (!Number.isFinite(wholeUst1) || wholeUst1 < 0) {
-    return {
+    return withTier({
       collateralization: NA,
       ustcPerUst1: NA,
       assetsToLiabilities: NA,
-      ustrBacking,
       incomplete: true,
       includedSymbols: [],
       missingPriceSymbols: symbolsMissingPrice(assets, prices),
       ust1SupplyStatus: 'unknown',
-    };
+    });
   }
+
+  const { includedSymbols, missingPriceSymbols, assetsUsd, pricedOk } = sumCrNumerator(assets, prices);
+  const incomplete = missingPriceSymbols.length > 0 || !pricedOk;
 
   if (wholeUst1 === 0) {
-    return {
+    return withTier({
       collateralization: Number.POSITIVE_INFINITY,
       ustcPerUst1: Number.POSITIVE_INFINITY,
       assetsToLiabilities: Number.POSITIVE_INFINITY,
-      ustrBacking,
-      incomplete: false,
-      includedSymbols: [],
-      missingPriceSymbols: [],
+      incomplete,
+      includedSymbols,
+      missingPriceSymbols,
       ust1SupplyStatus: 'zero',
-    };
+    });
   }
 
+  const wholeUstc = rawToWholeNumber(ustcBalanceRaw, ustcDecimals);
+  const ustcPerUst1 = Number.isFinite(wholeUstc) ? wholeUstc / wholeUst1 : NA;
+
+  if (incomplete || !Number.isFinite(assetsUsd)) {
+    return withTier({
+      collateralization: NA,
+      ustcPerUst1,
+      assetsToLiabilities: NA,
+      incomplete: true,
+      includedSymbols,
+      missingPriceSymbols,
+      ust1SupplyStatus: 'positive',
+    });
+  }
+
+  return withTier({
+    collateralization: (assetsUsd / wholeUst1) * 100,
+    ustcPerUst1,
+    assetsToLiabilities: assetsUsd / wholeUst1,
+    incomplete: false,
+    includedSymbols,
+    missingPriceSymbols,
+    ust1SupplyStatus: 'positive',
+  });
+}
+
+function sumCrNumerator(
+  assets: RatioAssetInput[],
+  prices: Record<string, number>
+): {
+  includedSymbols: string[];
+  missingPriceSymbols: string[];
+  assetsUsd: number;
+  pricedOk: boolean;
+} {
   const includedSymbols: string[] = [];
   const missingPriceSymbols: string[] = [];
   let assetsUsd = 0;
-  let pricedCount = 0;
 
   for (const asset of assets) {
     if (asset.crUsd === undefined && asset.balanceRaw <= 0n) continue;
 
     if (asset.crUsd === null) {
-      if (asset.balanceRaw > 0n) missingPriceSymbols.push(asset.symbol);
+      missingPriceSymbols.push(asset.symbol);
       continue;
     }
     if (typeof asset.crUsd === 'number') {
@@ -118,12 +163,8 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
         if (asset.balanceRaw > 0n) missingPriceSymbols.push(asset.symbol);
         continue;
       }
-      if (asset.crUsd === 0 && asset.balanceRaw <= 0n) continue;
       assetsUsd += asset.crUsd;
-      if (asset.crUsd > 0) {
-        includedSymbols.push(asset.symbol);
-        pricedCount += 1;
-      }
+      if (asset.crUsd > 0) includedSymbols.push(asset.symbol);
       continue;
     }
 
@@ -140,35 +181,13 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
     }
     assetsUsd += whole * price;
     includedSymbols.push(asset.symbol);
-    pricedCount += 1;
-  }
-
-  const incomplete = missingPriceSymbols.length > 0 || pricedCount === 0;
-  const wholeUstc = rawToWholeNumber(ustcBalanceRaw, ustcDecimals);
-  const ustcPerUst1 = Number.isFinite(wholeUstc) ? wholeUstc / wholeUst1 : NA;
-
-  if (pricedCount === 0 || !Number.isFinite(assetsUsd)) {
-    return {
-      collateralization: NA,
-      ustcPerUst1,
-      assetsToLiabilities: NA,
-      ustrBacking,
-      incomplete: true,
-      includedSymbols,
-      missingPriceSymbols,
-      ust1SupplyStatus: 'positive',
-    };
   }
 
   return {
-    collateralization: (assetsUsd / wholeUst1) * 100,
-    ustcPerUst1,
-    assetsToLiabilities: assetsUsd / wholeUst1,
-    ustrBacking,
-    incomplete,
     includedSymbols,
     missingPriceSymbols,
-    ust1SupplyStatus: 'positive',
+    assetsUsd,
+    pricedOk: Number.isFinite(assetsUsd) && assetsUsd >= 0,
   };
 }
 
@@ -176,7 +195,7 @@ function symbolsMissingPrice(assets: RatioAssetInput[], prices: Record<string, n
   return assets
     .filter((asset) => {
       if (asset.balanceRaw <= 0n && asset.crUsd === undefined) return false;
-      if (asset.crUsd === null) return asset.balanceRaw > 0n;
+      if (asset.crUsd === null) return true;
       if (typeof asset.crUsd === 'number') return !Number.isFinite(asset.crUsd) || asset.crUsd < 0;
       return asset.balanceRaw > 0n && !isValidPositivePrice(prices[asset.symbol]);
     })

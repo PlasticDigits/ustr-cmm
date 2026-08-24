@@ -12,7 +12,12 @@ export function TreasuryPage() {
   const { treasuryData, isLoading, error } = useTreasury();
   const scanner = NETWORKS[DEFAULT_NETWORK].scanner;
   const contracts = CONTRACTS[DEFAULT_NETWORK];
-  const emptyIssuance = { minted: BigInt(0), burned: BigInt(0), supply: BigInt(0) };
+  const emptyIssuance = {
+    outstanding: BigInt(0),
+    cmmOwned: BigInt(0),
+    availableSupply: BigInt(0),
+    inventoryKnown: false,
+  };
 
   return (
     <>
@@ -24,8 +29,8 @@ export function TreasuryPage() {
           {' '}Reserves
         </h2>
         <p className="text-gray-400 max-w-2xl mx-auto text-base md:text-lg">
-          Transparent view of all treasury assets backing UST1 and USTR tokens.
-          Track collateralization ratios and token issuance in real-time.
+          Transparent view of treasury assets backing UST1. Collateralization uses
+          non-protocol assets over UST1 available supply (outstanding minus CMM-owned).
         </p>
       </div>
 
@@ -43,8 +48,9 @@ export function TreasuryPage() {
         />
         {Object.values(treasuryData?.assets ?? {}).some((a) => a.kind === 'lp') && (
           <p className="text-xs text-gray-500 mt-3">
-            Protocol LP rows use reserve NAV (share of both sides). cLUNC/cUSTC legs are shown in USD
-            but omitted from collateralization — native LUNC/USTC in treasury already count.
+            Protocol LP rows use reserve NAV (share of both sides). UST1, USTR, cLUNC, and cUSTC
+            legs are shown in USD but omitted from collateralization — they are not CR assets.
+            Native LUNC/USTC still count.
           </p>
         )}
       </div>
@@ -58,7 +64,7 @@ export function TreasuryPage() {
             decimals={6}
             gradient="from-emerald-500/20 to-teal-500/20"
             isLoading={isLoading}
-            lifetimeUnknown={treasuryData?.issuanceLifetimeUnknown ?? true}
+            isCrDenominator
             explorerUrl={contracts.ust1Token ? `${scanner}/address/${contracts.ust1Token}` : undefined}
           />
         </div>
@@ -85,7 +91,6 @@ export function TreasuryPage() {
             decimals={6}
             gradient="from-yellow-500/20 to-orange-500/20"
             isLoading={isLoading && treasuryData?.cLuncIssuance === undefined}
-            lifetimeUnknown
             explorerUrl={contracts.cLunc ? `${scanner}/address/${contracts.cLunc}` : undefined}
           />
         </div>
@@ -98,14 +103,13 @@ export function TreasuryPage() {
             decimals={6}
             gradient="from-blue-500/20 to-cyan-500/20"
             isLoading={isLoading && treasuryData?.cUstcIssuance === undefined}
-            lifetimeUnknown
             explorerUrl={contracts.cUstc ? `${scanner}/address/${contracts.cUstc}` : undefined}
           />
         </div>
       </div>
       <p className="text-xs text-gray-500 -mt-6 mb-8 md:mb-10">
-        cLUNC and cUSTC are wrapped native outstanding supply (informational).
-        They are not extra UST1 collateral — treasury already counts native LUNC/USTC.
+        cLUNC and cUSTC available supply is informational. They are not extra UST1
+        collateral — treasury already counts native LUNC/USTC, and wrap legs are omitted from CR.
       </p>
 
       <div className="animate-fade-in-up stagger-5">

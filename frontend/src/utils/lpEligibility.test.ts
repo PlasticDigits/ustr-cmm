@@ -67,9 +67,9 @@ describe('classifyLpLeg', () => {
     expect(classifyLpLeg({ symbol: 'vFDUSD', address: pins.vfdusd }, known)).toBe('other');
   });
 
-  it('CR eligibility: UST1/USTR/other yes; wrap/unknown no', () => {
-    expect(isCrEligibleLeg('ust1')).toBe(true);
-    expect(isCrEligibleLeg('ustr')).toBe(true);
+  it('CR eligibility: other only — ust1/ustr/wrap/unknown are out (#16)', () => {
+    expect(isCrEligibleLeg('ust1')).toBe(false);
+    expect(isCrEligibleLeg('ustr')).toBe(false);
     expect(isCrEligibleLeg('other')).toBe(true);
     expect(isCrEligibleLeg('wrap')).toBe(false);
     expect(isCrEligibleLeg('unknown')).toBe(false);

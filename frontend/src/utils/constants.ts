@@ -170,15 +170,15 @@ export const VFDUSD_ORACLE = {
 export const TREASURY_HOLDING_SKIP_SYMBOLS = ['USTR', 'UST1', 'CLUNC', 'CUSTC'] as const;
 
 /**
- * 1 UST1 = $1 liability (ECONOMICS / #11). LP UST1 legs use this for CR and display —
- * never a DEX UST1 print (#14).
+ * 1 UST1 = $1 liability unit (ECONOMICS / #11). Used for LP **display** NAV of a UST1
+ * leg only — never a DEX UST1 print, and never a CR numerator input (#16).
  */
 export const UST1_LIABILITY_USD = 1;
 
 /** DEX ids that may appear on tokenlist `type: "lp"` pool.dex. Unknown → fail closed. */
 export const SUPPORTED_LP_DEXES = ['cl8y', 'garuda', 'terraswap', 'terraport'] as const;
 
-/** ECONOMICS.md CR color tiers (percent). */
+/** ECONOMICS.md / treasury-page CR color tiers (percent). See `crTiers.ts`. */
 export const CR_TIERS = {
   redBelow: 95,
   yellowBelow: 110,

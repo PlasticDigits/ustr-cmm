@@ -1,9 +1,11 @@
 /**
  * Treasury data types for USTR CMM
- * 
+ *
  * These types define the structure of treasury balance data, token issuance metrics,
  * and financial ratios for the treasury contract.
  */
+
+import type { CrColorTier } from '../utils/crTiers';
 
 /**
  * Represents an asset in the treasury with balance and display information
@@ -23,11 +25,11 @@ export interface TreasuryAsset {
   iconColor: string;
   /** `lp` = allowlisted protocol pair share (#14). Default spot token. */
   kind?: 'spot' | 'lp';
-  /** Full reserve NAV USD for display. null = unpriced / failed pool. */
+  /** Full reserve NAV USD for display (may include protocol legs). null = unpriced / failed pool. */
   displayUsd?: number | null;
-  /** CR numerator USD (wrap legs haircut). null = omit from CR. */
+  /** CR numerator USD (`other` legs only). null = omit from CR / fail closed. */
   crUsd?: number | null;
-  /** Wrap symbols shown in NAV but excluded from CR. */
+  /** Protocol / wrap symbols shown in NAV but excluded from CR (#16). */
   haircutLegs?: string[];
   pairLabel?: string;
   /** Both sides of an LP pair, used for overlapping icons. */
@@ -40,61 +42,59 @@ export interface TreasuryAsset {
 }
 
 /**
- * Token issuance metrics tracking minted, burned, and circulating supply
+ * Outstanding vs CMM-owned vs available supply (#16).
+ * CW20 has no lifetime mint/burn counters — do not invent burned.
  */
 export interface TokenIssuance {
-  /** Total tokens minted */
-  minted: bigint;
-  /** Total tokens burned */
-  burned: bigint;
-  /** Circulating supply (minted - burned) */
-  supply: bigint;
+  /** CW20 `token_info.total_supply` */
+  outstanding: bigint;
+  /** Treasury spot + allowlisted LP claims */
+  cmmOwned: bigint;
+  /** outstanding − cmmOwned (clamped to 0 when uncertified) */
+  availableSupply: bigint;
+  /** False when outstanding, spot, or LP claims could not be certified */
+  inventoryKnown: boolean;
 }
 
 /**
  * Financial ratios for treasury health metrics
  *
  * collateralization / ustcPerUst1 / assetsToLiabilities:
- * - Infinity only when UST1 token_info succeeded and total_supply === 0
- * - NaN when UST1 supply is unknown (query failed) or CR cannot be computed
- * - finite percent / multiple when supply > 0
+ * - Infinity only when UST1 available-supply queries succeeded and available === 0
+ * - NaN when available supply is unknown or CR cannot be certified
+ * - finite percent / multiple when available > 0 and every CR price is present
  */
 export interface TreasuryRatios {
-  /** Collateralization percentage (e.g., 150 means 150% backed). NaN → N/A, Infinity → ∞ */
+  /** Collateralization percentage (e.g., 150 means 150% backed). NaN → hidden, Infinity → ∞ */
   collateralization: number;
-  /** USTC backing per UST1 token */
+  /** Native USTC per **available** UST1 */
   ustcPerUst1: number;
-  /** Total priced assets USD / outstanding UST1 (same ratio as CR, shown as × not %) */
+  /** Priced non-protocol assets USD / available UST1 (same ratio as CR, shown as × not %) */
   assetsToLiabilities: number;
-  /** Assets backing per USTR token */
-  ustrBacking: number;
-  /** True when some non-zero treasury balances were omitted from the CR numerator */
+  /** True when a CR-relevant price or inventory input is missing */
   incomplete: boolean;
+  /** True only when available supply is known and every CR-relevant price is present */
+  pricesReady: boolean;
   /** Symbols that entered assetsUsd */
   includedSymbols: string[];
-  /** Non-zero balances without a valid USD price */
+  /** Non-zero CR-relevant balances without a valid USD price */
   missingPriceSymbols: string[];
-  /** UST1 supply query outcome */
+  /** UST1 available-supply query outcome */
   ust1SupplyStatus: 'zero' | 'positive' | 'unknown';
+  /** Named ECONOMICS band; null when prices are not ready */
+  tier: CrColorTier | null;
 }
 
 /**
  * Complete treasury data structure containing all assets, issuances, and ratios
  */
 export interface TreasuryData {
-  /** Assets in the treasury keyed by denomination */
+  /** Assets in the treasury keyed by denomination (raw protocol tokens never appear) */
   assets: Record<string, TreasuryAsset>;
-  /** UST1 token issuance metrics (circulating = CW20 total_supply) */
   ust1Issuance: TokenIssuance;
-  /** USTR token issuance metrics */
   ustrIssuance: TokenIssuance;
-  /** Wrap-token outstanding supply (informational — not CR collateral) */
   cLuncIssuance: TokenIssuance | null;
   cUstcIssuance: TokenIssuance | null;
-  /** True when minted/burned are not lifetime counters (CW20 has no cumulative mint/burn) */
-  issuanceLifetimeUnknown: boolean;
-  /** Financial ratios and health metrics */
   ratios: TreasuryRatios;
-  /** Timestamp when the data was last updated */
   lastUpdated: Date;
 }
