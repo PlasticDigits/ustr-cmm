@@ -1,11 +1,12 @@
 /**
- * Protocol-LP holding + CR-leg rules (#14).
+ * Protocol-LP holding + CR-leg rules (#14, revised by #16).
  *
  * Invariants:
  * - Raw UST1 / USTR / cLUNC / cUSTC are never treasury holdings (exact symbol or pinned address).
  * - `type: "lp"` is never skipped by symbol substring (UST1-USTR is not UST1).
- * - Wrap haircut applies only to pinned cLUNC / cUSTC addresses — not a lookalike symbol.
- * - UST1 LP leg CR unit is $1 (liability), never a DEX print.
+ * - Wrap / protocol haircut applies only to pinned addresses — not a lookalike symbol.
+ * - CR-eligible LP legs are `other` only. ust1 / ustr / wrap / unknown are out of `crUsd`.
+ * - UST1 LP leg display unit is $1 (liability), never a DEX print — not a CR asset (#16).
  */
 
 import {
@@ -77,12 +78,17 @@ export function classifyLpLeg(
 }
 
 export function isCrEligibleLeg(kind: LpLegKind): boolean {
-  return kind === 'ust1' || kind === 'ustr' || kind === 'other';
+  return kind === 'other';
+}
+
+export function isProtocolHaircutLeg(kind: LpLegKind): boolean {
+  return kind === 'ust1' || kind === 'ustr' || kind === 'wrap';
 }
 
 /**
- * USD for one LP leg. UST1 is always $1. Wraps use native LUNC/USTC prints for display.
+ * USD for one LP leg (display NAV). UST1 is always $1. Wraps use native LUNC/USTC prints.
  * vFDUSD / USTR / others come from the price map — never invented.
+ * UST1 $1 is **not** a CR numerator input (#16).
  */
 export function resolveLpLegUsd(
   kind: LpLegKind,

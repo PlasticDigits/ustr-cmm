@@ -1,16 +1,16 @@
 /**
- * Reserve NAV for treasury LP shares (#14).
+ * Reserve NAV for treasury LP shares (#14, CR haircut revised by #16).
  *
  * share claim_i = floor(reserve_i * lp_balance / total_share)
- * displayUsd    = Σ claim_i * usd_i   (all priced legs)
- * crUsd         = Σ claim_i * usd_i   for CR-eligible legs only
+ * displayUsd    = Σ claim_i * usd_i   (all priced legs, including protocol)
+ * crUsd         = Σ claim_i * usd_i   for `other` legs only (LUNC, USTC, ALPHA, vFDUSD, …)
  *
- * Fail closed: total_share == 0, lp_balance > total_share, non-finite wholes.
- * Unpriced CR-eligible leg → crUsd = null (omit from CR). Never treat missing USD as $0 or $1.
+ * Fail closed: total_share == 0, lp_balance > total_share, unknown leg, non-finite wholes.
+ * Unpriced CR-eligible (`other`) leg → crUsd = null. Never treat missing USD as $0 or $1.
  */
 
 import { isValidPositivePrice, rawToWholeNumber } from './decimals';
-import { isCrEligibleLeg, type LpLegKind } from './lpEligibility';
+import { isCrEligibleLeg, isProtocolHaircutLeg, type LpLegKind } from './lpEligibility';
 
 export interface LpNavLegInput {
   symbol: string;
@@ -32,7 +32,8 @@ export type LpNavFailReason =
   | 'over-share'
   | 'bad-legs'
   | 'bad-reserve'
-  | 'unpriced-cr-leg';
+  | 'unpriced-cr-leg'
+  | 'unknown-leg';
 
 export interface LpNavResult {
   ok: boolean;
@@ -128,9 +129,15 @@ export function computeLpNav(args: ComputeLpNavArgs): LpNavResult {
     }
     const claimRaw = (leg.amountRaw * lpBalance) / totalShare;
     const whole = rawToWholeNumber(claimRaw, leg.decimals);
+    if (leg.kind === 'unknown') {
+      return fail('unknown-leg', {
+        haircutLegs,
+        missingPriceLegs: [...missingPriceLegs, leg.symbol],
+      });
+    }
     const crEligible = isCrEligibleLeg(leg.kind);
     if (crEligible) crEligibleCount += 1;
-    if (leg.kind === 'wrap') haircutLegs.push(leg.symbol);
+    if (isProtocolHaircutLeg(leg.kind)) haircutLegs.push(leg.symbol);
 
     if (!Number.isFinite(whole) || whole < 0 || !isValidPositivePrice(leg.usd)) {
       missingPriceLegs.push(leg.symbol);

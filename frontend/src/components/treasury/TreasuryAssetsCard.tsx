@@ -239,9 +239,11 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                       )}
                     </div>
                   )}
-                  {asset.kind === 'lp' && asset.haircutLegs && asset.haircutLegs.length > 0 && asset.crUsd !== null && asset.crUsd !== undefined && (
-                    <div className="text-[10px] text-gray-500 truncate" title="Wrap receipts are already backed by native LUNC/USTC in treasury">
-                      CR counts {formatUsd(asset.crUsd)} ({asset.haircutLegs.join(', ')} omitted)
+                  {asset.kind === 'lp' && asset.haircutLegs && asset.haircutLegs.length > 0 && (
+                    <div className="text-[10px] text-gray-500 truncate" title="Protocol tokens (UST1, USTR, wraps) are not CR assets">
+                      {asset.crUsd !== null && asset.crUsd !== undefined
+                        ? `CR counts ${formatUsd(asset.crUsd)} (${asset.haircutLegs.join(', ')} omitted)`
+                        : `${asset.haircutLegs.join(', ')} omitted from CR`}
                     </div>
                   )}
                   {asset.kind === 'lp' && asset.navIncomplete && (

@@ -1,23 +1,10 @@
 import { Card, CardContent } from '../common/Card';
 import { TreasuryRatios } from '../../types/treasury';
-import { CR_TIERS } from '../../utils/constants';
+import { CR_TIER_COPY, PRICES_NOT_LOADED_MESSAGE, crTierTextClass } from '../../utils/crTiers';
 
 interface RatiosCardProps {
   ratios: TreasuryRatios;
   isLoading?: boolean;
-}
-
-/**
- * ECONOMICS.md tiers: RED &lt;95, YELLOW 95–110, GREEN 110–190, BLUE &gt;190.
- * ∞ (successful zero UST1 supply) is the healthiest state, not a color-band value.
- */
-function getCollateralColor(ratio: number): string {
-  if (Number.isNaN(ratio)) return 'text-gray-400';
-  if (!Number.isFinite(ratio)) return 'text-emerald-400';
-  if (ratio < CR_TIERS.redBelow) return 'text-red-400';
-  if (ratio < CR_TIERS.yellowBelow) return 'text-amber-400';
-  if (ratio <= CR_TIERS.greenAtMost) return 'text-emerald-400';
-  return 'text-sky-400';
 }
 
 function formatRatio(value: number | undefined, decimals: number = 2): string {
@@ -41,21 +28,20 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
     collateralization,
     ustcPerUst1,
     assetsToLiabilities,
-    ustrBacking,
-    incomplete,
-    includedSymbols,
-    missingPriceSymbols,
+    pricesReady,
     ust1SupplyStatus,
+    tier,
   } = ratios;
 
-  const collateralColor = getCollateralColor(collateralization);
+  const showRatios = !isLoading && pricesReady && ust1SupplyStatus !== 'unknown' && tier !== null;
+  const collateralColor = crTierTextClass(tier);
+  const copy = tier ? CR_TIER_COPY[tier] : null;
   const collateralValue = formatCollateralization(collateralization);
   const ustcPerUst1Value = formatRatio(ustcPerUst1);
   const assetsToLiabilitiesDisplay = (() => {
     const v = formatRatio(assetsToLiabilities);
     return v === 'N/A' || v === '∞' ? v : `${v}x`;
   })();
-  const ustrBackingValue = formatRatio(ustrBacking);
 
   return (
     <Card className="h-full">
@@ -70,66 +56,58 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
           <h3 className="text-lg font-semibold text-white">Key Ratios</h3>
         </div>
 
-        {incomplete && !isLoading && ust1SupplyStatus !== 'zero' && (
-          <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-200/90 text-xs">
-            Collateralization is <span className="font-semibold">incomplete</span>
-            {includedSymbols.length > 0
-              ? ` — includes ${includedSymbols.join(', ')}`
-              : ' — no priced treasury assets yet'}
-            {missingPriceSymbols.length > 0 && (
-              <>. Unpriced balances omitted (not treated as $0): {missingPriceSymbols.join(', ')}.</>
+        {!showRatios ? (
+          <p className="text-sm text-gray-400 py-6 text-center">{PRICES_NOT_LOADED_MESSAGE}</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
+                <p className="text-sm text-gray-400 mb-1">Collateralization</p>
+                <p className={`text-2xl font-mono-numbers font-bold ${collateralColor}`}>
+                  {collateralValue}
+                </p>
+                {copy && (
+                  <p className={`mt-1 text-xs font-semibold tracking-wide ${collateralColor}`}>
+                    {copy.name}
+                  </p>
+                )}
+              </div>
+
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
+                <p className="text-sm text-gray-400 mb-1">USTC per available UST1</p>
+                <p className="text-2xl font-mono-numbers font-bold text-white">
+                  {ustcPerUst1Value}
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
+                <p className="text-sm text-gray-400 mb-1">Assets/Liabilities</p>
+                <p className="text-2xl font-mono-numbers font-bold text-white">
+                  {assetsToLiabilitiesDisplay}
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
+                <p className="text-sm text-gray-400 mb-1">System state</p>
+                <p className={`text-2xl font-bold ${collateralColor}`}>
+                  {copy?.system}
+                </p>
+              </div>
+            </div>
+
+            {copy && (
+              <ul className="mt-4 space-y-1.5 text-sm text-gray-300">
+                <li>{copy.swap}</li>
+                <li>{copy.rewards}</li>
+                <li>{copy.system}</li>
+              </ul>
             )}
-            {ust1SupplyStatus === 'unknown' && (
-              <> UST1 circulating supply is unavailable, so CR is N/A (not ∞).</>
-            )}
-          </div>
+            <p className="mt-3 text-xs text-gray-500">
+              Status display for intended swap / staking-reward bands. This page does not change
+              on-chain mint, swap, or staking gates.
+            </p>
+          </>
         )}
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
-            <p className="text-sm text-gray-400 mb-1">Collateralization</p>
-            <p className={`text-2xl font-mono-numbers font-bold ${collateralColor}`}>
-              {isLoading ? (
-                <span className="inline-block w-16 h-7 bg-white/10 rounded animate-pulse" />
-              ) : (
-                collateralValue
-              )}
-            </p>
-          </div>
-          
-          <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
-            <p className="text-sm text-gray-400 mb-1">USTC per UST1</p>
-            <p className="text-2xl font-mono-numbers font-bold text-white">
-              {isLoading ? (
-                <span className="inline-block w-16 h-7 bg-white/10 rounded animate-pulse" />
-              ) : (
-                ustcPerUst1Value
-              )}
-            </p>
-          </div>
-          
-          <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
-            <p className="text-sm text-gray-400 mb-1">Assets/Liabilities</p>
-            <p className="text-2xl font-mono-numbers font-bold text-white">
-              {isLoading ? (
-                <span className="inline-block w-16 h-7 bg-white/10 rounded animate-pulse" />
-              ) : (
-                assetsToLiabilitiesDisplay
-              )}
-            </p>
-          </div>
-          
-          <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
-            <p className="text-sm text-gray-400 mb-1">USTR Backing</p>
-            <p className="text-2xl font-mono-numbers font-bold text-white">
-              {isLoading ? (
-                <span className="inline-block w-16 h-7 bg-white/10 rounded animate-pulse" />
-              ) : (
-                ustrBackingValue
-              )}
-            </p>
-          </div>
-        </div>
       </CardContent>
     </Card>
   );

@@ -41,7 +41,7 @@ The USTR CMM system consists of smart contracts that work together to implement 
 │  ┌──────────────┐     LIVE (ust1-window)                           │
 │  │  UST1 TOKEN  │     Collateralized unstablecoin                  │
 │  │  (CW20)      │     minted/burned vs treasury vFDUSD             │
-│  └──────────────┘     CR = priced treasury USD / outstanding UST1  │
+│  └──────────────┘     CR = non-protocol USD / UST1 available supply│
 │                                                                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
@@ -123,7 +123,7 @@ Treasury is a passive custodian for swap USTC; it does not participate in swap e
 
 **Key Functions**:
 - Mint / burn via ust1-window (vFDUSD deposit → mint; redeem → burn)
-- Public Treasury page shows circulating + CR (frontend; not an on-chain CR contract)
+- Public Treasury page shows available supply + CR (frontend; not an on-chain CR contract)
 
 **Dependencies**:
 - Treasury (collateral custody, including bridged vFDUSD)
@@ -132,7 +132,7 @@ Treasury is a passive custodian for swap USTC; it does not participate in swap e
 
 **Decimal Handling**: The system uses each token's on-chain decimal configuration for CR calculations, ensuring oracle prices match regardless of decimal count (6 for native `uusd` / UST1 / vFDUSD, 18 for USTR). Frontend splits bigint before JS `Number` — see [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md).
 
-**Do not double-count wraps:** cLUNC / cUSTC outstanding is informational; native LUNC / USTC in treasury are the CR assets.
+**Do not double-count wraps or protocol tokens:** cLUNC / cUSTC available supply is informational; native LUNC / USTC in treasury are the CR assets. UST1 / USTR (spot or LP legs) are not CR assets — see [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16) / [skills/frontend-treasury-available-supply](../skills/frontend-treasury-available-supply/SKILL.md).
 
 ## Data Flow
 
@@ -338,10 +338,11 @@ Key frontend examples in `frontend-dapp/`:
 The SSoT Dashboard is a critical system component that serves as the authoritative reference for CMM state:
 
 **Core Features** (Treasury page — live subset; full SSoT dashboard is still a later phase):
-- **CR Ratios Display**: Collateralization = priced treasury assets USD / UST1 circulating × 100. `∞` only when UST1 `token_info` succeeded and supply is 0; query failure is `N/A`. Incomplete prices are labeled, not treated as $0. See [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md).
-- **Current Tier Indicator**: ECONOMICS bands RED `<95` / YELLOW `95–110` / GREEN `110–190` / BLUE `>190`
-- **Basket of Assets**: Treasury holdings including vFDUSD; USD from CEX/DEX plus session-once ust1-oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md)). Allowlisted protocol LP shares (`UST1|USTR|cUSTC|cLUNC` pairs) use reserve NAV, not LP-mint simulate-swap ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14) / [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md)).
-- **Wrap supplies**: cLUNC / cUSTC circulating (not extra collateral). Wrap **legs inside an LP** are shown in USD but omitted from CR (native already counted).
+- **CR Ratios Display**: Collateralization = (priced non-protocol spot USD + LP `other` NAV) / UST1 **available supply** × 100. Available = outstanding − CMM-owned (treasury spot + allowlisted LP claims). `∞` only when those queries succeeded and available is 0; otherwise Key Ratios is hidden. See [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16) / [skills/frontend-treasury-available-supply](../skills/frontend-treasury-available-supply/SKILL.md) (revises [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md)).
+- **Current Tier Indicator**: ECONOMICS bands RED `<95` / YELLOW `[95, 110)` / GREEN `[110, 190]` / BLUE `>190` (including `∞`). Treasury-page copy is swap + staking-reward **status display**, not on-chain enforcement.
+- **Price gate**: if any CR-relevant price is missing or still loading, Key Ratios shows only `prices not loaded, cannot display key ratios`.
+- **Basket of Assets**: Treasury holdings including vFDUSD; USD from CEX/DEX plus session-once ust1-oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md)). Allowlisted protocol LP shares (`UST1|USTR|cUSTC|cLUNC` pairs) use reserve NAV, not LP-mint simulate-swap ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14) / [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md)). UST1 / USTR / wrap **legs** are display-only.
+- **Issuance cards**: `+ Outstanding − CMM-owned = Available Supply` for UST1, USTR, cLUNC, cUSTC. Raw protocol tokens never appear as asset rows.
 - **Legal clickwrap**: connected wallets must accept CL8Y terms for `ust1cmm.com` before swap/register ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12) / [skills/frontend-legal-clickwrap](../skills/frontend-legal-clickwrap/SKILL.md))
 - **Wallet connect**: Trust Wallet and other Keplr-compatible in-app browsers use `WalletName.KEPLR` (`window.keplr` or `window.trustwallet.cosmos`). See [#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4) / [docs/WALLETS.md](./WALLETS.md) / [skills/frontend-keplr-compatible-wallets](../skills/frontend-keplr-compatible-wallets/SKILL.md).
 

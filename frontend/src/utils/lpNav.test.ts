@@ -26,7 +26,7 @@ function ustrLeg(whole: number, usd: number | null): LpNavLegInput {
 }
 
 describe('computeLpNav', () => {
-  it('UST1/USTR 10% of 1000+2000 @ $1/$0.50 → display=cr=200', () => {
+  it('UST1/USTR 10% of 1000+2000 @ $1/$0.50 → display 200, crUsd 0', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
@@ -34,13 +34,13 @@ describe('computeLpNav', () => {
     });
     expect(result.ok).toBe(true);
     expect(result.displayUsd).toBeCloseTo(200);
-    expect(result.crUsd).toBeCloseTo(200);
-    expect(result.haircutLegs).toEqual([]);
-    expect(result.includedLegs).toEqual(['UST1', 'USTR']);
+    expect(result.crUsd).toBe(0);
+    expect(result.haircutLegs).toEqual(['UST1', 'USTR']);
+    expect(result.includedLegs).toEqual([]);
     expect(result.incomplete).toBe(false);
   });
 
-  it('UST1/cUSTC wrap haircut: display 101, crUsd 100', () => {
+  it('UST1/cUSTC: display 101, crUsd 0 (both protocol)', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
@@ -56,9 +56,9 @@ describe('computeLpNav', () => {
       ],
     });
     expect(result.displayUsd).toBeCloseTo(101);
-    expect(result.crUsd).toBeCloseTo(100);
-    expect(result.haircutLegs).toEqual(['cUSTC']);
-    expect(result.includedLegs).toEqual(['UST1']);
+    expect(result.crUsd).toBe(0);
+    expect(result.haircutLegs).toEqual(['UST1', 'cUSTC']);
+    expect(result.includedLegs).toEqual([]);
     expect(result.incomplete).toBe(false);
   });
 
@@ -79,7 +79,7 @@ describe('computeLpNav', () => {
     expect(result.includedLegs).toEqual(['LUNC']);
   });
 
-  it('USTR/LUNC: both legs in CR', () => {
+  it('USTR/LUNC: CR is LUNC only (USTR out — #16)', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
@@ -94,9 +94,30 @@ describe('computeLpNav', () => {
         },
       ],
     });
-    expect(result.crUsd).toBeCloseTo(110); // 100 USTR + 10 LUNC
-    expect(result.includedLegs).toEqual(['USTR', 'LUNC']);
-    expect(result.haircutLegs).toEqual([]);
+    expect(result.crUsd).toBeCloseTo(10);
+    expect(result.includedLegs).toEqual(['LUNC']);
+    expect(result.haircutLegs).toEqual(['USTR']);
+  });
+
+  it('UST1/vFDUSD: CR is vFDUSD side only', () => {
+    const result = computeLpNav({
+      lpBalance: TEN_PCT,
+      totalShare: SHARE,
+      legs: [
+        ust1Leg(1000),
+        {
+          symbol: 'vFDUSD',
+          amountRaw: 1000n * 1_000_000n,
+          decimals: 6,
+          kind: 'other',
+          usd: 1.22,
+        },
+      ],
+    });
+    expect(result.crUsd).toBeCloseTo(122);
+    expect(result.displayUsd).toBeCloseTo(222);
+    expect(result.includedLegs).toEqual(['vFDUSD']);
+    expect(result.haircutLegs).toEqual(['UST1']);
   });
 
   it('total_share == 0 → fail closed, no NaN USD', () => {
@@ -133,32 +154,32 @@ describe('computeLpNav', () => {
     expect(result.crUsd).toBeNull();
   });
 
-  it('unpriced USTR implies from priced UST1 peer (reserve ratio, not $1)', () => {
+  it('unpriced USTR implies from priced UST1 peer for display only (CR stays 0)', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
       legs: [ust1Leg(1000), ustrLeg(2000, null)],
     });
-    // 1000 UST1 × $1 / 2000 USTR → $0.50; 10% claim → $100 + $100
+    // 1000 UST1 × $1 / 2000 USTR → $0.50; 10% claim → display $200, CR $0
     expect(result.ok).toBe(true);
     expect(result.displayUsd).toBeCloseTo(200);
-    expect(result.crUsd).toBeCloseTo(200);
+    expect(result.crUsd).toBe(0);
     expect(result.incomplete).toBe(false);
-    expect(result.includedLegs).toEqual(['UST1', 'USTR']);
+    expect(result.includedLegs).toEqual([]);
   });
 
-  it('unpriced USTR with unpriced UST1 still fail-closed', () => {
+  it('unpriced USTR with unpriced UST1: display incomplete, CR still 0', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
       legs: [ust1Leg(1000, null), ustrLeg(2000, null)],
     });
-    expect(result.crUsd).toBeNull();
+    expect(result.crUsd).toBe(0);
     expect(result.incomplete).toBe(true);
     expect(result.displayUsd).toBeNull();
   });
 
-  it('unpriced wrap leg: CR still counts UST1, display incomplete', () => {
+  it('unpriced wrap leg: CR is 0 (UST1 also haircut), display incomplete', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
@@ -167,12 +188,12 @@ describe('computeLpNav', () => {
         { symbol: 'cUSTC', amountRaw: 1000n * 1_000_000n, decimals: 6, kind: 'wrap', usd: null },
       ],
     });
-    expect(result.crUsd).toBeCloseTo(100);
+    expect(result.crUsd).toBe(0);
     expect(result.incomplete).toBe(true);
     expect(result.missingPriceLegs).toContain('cUSTC');
   });
 
-  it('unknown unpriced lookalike is not CR-eligible', () => {
+  it('unknown leg on a pinned LP fail-closes CR', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
@@ -181,8 +202,9 @@ describe('computeLpNav', () => {
         { symbol: 'cUSTC', amountRaw: 1000n * 1_000_000n, decimals: 6, kind: 'unknown', usd: null },
       ],
     });
-    expect(result.crUsd).toBeCloseTo(100);
-    expect(result.includedLegs).toEqual(['UST1']);
+    expect(result.crUsd).toBeNull();
+    expect(result.reason).toBe('unknown-leg');
+    expect(result.incomplete).toBe(true);
   });
 
   it('USTR 18dp vs UST1 6dp uses rawToWholeNumber (not Number(bigint))', () => {
@@ -194,19 +216,19 @@ describe('computeLpNav', () => {
     expect(result.displayUsd).toBeCloseTo(200);
   });
 
-  it('huge reserve whole > MAX_SAFE_INTEGER → incomplete, not in CR', () => {
+  it('huge reserve whole > MAX_SAFE_INTEGER on an other leg → crUsd null', () => {
     const huge = (BigInt(Number.MAX_SAFE_INTEGER) + 10n) * 1_000_000n;
     const result = computeLpNav({
       lpBalance: SHARE,
       totalShare: SHARE,
       legs: [
-        { symbol: 'UST1', amountRaw: huge, decimals: 6, kind: 'ust1', usd: 1 },
+        { symbol: 'LUNC', amountRaw: huge, decimals: 6, kind: 'other', usd: 0.0001 },
         ustrLeg(1, 0.5),
       ],
     });
     expect(result.crUsd).toBeNull();
     expect(result.incomplete).toBe(true);
-    expect(result.missingPriceLegs).toContain('UST1');
+    expect(result.missingPriceLegs).toContain('LUNC');
   });
 
   it('not exactly two legs → fail closed', () => {

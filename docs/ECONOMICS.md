@@ -358,7 +358,20 @@ Because UST1 doesn't promise instant redemption at exactly $1, there's no reason
 
 ### Collateralization Ratio Tiers
 
-The system operates in four tiers based on collateralization ratio (CR):
+The 95 / 110 / 190 bands are shared. Two readings:
+
+**Treasury page (live frontend, [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)):** CR = (non-protocol spot USD + LP `other` NAV) / UST1 **available supply**. Key Ratios stay hidden until every CR-relevant price is loaded. Operational copy (status display — contracts do not yet enforce these swap/staking gates):
+
+| Color | CR | UST1 ↔ collateral swap | Staking rewards | System |
+|-------|----|------------------------|-----------------|--------|
+| **RED** | `< 95%` | Cannot swap UST1 for collateral | No new staking rewards | Recovery |
+| **YELLOW** | `95% ≤ CR < 110%` | Can swap UST1 for collateral | No staking rewards | Stable |
+| **GREEN** | `110% ≤ CR ≤ 190%` | Can swap UST1 for collateral | Partial staking rewards issuance | Healthy |
+| **BLUE** | `> 190%` (incl. `∞`) | Can swap UST1 for collateral | Full staking rewards issuance | Optimal |
+
+See [skills/frontend-treasury-available-supply](../skills/frontend-treasury-available-supply/SKILL.md).
+
+**Auction / minting design (this document’s original table):** the on-chain auction machine is **not** the treasury page. Until that machine ships, treat the table below as the intended auction/mint design, not as what `/treasury` claims the chain already does.
 
 | Tier | CR Range | System Behavior | Economic Effect |
 |------|----------|-----------------|-----------------|

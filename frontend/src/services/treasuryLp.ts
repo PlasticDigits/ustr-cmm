@@ -13,6 +13,7 @@ import {
   knownSpotCw20Addresses,
   protocolPins,
 } from '../utils/lpEligibility';
+import { protocolTokenIdFromLeg, type ProtocolTokenId } from '../utils/availableSupply';
 import { parseDexPoolState, type ParsedPoolReserve } from '../utils/lpPoolParse';
 import type { TokenList, TokenListEntry, TokenListPoolAsset } from '../types/tokenlist';
 import { isLpTokenListEntry } from '../types/tokenlist';
@@ -42,6 +43,10 @@ export interface LpChainPosition {
   totalShare: bigint | null;
   legs: LpChainLeg[] | null;
   queryFailed: boolean;
+  /** True when the LP CW20 balance query itself failed (cannot certify CMM-owned). */
+  balanceUnknown: boolean;
+  /** Protocol tokens declared on the tokenlist pin (for CMM-owned fail-closed). */
+  declaredProtocolIds: ProtocolTokenId[];
 }
 
 function reserveKey(r: { address?: string; denom?: string }): string | null {
@@ -87,6 +92,23 @@ function nativeSymbol(denom: string | undefined): string | null {
   return null;
 }
 
+function declaredProtocolIds(
+  declared: TokenListPoolAsset[] | undefined,
+  knownCw20: ReadonlySet<string>
+): ProtocolTokenId[] {
+  if (!declared) return [];
+  const ids = new Set<ProtocolTokenId>();
+  for (const asset of declared) {
+    const kind = classifyLpLeg(
+      { symbol: asset.symbol, address: asset.address, denom: asset.denom },
+      knownCw20
+    );
+    const id = protocolTokenIdFromLeg(kind, asset.address);
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
+
 export async function fetchTreasuryLpPositions(
   tokenList: TokenList,
   treasuryAddress: string
@@ -119,6 +141,8 @@ export async function fetchTreasuryLpPositions(
       gradient: token.gradient,
       iconColor: token.iconColor,
       lpDecimals: token.decimals,
+      declaredProtocolIds: declaredProtocolIds(declared, knownCw20),
+      balanceUnknown: false,
     };
 
     if (
@@ -140,11 +164,18 @@ export async function fetchTreasuryLpPositions(
 
     let lpBalance = 0n;
     try {
-      const bal = await contractService.getTokenBalance(lpAddress, treasuryAddress);
+      const bal = await contractService.getTokenBalanceStrict(lpAddress, treasuryAddress);
       lpBalance = BigInt(bal.balance || '0');
     } catch (error) {
       console.error(`Failed to fetch LP balance ${token.symbol}:`, error);
-      out.push({ ...base, lpBalance: 0n, totalShare: null, legs: null, queryFailed: true });
+      out.push({
+        ...base,
+        lpBalance: 0n,
+        totalShare: null,
+        legs: null,
+        queryFailed: true,
+        balanceUnknown: true,
+      });
       continue;
     }
 

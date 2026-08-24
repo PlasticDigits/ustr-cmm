@@ -939,6 +939,24 @@ class ContractService {
     return result.data;
   }
 
+  /**
+   * CW20 balance that does **not** swallow errors as `0`.
+   * Required for CMM-owned / available-supply (#16): a failed query must be unknown.
+   */
+  async getTokenBalanceStrict(tokenAddress: string, walletAddress: string): Promise<Cw20Balance> {
+    if (!tokenAddress || !walletAddress) {
+      throw new Error('Token or wallet address not configured');
+    }
+    const result = await this.queryContract<{ data: Cw20Balance }>(
+      tokenAddress,
+      { balance: { address: walletAddress } }
+    );
+    if (!result?.data || result.data.balance === undefined || result.data.balance === null) {
+      throw new Error('Malformed balance response');
+    }
+    return result.data;
+  }
+
   async getTokenBalance(tokenAddress: string, walletAddress: string): Promise<Cw20Balance> {
     if (!tokenAddress) {
       console.warn('Token address not configured, returning 0 balance');
