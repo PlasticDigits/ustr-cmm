@@ -1,6 +1,6 @@
 /**
  * Terra Classic wallet integration using cosmes
- * Supports: Station, Keplr, LUNC Dash, Galaxy Station, Leap, Cosmostation
+ * Supports: Station, Keplr (also Trust / other Keplr-compatible injects), LUNC Dash, Galaxy Station, Leap, Cosmostation
  */
 import {
   ConnectedWallet,
@@ -18,6 +18,11 @@ import { MsgExecuteContract } from '@goblinhunt/cosmes/client';
 import { CosmosTxV1beta1Fee as Fee } from '@goblinhunt/cosmes/protobufs';
 import type { UnsignedTx } from '@goblinhunt/cosmes/wallet';
 import { NETWORKS, DEFAULT_NETWORK } from '../utils/constants';
+import {
+  KEPLR_COMPATIBLE_COPY,
+  ensureKeplrCompatibleProvider,
+  isKeplrCompatibleInstalled,
+} from './keplrCompatible';
 
 // Terra Classic gas configuration
 // Terra Classic LCD doesn't support /cosmos/tx/v1beta1/simulate (returns 501),
@@ -81,10 +86,11 @@ export function isStationInstalled(): boolean {
 }
 
 /**
- * Check if Keplr wallet is installed
+ * Check if a Keplr-compatible inject is present (`window.keplr` or
+ * `window.trustwallet.cosmos`). See keplrCompatible.ts / docs/WALLETS.md (#4).
  */
 export function isKeplrInstalled(): boolean {
-  return typeof window !== 'undefined' && !!window.keplr;
+  return isKeplrCompatibleInstalled();
 }
 
 /**
@@ -184,6 +190,10 @@ export async function connectTerraWallet(
     const chainInfo = getChainInfo();
     console.log(`[Wallet] Connecting ${walletName} (${walletType}) to chain ${chainInfo.chainId}`);
 
+    if (walletName === WalletName.KEPLR && !ensureKeplrCompatibleProvider()) {
+      throw new Error(KEPLR_COMPATIBLE_COPY.missingProviderError);
+    }
+
     if (walletType === WalletType.EXTENSION) {
       await suggestTerraClassicChain(walletName);
     }
@@ -229,21 +239,24 @@ export async function connectTerraWallet(
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     
-    // Provide specific error messages
+    if (errorMessage.includes('User rejected') || errorMessage.includes('rejected')) {
+      throw new Error('Connection rejected by user');
+    }
+
+    if (errorMessage === KEPLR_COMPATIBLE_COPY.missingProviderError) {
+      throw error instanceof Error ? error : new Error(errorMessage);
+    }
+
     if (walletName === WalletName.KEPLR) {
       if (errorMessage.includes('not installed') || errorMessage.includes('Keplr')) {
-        throw new Error('Keplr wallet is not installed. Please install the Keplr extension.');
+        throw new Error(KEPLR_COMPATIBLE_COPY.missingProviderError);
       }
     }
-    
+
     if (walletName === WalletName.STATION) {
       if (errorMessage.includes('not installed') || errorMessage.includes('Station')) {
         throw new Error('Station wallet is not installed. Please install the Station extension.');
       }
-    }
-    
-    if (errorMessage.includes('User rejected') || errorMessage.includes('rejected')) {
-      throw new Error('Connection rejected by user');
     }
     
     // Get wallet display name
@@ -608,6 +621,18 @@ declare global {
       providers: {
         keplr: unknown;
       };
+    };
+    trustwallet?: {
+      cosmos?: {
+        enable: (chainId: string) => Promise<void>;
+        getOfflineSigner: (chainId: string) => unknown;
+        experimentalSuggestChain?: (chainInfo: unknown) => Promise<void>;
+      };
+      ethereum?: { isTrust?: boolean };
+    };
+    ethereum?: {
+      isTrust?: boolean;
+      isTrustWallet?: boolean;
     };
   }
 }

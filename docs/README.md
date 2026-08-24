@@ -69,6 +69,16 @@ A comprehensive guide to the economics of the CMM system:
 
 ---
 
+### [WALLETS.md](./WALLETS.md)
+
+**Connecting Terra Classic wallets (Keplr, Trust Wallet, Station)**
+
+Trust Wallet and other mobile Cosmos browsers share the Keplr inject path (`window.keplr` or `window.trustwallet.cosmos`). There is no separate Trust controller.
+
+**Best for**: Users connecting from Trust Wallet’s in-app browser, and frontend agents changing the connect modal ([#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4) / [skills/frontend-keplr-compatible-wallets](../skills/frontend-keplr-compatible-wallets/SKILL.md)).
+
+---
+
 ## Quick Start Guide
 
 **New to USTR CMM?** Start here:
@@ -115,5 +125,5 @@ These documents are maintained alongside the codebase. If you find discrepancies
 
 **Last Updated**: August 2026
 
-Agent playbooks (invariants + pins): [skills/README.md](../skills/README.md) — including frontend vFDUSD oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)), UST1 CR ([#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11)), Legal clickwrap ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12)), and protocol LP NAV ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14)).
+Agent playbooks (invariants + pins): [skills/README.md](../skills/README.md) — including Keplr-compatible / Trust Wallet connect ([#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4)), frontend vFDUSD oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)), UST1 CR ([#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11)), Legal clickwrap ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12)), and protocol LP NAV ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14)).
 

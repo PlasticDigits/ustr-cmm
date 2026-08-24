@@ -343,6 +343,7 @@ The SSoT Dashboard is a critical system component that serves as the authoritati
 - **Basket of Assets**: Treasury holdings including vFDUSD; USD from CEX/DEX plus session-once ust1-oracle ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md)). Allowlisted protocol LP shares (`UST1|USTR|cUSTC|cLUNC` pairs) use reserve NAV, not LP-mint simulate-swap ([#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14) / [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md)).
 - **Wrap supplies**: cLUNC / cUSTC circulating (not extra collateral). Wrap **legs inside an LP** are shown in USD but omitted from CR (native already counted).
 - **Legal clickwrap**: connected wallets must accept CL8Y terms for `ust1cmm.com` before swap/register ([#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12) / [skills/frontend-legal-clickwrap](../skills/frontend-legal-clickwrap/SKILL.md))
+- **Wallet connect**: Trust Wallet and other Keplr-compatible in-app browsers use `WalletName.KEPLR` (`window.keplr` or `window.trustwallet.cosmos`). See [#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4) / [docs/WALLETS.md](./WALLETS.md) / [skills/frontend-keplr-compatible-wallets](../skills/frontend-keplr-compatible-wallets/SKILL.md).
 
 **Why SSoT Matters**:
 - Eliminates reliance on third-party data aggregators that may report incorrectly
