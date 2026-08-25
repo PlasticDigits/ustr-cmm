@@ -81,7 +81,7 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
   // Skeleton loading state
   if (isLoading) {
     return (
-      <Card className="h-full">
+      <Card className="h-full" testId="treasury-assets">
         <CardContent>
           <div className="flex items-center gap-3 mb-5">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
@@ -113,7 +113,7 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
   // Empty state
   if (assetEntries.length === 0) {
     return (
-      <Card className="h-full">
+      <Card className="h-full" testId="treasury-assets">
         <CardContent>
           <div className="flex items-center gap-3 mb-5">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
@@ -140,7 +140,7 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
   }
   
   return (
-    <Card className="h-full">
+    <Card className="h-full" testId="treasury-assets">
       <CardContent>
         <div className="flex items-center gap-3 mb-5">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
@@ -191,6 +191,7 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
             return (
               <div 
                 key={denom}
+                data-testid={`treasury-asset-${asset.displayName}`}
                 className="flex items-center justify-between gap-2 p-4 rounded-xl bg-gradient-to-r from-white/5 to-white/5 border border-white/5 hover:border-white/10 transition-colors group min-w-0"
                 style={{ animationDelay: `${index * 100}ms` }}
               >

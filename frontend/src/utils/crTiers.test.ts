@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CR_TIER_COPY, PRICES_NOT_LOADED_MESSAGE, crColorTier, crTierCopy } from './crTiers';
+import {
+  CR_TIER_COPY,
+  PRICES_NOT_LOADED_MESSAGE,
+  crColorTier,
+  crTierCopy,
+  shouldShowKeyRatios,
+} from './crTiers';
 
 describe('crColorTier', () => {
   it('uses inclusive 95 / 110 / 190 bands; ∞ is BLUE', () => {
@@ -34,5 +40,49 @@ describe('crTierCopy', () => {
 
     expect(CR_TIER_COPY.BLUE.system).toBe('Optimal');
     expect(PRICES_NOT_LOADED_MESSAGE).toBe('prices not loaded, cannot display key ratios');
+  });
+});
+
+describe('shouldShowKeyRatios', () => {
+  it('hides the grid while loading, incomplete, or inventory unknown', () => {
+    expect(
+      shouldShowKeyRatios({
+        isLoading: true,
+        pricesReady: true,
+        ust1SupplyStatus: 'positive',
+        tier: 'BLUE',
+      })
+    ).toBe(false);
+    expect(
+      shouldShowKeyRatios({
+        pricesReady: false,
+        ust1SupplyStatus: 'positive',
+        tier: null,
+      })
+    ).toBe(false);
+    expect(
+      shouldShowKeyRatios({
+        pricesReady: false,
+        ust1SupplyStatus: 'unknown',
+        tier: null,
+      })
+    ).toBe(false);
+  });
+
+  it('shows the named CR only when prices and inventory are certified', () => {
+    expect(
+      shouldShowKeyRatios({
+        pricesReady: true,
+        ust1SupplyStatus: 'positive',
+        tier: 'BLUE',
+      })
+    ).toBe(true);
+    expect(
+      shouldShowKeyRatios({
+        pricesReady: true,
+        ust1SupplyStatus: 'zero',
+        tier: 'BLUE',
+      })
+    ).toBe(true);
   });
 });

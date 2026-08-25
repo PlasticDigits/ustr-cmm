@@ -339,6 +339,7 @@ interface WalletOptionProps {
 function WalletOption({ name, icon, description, available, loading, onClick, disabled }: WalletOptionProps) {
   return (
     <button
+      data-testid={`wallet-option-${name.toLowerCase().replace(/\s+/g, '-')}`}
       onClick={onClick}
       disabled={disabled || !available}
       className={`

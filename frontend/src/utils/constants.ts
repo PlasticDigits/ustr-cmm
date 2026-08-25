@@ -178,6 +178,17 @@ export const UST1_LIABILITY_USD = 1;
 /** DEX ids that may appear on tokenlist `type: "lp"` pool.dex. Unknown → fail closed. */
 export const SUPPORTED_LP_DEXES = ['cl8y', 'garuda', 'terraswap', 'terraport'] as const;
 
+/**
+ * CL8Y indexer catalog (#18). Discovery / pin-diff only — never CR input.
+ * LCD remains source of truth for balances and pool reserves.
+ * `GET /api/v1/traders/{treasury}/positions` may be empty even when treasury
+ * holds LP shares (observed 2026-08-25); do not treat it as a hold signal.
+ */
+export const CL8Y_INDEXER = {
+  pairsUrl: 'https://indexer.dex.cl8y.com/api/v1/pairs',
+  pageLimit: 100,
+} as const;
+
 /** ECONOMICS.md / treasury-page CR color tiers (percent). See `crTiers.ts`. */
 export const CR_TIERS = {
   redBelow: 95,

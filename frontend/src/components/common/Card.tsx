@@ -12,9 +12,17 @@ interface CardProps {
   className?: string;
   variant?: 'default' | 'highlight' | 'glass';
   hover?: boolean;
+  /** Stable hook for Playwright / #18 treasury QA. */
+  testId?: string;
 }
 
-export function Card({ children, className = '', variant = 'default', hover = false }: CardProps) {
+export function Card({
+  children,
+  className = '',
+  variant = 'default',
+  hover = false,
+  testId,
+}: CardProps) {
   const baseStyles = 'rounded-2xl transition-all duration-300';
   
   const variants = {
@@ -28,7 +36,10 @@ export function Card({ children, className = '', variant = 'default', hover = fa
     : '';
 
   return (
-    <div className={`${baseStyles} ${variants[variant]} ${hoverStyles} ${className}`}>
+    <div
+      className={`${baseStyles} ${variants[variant]} ${hoverStyles} ${className}`}
+      data-testid={testId}
+    >
       {variant === 'highlight' && (
         <div className="absolute inset-0 bg-gradient-to-br from-amber-500/5 via-transparent to-orange-500/5 rounded-2xl pointer-events-none" />
       )}

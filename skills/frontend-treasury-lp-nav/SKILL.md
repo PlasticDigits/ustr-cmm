@@ -27,7 +27,7 @@ Treasury may hold DEX LP for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, `cLUNC/xxx`. S
 | cLUNC | `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg` | Wrap; LP leg display only |
 | cUSTC | `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch` | Wrap; LP leg display only |
 
-Pair / LP CW20 addresses are **tokenlist `type: "lp"` pins only**. Do not invent factory results into CR. Garuda / CL8Y LP mint is often **not** the pair (`liquidity_token`). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` — still pin into tokenlist; indexer is not CR input.
+Pair / LP CW20 addresses are **tokenlist `type: "lp"` pins only**. Do not invent factory results into CR. Garuda / CL8Y LP mint is often **not** the pair (`liquidity_token`). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` — still pin into tokenlist; indexer is not CR input. Catalog vs pin + LCD hold check: [frontend-treasury-cl8y-holdings](../frontend-treasury-cl8y-holdings/SKILL.md) / [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18).
 
 Supported dex strings: `cl8y`, `garuda`, `terraswap`, `terraport`. CL8Y LP CW20 decimals are **18** (confirm `token_info`).
 

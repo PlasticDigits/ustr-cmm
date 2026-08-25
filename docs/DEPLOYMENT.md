@@ -521,20 +521,23 @@ terrad tx wasm execute $WRAP_MAPPER \
 - vFDUSD balance + session-once ust1-oracle USD — [skills/frontend-vfdusd-oracle](../skills/frontend-vfdusd-oracle/SKILL.md)
 - UST1 / cLUNC / cUSTC available supply and CR — [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md) / [skills/frontend-treasury-available-supply](../skills/frontend-treasury-available-supply/SKILL.md) / [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)
 - Protocol LP shares (allowlisted `type: "lp"`) — [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md) / [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14)
+- CL8Y catalog vs pins (LCD hold check; indexer is not CR) — [skills/frontend-treasury-cl8y-holdings](../skills/frontend-treasury-cl8y-holdings/SKILL.md) / [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18)
 
 Do **not** add raw UST1 / cLUNC / cUSTC to the treasury-holdings tokenlist loop (liability / wrap receipts). LP rows are a separate `type: "lp"` with pinned pair + LP CW20.
 
-**LP pins (ops):** when a CL8Y / Garuda / Terraswap / Terraport pair exists for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, or `cLUNC/xxx`, add a `type: "lp"` entry (see the skill for the JSON shape). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` (`pair_address` + `lp_token`). Then governance `AddCw20` the **LP CW20** (CL8Y/Garuda: `pair.liquidity_token`, often ≠ pair). Unlisted factory pairs must never enter CR.
+**LP pins (ops):** when a CL8Y / Garuda / Terraswap / Terraport pair exists for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, or `cLUNC/xxx` **and the treasury holds the LP CW20**, add a `type: "lp"` entry (see the skill for the JSON shape). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` (`pair_address` + `lp_token`), then confirm hold with LCD `balance` at the treasury pin (`node frontend/scripts/discover-cl8y-holdings.mjs`). Then governance `AddCw20` the **LP CW20** (CL8Y/Garuda: `pair.liquidity_token`, often ≠ pair). Unlisted factory pairs must never enter CR. Indexer `traders/{treasury}/positions` is **not** a hold signal (was `[]` on 2026-08-25 while LCD showed three LP balances). Live `Cw20Whitelist` is still empty — `AllBalances` is native-only; the UI queries tokenlist pins directly.
 
-**Live CL8Y pins (tokenlist `1.3.2`, queried indexer 2026-08-23):**
+**Live CL8Y pins (tokenlist `1.3.2`, re-queried indexer + LCD 2026-08-25, [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18)):**
 
-| Pair | Pair contract | LP CW20 (18 decimals) |
-|------|---------------|------------------------|
-| UST1/USTR | `terra16vxrh…5hgqy` | `terra1ak8w9…2ty4p` |
-| UST1/cUSTC | `terra1ceprj…cw55f` | `terra1jv6y0…dzdgy` |
-| UST1/SpaceUSD | `terra1xx5t5…hahxy` | `terra1s3jk9…qj7twz` |
+| Pair | Pair contract | LP CW20 (18 decimals) | Treasury hold |
+|------|---------------|------------------------|---------------|
+| UST1/USTR | `terra16vxrh…5hgqy` | `terra1ak8w9…2ty4p` | yes (~97% of pool) |
+| UST1/cUSTC | `terra1ceprj…cw55f` | `terra1jv6y0…dzdgy` | yes (~100%) |
+| UST1/SpaceUSD | `terra1xx5t5…hahxy` | `terra1s3jk9…qj7twz` | yes (~100%) |
 
-UST1/SpaceUSD is held by the treasury (≈100% of pool at pin). Other LP rows appear only when the treasury holds shares. Unrelated indexer gems (EMBER/CORAL/…) stay out of scope.
+**Do not pin** (catalog only, LCD LP balance 0): cLUNC/UST1 (`terra1su536…mm7h4` / `terra1mk3kr…2cagk`), CL8Y-cb/cLUNC (`terra1q5kar…wqvq0` / `terra13rfqc…0jcwu`), cLUNC/cUSTC (`terra15rl8g…szau38` / `terra132uuz…z6tdch`). Unrelated indexer gems (EMBER/CORAL/…) stay out of scope.
+
+Independent CR check: `cd frontend && node scripts/verify-treasury-cr.mjs`.
 
 ### Legal clickwrap (#12)
 

@@ -43,7 +43,7 @@ export function IssuanceCard({
   const inventoryKnown = issuance.inventoryKnown;
 
   return (
-    <Card className="h-full">
+    <Card className="h-full" testId={`issuance-${tokenSymbol.toLowerCase()}`}>
       <CardContent>
         <div className="flex items-center gap-3 mb-5">
           <TokenIcon symbol={tokenSymbol} size="md" gradient={gradient} />

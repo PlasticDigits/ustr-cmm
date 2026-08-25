@@ -8,7 +8,7 @@ description: >-
 
 # Frontend Keplr-compatible wallets / Trust Wallet (#4)
 
-Companion: [#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4). Human docs: [docs/WALLETS.md](../../docs/WALLETS.md).
+Companion: [#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4). Device / inject QA leftover: [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18). Human docs: [docs/WALLETS.md](../../docs/WALLETS.md).
 
 Cross-links: [frontend/src/services/keplrCompatible.ts](../../frontend/src/services/keplrCompatible.ts), [frontend/src/services/wallet.ts](../../frontend/src/services/wallet.ts), [frontend/src/components/common/WalletButton.tsx](../../frontend/src/components/common/WalletButton.tsx), [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md).
 

@@ -46,6 +46,25 @@ export const CR_TIER_COPY: Record<CrColorTier, CrTierCopy> = {
 export const PRICES_NOT_LOADED_MESSAGE = 'prices not loaded, cannot display key ratios';
 
 /**
+ * Key Ratios body is this exact string unless every CR-relevant price is loaded
+ * **and** UST1 available supply is certified. Inventory failure uses the same
+ * copy (#16 skill / #18 optional nit) — do not invent a second banner.
+ */
+export function shouldShowKeyRatios(args: {
+  isLoading?: boolean;
+  pricesReady: boolean;
+  ust1SupplyStatus: 'zero' | 'positive' | 'unknown';
+  tier: CrColorTier | null;
+}): boolean {
+  return (
+    !args.isLoading &&
+    args.pricesReady &&
+    args.ust1SupplyStatus !== 'unknown' &&
+    args.tier !== null
+  );
+}
+
+/**
  * Inclusive bands as implemented today:
  *   RED    < 95
  *   YELLOW [95, 110)

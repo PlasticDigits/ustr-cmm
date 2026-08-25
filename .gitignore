@@ -34,6 +34,11 @@ coverage/
 *.tmp
 *.temp
 
+# Playwright
+playwright-report/
+test-results/
+blob-report/
+
 # Node.js (for frontend)
 node_modules/
 dist/

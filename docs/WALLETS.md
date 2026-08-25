@@ -1,6 +1,6 @@
 # Connecting wallets (Terra Classic)
 
-Companion: [#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4). Agent playbook: [skills/frontend-keplr-compatible-wallets](../skills/frontend-keplr-compatible-wallets/SKILL.md).
+Companion: [#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4). Post-merge device / inject QA: [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18). Agent playbook: [skills/frontend-keplr-compatible-wallets](../skills/frontend-keplr-compatible-wallets/SKILL.md).
 
 This site (`ust1cmm.com`) talks to **Terra Classic** (`columbus-5`). It is not a BSC / EVM dApp. Use a Cosmos-capable wallet, not Trust’s Ethereum / BNB “DApp” slot.
 

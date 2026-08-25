@@ -1,6 +1,11 @@
 import { Card, CardContent } from '../common/Card';
 import { TreasuryRatios } from '../../types/treasury';
-import { CR_TIER_COPY, PRICES_NOT_LOADED_MESSAGE, crTierTextClass } from '../../utils/crTiers';
+import {
+  CR_TIER_COPY,
+  PRICES_NOT_LOADED_MESSAGE,
+  crTierTextClass,
+  shouldShowKeyRatios,
+} from '../../utils/crTiers';
 
 interface RatiosCardProps {
   ratios: TreasuryRatios;
@@ -33,7 +38,12 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
     tier,
   } = ratios;
 
-  const showRatios = !isLoading && pricesReady && ust1SupplyStatus !== 'unknown' && tier !== null;
+  const showRatios = shouldShowKeyRatios({
+    isLoading,
+    pricesReady,
+    ust1SupplyStatus,
+    tier,
+  });
   const collateralColor = crTierTextClass(tier);
   const copy = tier ? CR_TIER_COPY[tier] : null;
   const collateralValue = formatCollateralization(collateralization);
@@ -44,7 +54,7 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
   })();
 
   return (
-    <Card className="h-full">
+    <Card className="h-full" testId="key-ratios">
       <CardContent>
         <div className="flex items-center gap-3 mb-5">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-orange-500/20 flex items-center justify-center">
@@ -57,17 +67,28 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
         </div>
 
         {!showRatios ? (
-          <p className="text-sm text-gray-400 py-6 text-center">{PRICES_NOT_LOADED_MESSAGE}</p>
+          <p
+            className="text-sm text-gray-400 py-6 text-center"
+            data-testid="key-ratios-gate"
+          >
+            {PRICES_NOT_LOADED_MESSAGE}
+          </p>
         ) : (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
                 <p className="text-sm text-gray-400 mb-1">Collateralization</p>
-                <p className={`text-2xl font-mono-numbers font-bold ${collateralColor}`}>
+                <p
+                  className={`text-2xl font-mono-numbers font-bold ${collateralColor}`}
+                  data-testid="key-ratios-cr"
+                >
                   {collateralValue}
                 </p>
                 {copy && (
-                  <p className={`mt-1 text-xs font-semibold tracking-wide ${collateralColor}`}>
+                  <p
+                    className={`mt-1 text-xs font-semibold tracking-wide ${collateralColor}`}
+                    data-testid="key-ratios-tier"
+                  >
                     {copy.name}
                   </p>
                 )}
