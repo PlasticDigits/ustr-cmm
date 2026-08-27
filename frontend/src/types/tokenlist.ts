@@ -32,6 +32,8 @@ export interface TokenListEntry {
   gradient: string;
   iconColor: string;
   website?: string;
+  /** Published CL8Y DEX catalog image (GitLab raw). Local UI still serves `/assets/tokens/`. */
+  logoURI?: string;
   pool?: TokenListPool;
 }
 

@@ -1,12 +1,15 @@
 /**
  * TokenIcon Component
  *
- * Displays a token icon from /assets/tokens/{SYMBOL}.png
+ * Displays a token icon from /assets/tokens/{STEM}.png
  * Falls back to showing the first letter of the symbol if image fails to load.
  * LP rows can pass pairSymbols to stack both tokens in the same box as a single icon.
+ *
+ * CL8Y-cb is the columbus-5 CL8Y CW20 (DEX tokenlist symbol CL8Y, images/CL8Y.png).
  */
 
 import { useState } from 'react';
+import { tokenIconFileStem } from './tokenIconFileStem';
 
 interface TokenIconProps {
   symbol: string;
@@ -47,7 +50,7 @@ function TokenGlyph({
   textSize: string;
 }) {
   const [imageError, setImageError] = useState(false);
-  const imagePath = `/assets/tokens/${symbol.toUpperCase()}.png`;
+  const imagePath = `/assets/tokens/${tokenIconFileStem(symbol)}.png`;
 
   if (imageError) {
     return (
