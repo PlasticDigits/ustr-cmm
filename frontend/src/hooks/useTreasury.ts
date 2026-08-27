@@ -200,6 +200,7 @@ export function useTreasury() {
               displayUsd: null as number | null,
               crUsd: null as number | null,
               haircutLegs: [] as string[],
+              missingPriceLegs: [] as string[],
               incomplete: true,
             }
           : computeLpNav({
@@ -226,6 +227,7 @@ export function useTreasury() {
           displayUsd: nav.displayUsd,
           crUsd: nav.crUsd,
           haircutLegs: nav.haircutLegs,
+          missingPriceLegs: nav.missingPriceLegs,
           pairLabel: pos.pairLabel,
           pairSymbols: pos.pairSymbols,
           explorerAddress: pos.pairAddress,

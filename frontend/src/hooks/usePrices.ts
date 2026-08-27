@@ -64,9 +64,19 @@ export function usePrices(): {
         if (isVfdusdToken(token.symbol, token.address)) {
           continue;
         }
-        // Pass pool config if available for direct querying
+        // Pass pool config if available for direct querying. Decimals must be
+        // explicit — a missing 18dp would otherwise fall back to a 1e6 offer.
+        if (!Number.isInteger(token.decimals) || token.decimals < 0 || token.decimals > 18) {
+          continue;
+        }
         const pool = token.pool ? { address: token.pool.address, dex: token.pool.dex, quoteAsset: token.pool.quoteAsset } : undefined;
-        const price = await priceService.getTokenPriceUsd(token.address!, basePrices.lunc, basePrices.ustc, pool);
+        const price = await priceService.getTokenPriceUsd(
+          token.address!,
+          basePrices.lunc,
+          basePrices.ustc,
+          pool,
+          token.decimals
+        );
         // Only update price if we got a valid positive response
         // null means query failed - we preserve the previous price from lastPricesRef
         // 0 means DEX returned a quote but base USD was missing - also preserve previous

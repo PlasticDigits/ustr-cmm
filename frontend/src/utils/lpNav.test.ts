@@ -99,6 +99,64 @@ describe('computeLpNav', () => {
     expect(result.haircutLegs).toEqual(['USTR']);
   });
 
+  it('CL8Y-cb/cUSTC: CR is CL8Y other only; unpriced CL8Y implies from wrap USTC', () => {
+    const result = computeLpNav({
+      lpBalance: TEN_PCT,
+      totalShare: SHARE,
+      legs: [
+        {
+          symbol: 'CL8Y-cb',
+          amountRaw: 2000n * 10n ** 18n,
+          decimals: 18,
+          kind: 'other',
+          usd: null,
+        },
+        {
+          symbol: 'cUSTC',
+          amountRaw: 1000n * 1_000_000n,
+          decimals: 6,
+          kind: 'wrap',
+          usd: 0.01,
+        },
+      ],
+    });
+    // implied CL8Y = (1000 × $0.01) / 2000 = $0.005; 10% → display $2, CR $1
+    expect(result.ok).toBe(true);
+    expect(result.displayUsd).toBeCloseTo(2);
+    expect(result.crUsd).toBeCloseTo(1);
+    expect(result.includedLegs).toEqual(['CL8Y-cb']);
+    expect(result.haircutLegs).toEqual(['cUSTC']);
+    expect(result.incomplete).toBe(false);
+  });
+
+  it('CL8Y-cb/cUSTC: unpriced CL8Y and unpriced wrap fail-closes CR and lists CL8Y-cb', () => {
+    const result = computeLpNav({
+      lpBalance: TEN_PCT,
+      totalShare: SHARE,
+      legs: [
+        {
+          symbol: 'CL8Y-cb',
+          amountRaw: 2000n * 10n ** 18n,
+          decimals: 18,
+          kind: 'other',
+          usd: null,
+        },
+        {
+          symbol: 'cUSTC',
+          amountRaw: 1000n * 1_000_000n,
+          decimals: 6,
+          kind: 'wrap',
+          usd: null,
+        },
+      ],
+    });
+    expect(result.ok).toBe(false);
+    expect(result.crUsd).toBeNull();
+    expect(result.incomplete).toBe(true);
+    expect(result.missingPriceLegs).toContain('CL8Y-cb');
+    expect(result.haircutLegs).toEqual(['cUSTC']);
+  });
+
   it('UST1/vFDUSD: CR is vFDUSD side only', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
@@ -117,6 +175,27 @@ describe('computeLpNav', () => {
     expect(result.crUsd).toBeCloseTo(122);
     expect(result.displayUsd).toBeCloseTo(222);
     expect(result.includedLegs).toEqual(['vFDUSD']);
+    expect(result.haircutLegs).toEqual(['UST1']);
+  });
+
+  it('UST1/ALPHA: CR is ALPHA side only', () => {
+    const result = computeLpNav({
+      lpBalance: TEN_PCT,
+      totalShare: SHARE,
+      legs: [
+        ust1Leg(1000),
+        {
+          symbol: 'ALPHA',
+          amountRaw: 5000n * 1_000_000n,
+          decimals: 6,
+          kind: 'other',
+          usd: 0.02,
+        },
+      ],
+    });
+    expect(result.crUsd).toBeCloseTo(10);
+    expect(result.displayUsd).toBeCloseTo(110);
+    expect(result.includedLegs).toEqual(['ALPHA']);
     expect(result.haircutLegs).toEqual(['UST1']);
   });
 

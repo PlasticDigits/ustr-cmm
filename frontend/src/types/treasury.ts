@@ -31,6 +31,8 @@ export interface TreasuryAsset {
   crUsd?: number | null;
   /** Protocol / wrap symbols shown in NAV but excluded from CR (#16). */
   haircutLegs?: string[];
+  /** Unpriced legs when NAV is incomplete (e.g. CL8Y-cb if USD missing). */
+  missingPriceLegs?: string[];
   pairLabel?: string;
   /** Both sides of an LP pair, used for overlapping icons. */
   pairSymbols?: [string, string];
