@@ -97,7 +97,10 @@ export function formatPercent(value: number, decimals: number = 2): string {
   return `${(value * 100).toFixed(decimals)}%`;
 }
 
-/** LP ownership of the pool. Tiny 18dp share amounts are not useful next to NAV. */
+/**
+ * LP ownership of the pool. Tiny 18dp share amounts are not useful next to NAV.
+ * Rounding contract (#21): `≥ 0.99995` → `100% of pool`. Do not widen that.
+ */
 export function formatPoolShare(share: number | null | undefined): string {
   if (share === null || share === undefined || !Number.isFinite(share) || share < 0) {
     return '—';

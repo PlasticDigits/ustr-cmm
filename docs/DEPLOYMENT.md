@@ -523,6 +523,7 @@ terrad tx wasm execute $WRAP_MAPPER \
 - Protocol LP shares (allowlisted `type: "lp"`) — [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md) / [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14)
 - CL8Y catalog vs pins (LCD hold check; indexer is not CR) — [skills/frontend-treasury-cl8y-holdings](../skills/frontend-treasury-cl8y-holdings/SKILL.md) / [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18)
 - CL8Y-cb/cUSTC LP pin (CL8Y other-leg in CR; cUSTC wrap haircut) — [#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20)
+- Treasury Assets tablet layout (2-col through 1024px, wrap not ellipsis) — [skills/frontend-treasury-assets-layout](../skills/frontend-treasury-assets-layout/SKILL.md) / [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21)
 
 Do **not** add raw UST1 / cLUNC / cUSTC to the treasury-holdings tokenlist loop (liability / wrap receipts). LP rows are a separate `type: "lp"` with pinned pair + LP CW20.
 
