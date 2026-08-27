@@ -248,7 +248,11 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
                     </div>
                   )}
                   {asset.kind === 'lp' && asset.navIncomplete && (
-                    <div className="text-[10px] text-amber-400/80 truncate">NAV incomplete</div>
+                    <div className="text-[10px] text-amber-400/80 truncate">
+                      {asset.missingPriceLegs && asset.missingPriceLegs.length > 0
+                        ? `NAV incomplete · ${asset.missingPriceLegs.join(', ')}`
+                        : 'NAV incomplete'}
+                    </div>
                   )}
                 </div>
               </div>

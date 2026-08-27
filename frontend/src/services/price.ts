@@ -1,5 +1,7 @@
 import { NETWORKS, DEX_ROUTERS, PRICE_API, LCD_CONFIG, CONTRACTS, DEFAULT_NETWORK, VFDUSD_ORACLE } from '../utils/constants';
 import { isTerraContractAddress } from '../utils/addresses';
+import { wholeTokenBaseAmount } from '../utils/decimals';
+import { parseDexPoolState, quoteRawForOneWhole } from '../utils/lpPoolParse';
 import {
   extractOracleRateString,
   readVfdusdSessionPrice,
@@ -216,30 +218,48 @@ class PriceService {
 
   /**
    * Get token price in USD with DEX fallback
- * 
- * If pool config is provided, queries that pool directly.
- * Otherwise tries DEXes in priority order: custom -> garuda -> terraswap
- * Each returns quote asset amount per 1M token units
- * 
- * @param tokenAddress - The CW20 token contract address (spot token only — never an LP mint, #14)
- * @param luncUsd - LUNC price in USD
- * @param ustcUsd - USTC price in USD
- * @param pool - Optional pool config with address, dex type, and quote asset
- * @returns Token price in USD, or null if all DEX queries fail
- */
+   *
+   * If pool config is provided, queries that pool directly.
+   * Otherwise tries DEXes in priority order: custom -> garuda -> terraswap
+   * Quote legs are 6dp (LUNC / USTC / cUSTC). Offer is 1 whole token (`10^decimals`).
+   *
+   * @param tokenAddress - The CW20 token contract address (spot token only — never an LP mint, #14)
+   * @param luncUsd - LUNC price in USD
+   * @param ustcUsd - USTC price in USD
+   * @param pool - Optional pool config with address, dex type, and quote asset
+   * @param decimals - Token decimals. Garuda/Terraswap 1e6 fallback is 6dp only —
+   *   never use it for CL8Y-cb (18dp). CL8Y dex prices via LCD pool reserve ratio,
+   *   not simulate-swap (#20).
+   * @returns Token price in USD, or null if all DEX queries fail
+   */
   async getTokenPriceUsd(
     tokenAddress: string,
     luncUsd: number,
     ustcUsd: number,
-    pool?: { address: string; dex: string; quoteAsset?: string }
+    pool?: { address: string; dex: string; quoteAsset?: string },
+    decimals: number = 6
   ): Promise<number | null> {
+    const offer = wholeTokenBaseAmount(decimals);
+    if (offer === null) {
+      return null;
+    }
+
     // If pool config provided, query it directly
     if (pool) {
-      const directPrice = await this.queryPoolDirectly(tokenAddress, pool.address, pool.dex);
+      const directPrice = await this.queryPoolDirectly(tokenAddress, pool.address, pool.dex, offer);
       if (directPrice !== null) {
         const baseUsd = pool.quoteAsset === 'ustc' ? ustcUsd : luncUsd;
         return this.calculateUsdPrice(directPrice, baseUsd);
       }
+      // Explicit pool failed: do not invent a 1e6 Garuda quote for non-6dp tokens.
+      if (decimals !== 6) {
+        return null;
+      }
+    }
+
+    // 18dp CW20s (CL8Y-cb) must not use the historical 1e6 simulate fallback.
+    if (decimals !== 6) {
+      return null;
     }
 
     // Try DEXes in priority order
@@ -263,25 +283,57 @@ class PriceService {
 
   /**
    * Query a pool contract directly for token price
-   * 
-   * Supports both Garuda (simulate_swap) and TerraSwap/Terraport (simulation) formats.
-   * 
+   *
+   * Supports Garuda (simulate_swap), TerraSwap/Terraport (simulation), and CL8Y
+   * (LCD `{ pool: {} }` reserve ratio — pair has `hybrid_simulation`, not `simulation`).
+   *
+   * Offer is 1 whole token. Quote legs are 6dp (LUNC / USTC / cUSTC), so
+   * `calculateUsdPrice` still divides by 1e6.
+   *
    * @param tokenAddress - The CW20 token contract address
    * @param poolAddress - The pool contract address
-   * @param dexType - The DEX type ('garuda', 'terraport', 'terraswap')
-   * @returns Quote asset amount per 1M token units, or null on error
+   * @param dexType - The DEX type ('garuda', 'terraport', 'terraswap', 'cl8y')
+   * @param offerAmount - Raw offer amount (1 whole token)
+   * @returns Quote asset amount for 1 whole token, or null on error
    */
-  private async queryPoolDirectly(tokenAddress: string, poolAddress: string, dexType: string): Promise<number | null> {
+  private async queryPoolDirectly(
+    tokenAddress: string,
+    poolAddress: string,
+    dexType: string,
+    offerAmount: bigint
+  ): Promise<number | null> {
     try {
       let simulateResult: { return_amount: string } | null = null;
+      const amount = offerAmount.toString();
+      const dex = dexType.toLowerCase();
 
-      if (dexType === 'terraport' || dexType === 'terraswap') {
+      if (dex === 'cl8y') {
+        // CL8Y pair QueryMsg has hybrid_simulation, not Terraswap simulation.
+        // Spot USD = LCD pool reserve ratio (same basis as LP NAV). Never LP-mint swap.
+        const pool = await this.queryContract<unknown>(poolAddress, { pool: {} });
+        const parsed = parseDexPoolState('cl8y', pool);
+        if (!parsed || parsed.reserves.length !== 2) {
+          return null;
+        }
+        const offerRes = parsed.reserves.find((r) => r.address === tokenAddress);
+        const quoteRes = parsed.reserves.find((r) => r !== offerRes);
+        if (!offerRes || !quoteRes) {
+          return null;
+        }
+        const quoteRaw = quoteRawForOneWhole(offerRes.amountRaw, quoteRes.amountRaw, offerAmount);
+        if (quoteRaw === null || quoteRaw > BigInt(Number.MAX_SAFE_INTEGER)) {
+          return null;
+        }
+        return Number(quoteRaw.toString());
+      }
+
+      if (dex === 'terraport' || dex === 'terraswap') {
         // TerraSwap/Terraport simulation format
         const simulateQuery = {
           simulation: {
             offer_asset: {
               info: { token: { contract_addr: tokenAddress } },
-              amount: '1000000',
+              amount,
             },
           },
         };
@@ -295,7 +347,7 @@ class PriceService {
         const simulateQuery = {
           simulate_swap: {
             offer_asset: { cw20: tokenAddress },
-            offer_amount: '1000000',
+            offer_amount: amount,
           },
         };
 
@@ -318,11 +370,11 @@ class PriceService {
 
   /**
    * Calculate USD price from quote asset amount
- * 
- * @param quoteAmount - Quote asset amount per 1M token units (LUNC or USTC)
- * @param quoteUsd - Quote asset price in USD (LUNC or USTC USD price)
- * @returns Token price in USD
- */
+   *
+   * @param quoteAmount - Quote asset raw amount for 1 whole offer token (6dp LUNC/USTC/cUSTC)
+   * @param quoteUsd - Quote asset price in USD (LUNC or USTC USD price)
+   * @returns Token price in USD
+   */
   private calculateUsdPrice(quoteAmount: number, quoteUsd: number): number {
     // Quote amount is per 1M token units
     const tokenUsd = (quoteAmount / 1_000_000) * quoteUsd;

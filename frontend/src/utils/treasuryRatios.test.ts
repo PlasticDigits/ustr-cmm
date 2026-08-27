@@ -147,6 +147,24 @@ describe('computeTreasuryRatios', () => {
     expect(result.incomplete).toBe(false);
   });
 
+  it('CL8Y-cb LP other-leg crUsd enters the numerator', () => {
+    const result = computeTreasuryRatios({
+      ust1AvailableRaw: UST1_1M,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [
+        { symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 },
+        { symbol: 'CL8Y-cb-cUSTC', balanceRaw: 1n, decimals: 18, crUsd: 50_000 },
+      ],
+      prices: { vFDUSD: 2 },
+    });
+    expect(result.collateralization).toBeCloseTo(205);
+    expect(result.includedSymbols).toEqual(['vFDUSD', 'CL8Y-cb-cUSTC']);
+    expect(result.incomplete).toBe(false);
+    expect(result.tier).toBe('BLUE');
+  });
+
   it('null LP crUsd is omitted and marks incomplete — not $0', () => {
     const result = computeTreasuryRatios({
       ust1AvailableRaw: UST1_1M,

@@ -3,7 +3,7 @@
  *
  * share claim_i = floor(reserve_i * lp_balance / total_share)
  * displayUsd    = Σ claim_i * usd_i   (all priced legs, including protocol)
- * crUsd         = Σ claim_i * usd_i   for `other` legs only (LUNC, USTC, ALPHA, vFDUSD, …)
+ * crUsd         = Σ claim_i * usd_i   for `other` legs only (LUNC, USTC, ALPHA, vFDUSD, CL8Y-cb, …)
  *
  * Fail closed: total_share == 0, lp_balance > total_share, unknown leg, non-finite wholes.
  * Unpriced CR-eligible (`other`) leg → crUsd = null. Never treat missing USD as $0 or $1.

@@ -208,7 +208,7 @@ npm install
 npm test
 ```
 
-Unit tests cover vFDUSD oracle parse/session cache, UST1 CR math, CL8Y catalog pin-diff, Legal redirect allowlisting, and Keplr-compatible / Trust Wallet inject detection ([#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4), [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)–[#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12), [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16), [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18)).
+Unit tests cover vFDUSD oracle parse/session cache, UST1 CR math, CL8Y catalog pin-diff, Legal redirect allowlisting, and Keplr-compatible / Trust Wallet inject detection ([#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4), [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)–[#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12), [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16), [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18), [#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20)).
 
 ```bash
 npm run test:e2e

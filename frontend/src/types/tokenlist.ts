@@ -16,7 +16,7 @@ export interface TokenListPool {
   address: string;
   dex: string;
   name?: string;
-  /** Spot-price quote for CW20 simulate-swap (not used for LP NAV). */
+  /** Spot-price quote for CW20 (simulate-swap, or CL8Y reserve ratio). Not LP NAV. */
   quoteAsset?: string;
   /** Declared legs for `type: "lp"` — must match on-chain reserves. */
   assets?: TokenListPoolAsset[];

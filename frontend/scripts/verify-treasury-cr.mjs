@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Independent treasury CR calculator (#18 / #16).
+ * Independent treasury CR calculator (#18 / #16 / #20).
  *
  * CR = (Σ non-protocol spot USD + Σ LP other-leg NAV) / whole(UST1 available) × 100
  * UST1 available = total_supply − treasury_spot − Σ allowlisted LP UST1 claims
@@ -22,7 +22,9 @@ const ORACLE = 'terra1fmht0t6svq3n24zx03nkfja0m40zhfyyxkdcvlrkl6u7gfe6aagq4gch8n
 const ALPHA = 'terra1x6e64es6yhauhvs3prvpdg2gkqdtfru840wgnhs935x8axr7zxkqzysuxz';
 const USTRIX = 'terra1r3eaa2tucjr3es88wzuqpgxvssqflk9cghrjmf9uneds8wljyapqwtrcp5';
 const SPACEUSD = 'terra1cvd5cgrs8rrl96hte34n57497u5f9cwuv3e6ztxgetkx4uzmcdyswv79zl';
+const CL8Y_CB = 'terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3';
 const SPACEUSD_POOL = 'terra1ts0r4whpr48cwsnd7elgpuqqaqu5phy0ywx5x09f5zrnj9wda54sreeumg';
+const CL8Y_CUSTC_POOL = 'terra1tz5vwrungh6drd9nt95qym3k892vs3as8nqmu7sg4ypek7wxvv4qm89upc';
 const USTRIX_POOL = 'terra1rvrywq2wxmzve8dm7sae2zx6er5969qnsl68pnh2xu2y6atdwq6qq9zq05';
 const GARUDA_FACTORY = 'terra1ypwj6sw25g0qcykv7mzmcvsndvx56r3yrgkaw3fds7yzwl7fwwcsnxkeh7';
 
@@ -41,6 +43,21 @@ const LPS = [
     symbol: 'UST1-SpaceUSD',
     lp: 'terra1s3jk92zeslgxxaux5nj8gtcqxafwsufglw2rhkazv4rrt7sg3wfsqj7twz',
     pair: 'terra1xx5t5em3aza3lst0s5yc7rjgx9psapa3345v2vzfqkrprhw3vv6q3hahxy',
+  },
+  {
+    symbol: 'CL8Y-cb-cUSTC',
+    lp: 'terra1u277xxcknv2r37d7xa5mnyxu3q26fyu9e9uexmyu2u99g3qfx62q2jen2c',
+    pair: 'terra1tz5vwrungh6drd9nt95qym3k892vs3as8nqmu7sg4ypek7wxvv4qm89upc',
+  },
+  {
+    symbol: 'CL8Y-cb-ALPHA',
+    lp: 'terra1hymuueuu43750rzut69hxmefl3m5gg27uxnu9fytcvlah27l5rtsrg87rc',
+    pair: 'terra163qm8z5rjgp8av6c6sg673lq2v4kfa0we5uhtzj8alfwhddfhjfs27k40z',
+  },
+  {
+    symbol: 'UST1-ALPHA',
+    lp: 'terra12ff3nhu239y6a5lh0rs8nwlntc9wulkm3c4x598hp5gjfeqk87xszxkrmp',
+    pair: 'terra1rmdtckz5gd0usja36ydwat6prnmew639ry37yq72xh9ek4s3m83sehn5u6',
   },
 ];
 
@@ -97,11 +114,20 @@ function kind(addr) {
 }
 
 function decOf(addr) {
-  return addr === USTR ? 18 : 6;
+  return addr === USTR || addr === CL8Y_CB ? 18 : 6;
 }
 
 function whole(raw, decimals) {
-  return Number(raw) / 10 ** decimals;
+  if (typeof raw !== 'bigint') raw = BigInt(raw);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18 || raw < 0n) {
+    return Number.NaN;
+  }
+  const base = 10n ** BigInt(decimals);
+  const w = raw / base;
+  const frac = raw % base;
+  if (w > BigInt(Number.MAX_SAFE_INTEGER)) return Number.NaN;
+  const fracStr = frac.toString().padStart(decimals, '0');
+  return decimals === 0 ? Number(w.toString()) : Number(`${w.toString()}.${fracStr}`);
 }
 
 async function tokenInfo(addr) {
@@ -136,12 +162,12 @@ async function basePrices() {
   return { LUNC: cg['terra-luna'].usd, USTC: cg.terrausd.usd };
 }
 
-async function simulateTerraport(pool, token) {
+async function simulateTerraswapShape(pool, token, offerAmount = '1000000') {
   return lcdSmart(pool, {
     simulation: {
       offer_asset: {
         info: { token: { contract_addr: token } },
-        amount: '1000000',
+        amount: offerAmount,
       },
     },
   });
@@ -180,6 +206,7 @@ async function main() {
     ALPHA: await cw20Bal(ALPHA),
     USTRIX: await cw20Bal(USTRIX),
     SpaceUSD: await cw20Bal(SPACEUSD),
+    'CL8Y-cb': await cw20Bal(CL8Y_CB),
   };
 
   let lpOtherUsd = 0;
@@ -211,8 +238,21 @@ async function main() {
     throw new Error('vFDUSD oracle not usable — fail closed');
   }
 
-  const spaceSim = await simulateTerraport(SPACEUSD_POOL, SPACEUSD);
+  const spaceSim = await simulateTerraswapShape(SPACEUSD_POOL, SPACEUSD);
   const spaceUsd = (Number(spaceSim.return_amount) / 1e6) * px.LUNC;
+  const cl8yPool = await lcdSmart(CL8Y_CUSTC_POOL, { pool: {} });
+  let cl8yRes = 0n;
+  let custcRes = 0n;
+  for (const asset of cl8yPool.assets || []) {
+    const addr = asset.info?.token?.contract_addr;
+    if (addr === CL8Y_CB) cl8yRes = BigInt(asset.amount);
+    if (addr === CUSTC) custcRes = BigInt(asset.amount);
+  }
+  const cl8yWhole = whole(cl8yRes, 18);
+  const cl8yUsd = cl8yWhole > 0 ? (whole(custcRes, 6) * px.USTC) / cl8yWhole : 0;
+  if (!(cl8yUsd > 0)) {
+    throw new Error('CL8Y-cb USD unpriced — fail closed');
+  }
   const ustrixSim = await lcdSmart(USTRIX_POOL, {
     simulate_swap: {
       offer_asset: { cw20: USTRIX },
@@ -223,20 +263,33 @@ async function main() {
     ? (Number(ustrixSim.return_amount) / 1e6) * px.LUNC
     : await garudaUsd(USTRIX, px.LUNC).catch(() => null);
   const alphaUsd = await garudaUsd(ALPHA, px.LUNC);
+  if (!(alphaUsd > 0)) {
+    throw new Error('ALPHA USD unpriced — fail closed');
+  }
+
+  const otherUsd = {
+    [SPACEUSD]: spaceUsd,
+    [ALPHA]: alphaUsd,
+    [CL8Y_CB]: cl8yUsd,
+    uluna: px.LUNC,
+    uusd: px.USTC,
+  };
 
   let spotUsd =
     whole(uluna, 6) * px.LUNC +
     whole(uusd, 6) * px.USTC +
     whole(spots.vFDUSD, 6) * vfdUsd +
     whole(spots.ALPHA, 6) * alphaUsd +
-    whole(spots.SpaceUSD, 6) * spaceUsd;
+    whole(spots.SpaceUSD, 6) * spaceUsd +
+    whole(spots['CL8Y-cb'], 18) * cl8yUsd;
   if (ustrixUsd && spots.USTRIX > 0n) spotUsd += whole(spots.USTRIX, 6) * ustrixUsd;
 
   for (const row of lpRows) {
     for (const leg of row.legs) {
       if (leg.kind !== 'other') continue;
-      if (leg.addr !== SPACEUSD) throw new Error(`unpriced other LP leg ${leg.addr}`);
-      lpOtherUsd += whole(leg.claim, leg.decimals) * spaceUsd;
+      const usd = otherUsd[leg.addr];
+      if (!(usd > 0)) throw new Error(`unpriced other LP leg ${leg.addr}`);
+      lpOtherUsd += whole(leg.claim, leg.decimals) * usd;
     }
   }
 
@@ -253,7 +306,14 @@ async function main() {
   const tier = cr > 190 ? 'BLUE' : cr >= 110 ? 'GREEN' : cr >= 95 ? 'YELLOW' : 'RED';
 
   const out = {
-    prices: { ...px, vFDUSD: vfdUsd, SpaceUSD: spaceUsd, ALPHA: alphaUsd, USTRIX: ustrixUsd },
+    prices: {
+      ...px,
+      vFDUSD: vfdUsd,
+      SpaceUSD: spaceUsd,
+      ALPHA: alphaUsd,
+      USTRIX: ustrixUsd,
+      'CL8Y-cb': cl8yUsd,
+    },
     issuance: {
       ust1: { outstanding: ust1Supply.toString(), owned: owned.ust1.toString(), available: avail.ust1.toString() },
       ustr: { outstanding: ustrSupply.toString(), owned: owned.ustr.toString(), available: avail.ustr.toString() },
