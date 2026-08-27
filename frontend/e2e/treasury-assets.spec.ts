@@ -13,4 +13,7 @@ test('treasury assets omit raw protocol tokens and keep LP rows', async ({ page 
   await expect(page.getByTestId('treasury-asset-UST1-USTR')).toBeVisible();
   await expect(page.getByTestId('treasury-asset-UST1-cUSTC')).toBeVisible();
   await expect(page.getByTestId('treasury-asset-UST1-SpaceUSD')).toBeVisible();
+  await expect(page.getByTestId('treasury-asset-CL8Y-cb-cUSTC')).toBeVisible();
+  await expect(page.getByTestId('treasury-asset-CL8Y-cb-ALPHA')).toBeVisible();
+  await expect(page.getByTestId('treasury-asset-UST1-ALPHA')).toBeVisible();
 });

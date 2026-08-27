@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDexPoolState } from './lpPoolParse';
+import { parseDexPoolState, quoteRawForOneWhole } from './lpPoolParse';
 
 const GARUDA_USTRIX = {
   asset1: { cw20: 'terra1r3eaa2tucjr3es88wzuqpgxvssqflk9cghrjmf9uneds8wljyapqwtrcp5' },
@@ -57,5 +57,19 @@ describe('parseDexPoolState', () => {
     expect(parseDexPoolState('garuda', { reserve1: '-1' })).toBeNull();
     expect(parseDexPoolState('garuda', null)).toBeNull();
     expect(parseDexPoolState('terraport', { assets: [], total_share: '1' })).toBeNull();
+  });
+});
+
+describe('quoteRawForOneWhole', () => {
+  it('CL8Y 18dp vs cUSTC 6dp reserve ratio without Number(bigint)', () => {
+    const offer = 2_000n * 10n ** 18n;
+    const quote = 1_000n * 1_000_000n;
+    const one = 10n ** 18n;
+    // 1 CL8Y → 0.5 cUSTC = 500_000 raw
+    expect(quoteRawForOneWhole(offer, quote, one)).toBe(500_000n);
+  });
+
+  it('zero offer reserve fail-closes', () => {
+    expect(quoteRawForOneWhole(0n, 1n, 1_000_000n)).toBeNull();
   });
 });

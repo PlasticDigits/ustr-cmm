@@ -104,3 +104,16 @@ export function parseDexPoolState(dex: string, raw: unknown): ParsedPoolState | 
   if (d === 'garuda') return parseGarudaPool(data);
   return parseTerraswapPool(data);
 }
+
+/**
+ * Reserve-ratio quote for exactly 1 whole offer token (no simulate-swap).
+ * Used for CL8Y pair spot USD — CL8Y DEX has `hybrid_simulation`, not Terraswap `simulation`.
+ */
+export function quoteRawForOneWhole(
+  offerReserve: bigint,
+  quoteReserve: bigint,
+  offerOne: bigint
+): bigint | null {
+  if (offerReserve <= 0n || quoteReserve < 0n || offerOne <= 0n) return null;
+  return (quoteReserve * offerOne) / offerReserve;
+}

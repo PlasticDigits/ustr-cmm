@@ -30,3 +30,11 @@ export function rawToWholeNumber(raw: bigint, decimals: number): number {
 export function isValidPositivePrice(price: number | null | undefined): price is number {
   return typeof price === 'number' && Number.isFinite(price) && price > 0;
 }
+
+/** Base units for exactly 1 whole token. Null when decimals are unusable. */
+export function wholeTokenBaseAmount(decimals: number): bigint | null {
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
+    return null;
+  }
+  return 10n ** BigInt(decimals);
+}

@@ -522,21 +522,27 @@ terrad tx wasm execute $WRAP_MAPPER \
 - UST1 / cLUNC / cUSTC available supply and CR — [skills/frontend-ust1-ratios](../skills/frontend-ust1-ratios/SKILL.md) / [skills/frontend-treasury-available-supply](../skills/frontend-treasury-available-supply/SKILL.md) / [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)
 - Protocol LP shares (allowlisted `type: "lp"`) — [skills/frontend-treasury-lp-nav](../skills/frontend-treasury-lp-nav/SKILL.md) / [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14)
 - CL8Y catalog vs pins (LCD hold check; indexer is not CR) — [skills/frontend-treasury-cl8y-holdings](../skills/frontend-treasury-cl8y-holdings/SKILL.md) / [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18)
+- CL8Y-cb/cUSTC LP pin (CL8Y other-leg in CR; cUSTC wrap haircut) — [#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20)
 - Treasury Assets tablet layout (2-col through 1024px, wrap not ellipsis) — [skills/frontend-treasury-assets-layout](../skills/frontend-treasury-assets-layout/SKILL.md) / [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21)
 
 Do **not** add raw UST1 / cLUNC / cUSTC to the treasury-holdings tokenlist loop (liability / wrap receipts). LP rows are a separate `type: "lp"` with pinned pair + LP CW20.
 
-**LP pins (ops):** when a CL8Y / Garuda / Terraswap / Terraport pair exists for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, or `cLUNC/xxx` **and the treasury holds the LP CW20**, add a `type: "lp"` entry (see the skill for the JSON shape). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` (`pair_address` + `lp_token`), then confirm hold with LCD `balance` at the treasury pin (`node frontend/scripts/discover-cl8y-holdings.mjs`). Then governance `AddCw20` the **LP CW20** (CL8Y/Garuda: `pair.liquidity_token`, often ≠ pair). Unlisted factory pairs must never enter CR. Indexer `traders/{treasury}/positions` is **not** a hold signal (was `[]` on 2026-08-25 while LCD showed three LP balances). Live `Cw20Whitelist` is still empty — `AllBalances` is native-only; the UI queries tokenlist pins directly.
+**LP pins (ops):** when a CL8Y / Garuda / Terraswap / Terraport pair exists for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, or `cLUNC/xxx` (or another pair the treasury actually holds, e.g. CL8Y-cb/ALPHA) **and the treasury holds the LP CW20**, add a `type: "lp"` entry (see the skill for the JSON shape). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` (`pair_address` + `lp_token`), then confirm hold with LCD `balance` at the treasury pin (`node frontend/scripts/discover-cl8y-holdings.mjs`). Then governance `AddCw20` the **LP CW20** (CL8Y/Garuda: `pair.liquidity_token`, often ≠ pair). Unlisted factory pairs must never enter CR. Indexer `traders/{treasury}/positions` is **not** a hold signal (was `[]` on 2026-08-25 while LCD showed three LP balances). Live `Cw20Whitelist` is still empty — `AllBalances` is native-only; the UI queries tokenlist pins directly.
 
-**Live CL8Y pins (tokenlist `1.3.2`, re-queried indexer + LCD 2026-08-25, [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18)):**
+**Live CL8Y pins (tokenlist `1.3.3`, re-queried indexer + LCD 2026-08-27, [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18) / [#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20)):**
 
 | Pair | Pair contract | LP CW20 (18 decimals) | Treasury hold |
 |------|---------------|------------------------|---------------|
 | UST1/USTR | `terra16vxrh…5hgqy` | `terra1ak8w9…2ty4p` | yes (~97% of pool) |
 | UST1/cUSTC | `terra1ceprj…cw55f` | `terra1jv6y0…dzdgy` | yes (~100%) |
 | UST1/SpaceUSD | `terra1xx5t5…hahxy` | `terra1s3jk9…qj7twz` | yes (~100%) |
+| CL8Y-cb/cUSTC | `terra1tz5vw…89upc` | `terra1u277x…jen2c` | yes (~100%) — [#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20) |
+| CL8Y-cb/ALPHA | `terra163qm8…7k40z` | `terra1hymuu…g87rc` | yes (~100%) |
+| UST1/ALPHA | `terra1rmdtc…hn5u6` | `terra12ff3n…xkrmp` | yes (~100%) |
 
 **Do not pin** (catalog only, LCD LP balance 0): cLUNC/UST1 (`terra1su536…mm7h4` / `terra1mk3kr…2cagk`), CL8Y-cb/cLUNC (`terra1q5kar…wqvq0` / `terra13rfqc…0jcwu`), cLUNC/cUSTC (`terra15rl8g…szau38` / `terra132uuz…z6tdch`). Unrelated indexer gems (EMBER/CORAL/…) stay out of scope.
+
+CL8Y-cb spot (`terra16wtml…hpax3`, 18 decimals) is a tokenlist CW20 so LP legs classify as `other`. Spot USD uses LCD `{ pool: {} }` reserve ratio on the CL8Y-cb/cUSTC pair (`quoteAsset: ustc`) — CL8Y DEX has `hybrid_simulation`, not Terraswap `simulation`, and must never use a 1e6 Garuda fallback (that would understate 18dp by 10^12). Ops should still `AddCw20` the three new LP CW20s when governance next touches the whitelist.
 
 Independent CR check: `cd frontend && node scripts/verify-treasury-cr.mjs`.
 

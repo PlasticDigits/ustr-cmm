@@ -8,7 +8,7 @@ description: >-
 
 # Frontend available-supply CR + gated tiers (#16)
 
-Companion: [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16). Revises [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [frontend-ust1-ratios](../frontend-ust1-ratios/SKILL.md) and [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14) / [frontend-treasury-lp-nav](../frontend-treasury-lp-nav/SKILL.md). vFDUSD USD: [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [frontend-vfdusd-oracle](../frontend-vfdusd-oracle/SKILL.md). CL8Y catalog / new pins: [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18) / [frontend-treasury-cl8y-holdings](../frontend-treasury-cl8y-holdings/SKILL.md). Economics bands: [docs/ECONOMICS.md](../../docs/ECONOMICS.md). Holdings tile layout (display-only): [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21) / [frontend-treasury-assets-layout](../frontend-treasury-assets-layout/SKILL.md).
+Companion: [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16). Revises [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [frontend-ust1-ratios](../frontend-ust1-ratios/SKILL.md) and [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14) / [frontend-treasury-lp-nav](../frontend-treasury-lp-nav/SKILL.md). vFDUSD USD: [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [frontend-vfdusd-oracle](../frontend-vfdusd-oracle/SKILL.md). CL8Y catalog / new pins: [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18) / [frontend-treasury-cl8y-holdings](../frontend-treasury-cl8y-holdings/SKILL.md). CL8Y-cb/cUSTC pin: [#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20). Economics bands: [docs/ECONOMICS.md](../../docs/ECONOMICS.md). Holdings tile layout (display-only): [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21) / [frontend-treasury-assets-layout](../frontend-treasury-assets-layout/SKILL.md).
 
 Cross-links: [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [docs/CONTRACTS.md](../../docs/CONTRACTS.md), [frontend/src/utils/availableSupply.ts](../../frontend/src/utils/availableSupply.ts), [frontend/src/utils/crTiers.ts](../../frontend/src/utils/crTiers.ts), [frontend/src/utils/treasuryRatios.ts](../../frontend/src/utils/treasuryRatios.ts), [frontend/src/hooks/useTreasury.ts](../../frontend/src/hooks/useTreasury.ts).
 
@@ -39,7 +39,7 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 7. **Liability unit** 1 UST1 = $1 for the ratio only. Do not put UST1 in the numerator.
 8. **Price gate:** Key Ratios body is exactly `prices not loaded, cannot display key ratios` unless every CR-relevant spot (`balance > 0`) and every LP `other` leg is priced **and** available supply is known. No N/A grid, no incomplete banner, no colored % while loading.
 9. **Tiers** (status display, not on-chain enforcement): RED `<95`, YELLOW `[95, 110)`, GREEN `[110, 190]`, BLUE `>190` including `∞`.
-10. **Decimals:** `rawToWholeNumber` only. UST1/wraps/native 6; USTR 18; CL8Y LP mint 18.
+10. **Decimals:** `rawToWholeNumber` only. UST1/wraps/native 6; USTR / CL8Y-cb 18; CL8Y LP mint 18.
 11. **Skip list exact:** `UST1-USTR` is not `UST1`. `type: "lp"` never uses the raw-protocol skip.
 12. **No** missing USD as `$0` / `$1`. No LP mint `simulate_swap`. vFDUSD remains session oracle.
 

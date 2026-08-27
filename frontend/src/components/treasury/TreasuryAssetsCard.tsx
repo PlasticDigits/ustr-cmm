@@ -163,7 +163,9 @@ function AssetTile({
         )}
         {asset.kind === 'lp' && asset.navIncomplete && (
           <div data-testid="treasury-asset-nav-incomplete" className="text-[10px] text-amber-400/80 break-words">
-            NAV incomplete
+            {asset.missingPriceLegs && asset.missingPriceLegs.length > 0
+              ? `NAV incomplete · ${asset.missingPriceLegs.join(', ')}`
+              : 'NAV incomplete'}
           </div>
         )}
       </div>
