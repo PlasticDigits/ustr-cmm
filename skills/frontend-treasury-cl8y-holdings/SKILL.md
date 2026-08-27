@@ -8,7 +8,7 @@ description: >-
 
 # CL8Y holdings discovery (#18)
 
-Companion: [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18). CR math: [frontend-treasury-available-supply](../frontend-treasury-available-supply/SKILL.md) / [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16). Allowlist NAV: [frontend-treasury-lp-nav](../frontend-treasury-lp-nav/SKILL.md) / [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14).
+Companion: [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18). CR math: [frontend-treasury-available-supply](../frontend-treasury-available-supply/SKILL.md) / [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16). Allowlist NAV: [frontend-treasury-lp-nav](../frontend-treasury-lp-nav/SKILL.md) / [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14). Long labels on holdings tiles: [frontend-treasury-assets-layout](../frontend-treasury-assets-layout/SKILL.md) / [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21).
 
 Cross-links: [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [docs/CONTRACTS.md](../../docs/CONTRACTS.md), [frontend/src/utils/cl8yHoldings.ts](../../frontend/src/utils/cl8yHoldings.ts), [frontend/scripts/discover-cl8y-holdings.mjs](../../frontend/scripts/discover-cl8y-holdings.mjs), [frontend/scripts/verify-treasury-cr.mjs](../../frontend/scripts/verify-treasury-cr.mjs).
 

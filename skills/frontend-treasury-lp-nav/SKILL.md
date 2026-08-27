@@ -4,14 +4,15 @@ description: >-
   Allowlisted protocol LP shares as treasury assets with reserve NAV USD;
   only non-protocol (`other`) legs enter CR (GitLab #14, revised by #16).
   Use when changing tokenlist type:lp, lpNav, lpEligibility, treasuryLp,
-  useTreasury LP merge, or LP rows on TreasuryAssetsCard.
+  useTreasury LP merge, or LP row *data* on TreasuryAssetsCard.
+  Tile layout / ellipsis / breakpoints: frontend-treasury-assets-layout (#21).
 ---
 
 # Frontend protocol LP NAV + CR (#14, revised by #16)
 
-Companion: [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14), CR haircut revised by [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16) / [frontend-treasury-available-supply](../frontend-treasury-available-supply/SKILL.md). Liability/CR core: [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [frontend-ust1-ratios](../frontend-ust1-ratios/SKILL.md). vFDUSD USD: [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [frontend-vfdusd-oracle](../frontend-vfdusd-oracle/SKILL.md).
+Companion: [#14](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/14), CR haircut revised by [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16) / [frontend-treasury-available-supply](../frontend-treasury-available-supply/SKILL.md). Liability/CR core: [#11](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/11) / [frontend-ust1-ratios](../frontend-ust1-ratios/SKILL.md). vFDUSD USD: [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10) / [frontend-vfdusd-oracle](../frontend-vfdusd-oracle/SKILL.md). Tile layout (no ellipsis, 3-col only at `xl`): [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21) / [frontend-treasury-assets-layout](../frontend-treasury-assets-layout/SKILL.md).
 
-Cross-links: [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [docs/CONTRACTS.md](../../docs/CONTRACTS.md), [frontend/src/utils/lpNav.ts](../../frontend/src/utils/lpNav.ts), [frontend/src/hooks/useTreasury.ts](../../frontend/src/hooks/useTreasury.ts).
+Cross-links: [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md), [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md), [docs/CONTRACTS.md](../../docs/CONTRACTS.md), [frontend/src/utils/lpNav.ts](../../frontend/src/utils/lpNav.ts), [frontend/src/hooks/useTreasury.ts](../../frontend/src/hooks/useTreasury.ts), [frontend-treasury-assets-layout](../frontend-treasury-assets-layout/SKILL.md).
 
 ## Why this exists
 

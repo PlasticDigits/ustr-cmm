@@ -208,7 +208,7 @@ npm install
 npm test
 ```
 
-Unit tests cover vFDUSD oracle parse/session cache, UST1 CR math, CL8Y catalog pin-diff, Legal redirect allowlisting, and Keplr-compatible / Trust Wallet inject detection ([#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4), [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)–[#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12), [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16), [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18)).
+Unit tests cover vFDUSD oracle parse/session cache, UST1 CR math, CL8Y catalog pin-diff, Legal redirect allowlisting, Keplr-compatible / Trust Wallet inject detection, and Treasury Assets display helpers (grid breakpoints, CR haircut copy, card-only amounts) ([#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4), [#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)–[#12](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/12), [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16), [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18), [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21)).
 
 ```bash
 npm run test:e2e
@@ -216,7 +216,7 @@ node scripts/verify-treasury-cr.mjs
 node scripts/discover-cl8y-holdings.mjs
 ```
 
-Wallet connect (Trust / Keplr-compatible in-app browsers): [docs/WALLETS.md](../docs/WALLETS.md) / [skills/frontend-keplr-compatible-wallets](../skills/frontend-keplr-compatible-wallets/SKILL.md). CL8Y holdings catalog: [skills/frontend-treasury-cl8y-holdings](../skills/frontend-treasury-cl8y-holdings/SKILL.md).
+Wallet connect (Trust / Keplr-compatible in-app browsers): [docs/WALLETS.md](../docs/WALLETS.md) / [skills/frontend-keplr-compatible-wallets](../skills/frontend-keplr-compatible-wallets/SKILL.md). CL8Y holdings catalog: [skills/frontend-treasury-cl8y-holdings](../skills/frontend-treasury-cl8y-holdings/SKILL.md). Treasury Assets tablet layout: [skills/frontend-treasury-assets-layout](../skills/frontend-treasury-assets-layout/SKILL.md).
 
 ## Legal clickwrap
 
