@@ -30,8 +30,8 @@ export function TreasuryPage() {
         </h2>
         <p className="text-gray-400 max-w-2xl mx-auto text-base md:text-lg">
           Transparent view of treasury assets backing UST1. Collateralization uses
-          CR CMM Assets over CR CMM Liabilities (outstanding UST1, cUSTC, cLUNC debt
-          and USTR equity, minus CMM-owned).
+          CR CMM Assets over CR CMM Liabilities (outstanding UST1, cUSTC, and cLUNC
+          debt, minus CMM-owned). USTR is equity and is not a CR liability.
         </p>
       </div>
 
@@ -77,7 +77,7 @@ export function TreasuryPage() {
             decimals={18}
             gradient="from-amber-500/20 to-orange-500/20"
             isLoading={isLoading}
-            isCrLiability
+            isEquity
             explorerUrl={`${scanner}/address/${contracts.ustrToken}`}
           />
         </div>
@@ -112,9 +112,10 @@ export function TreasuryPage() {
         </div>
       </div>
       <p className="text-xs text-gray-500 -mt-6 mb-8 md:mb-10">
-        Available supply of UST1, cUSTC, and cLUNC (debt) and USTR (equity) is the
-        CR CMM Liabilities stack. CMM-owned wrap receipts and protocol tokens are
-        omitted from CR CMM Assets so native LUNC/USTC are not double-counted.
+        Available supply of UST1, cUSTC, and cLUNC (redeemable debt) is the CR CMM
+        Liabilities stack. USTR is equity and is omitted. CMM-owned wrap receipts
+        and protocol tokens are omitted from CR CMM Assets so native LUNC/USTC are
+        not double-counted.
       </p>
 
       <div className="animate-fade-in-up stagger-5">

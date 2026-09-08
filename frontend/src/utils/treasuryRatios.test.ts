@@ -316,7 +316,7 @@ describe('computeTreasuryRatios', () => {
     expect(result.includedSymbols).toEqual(['vFDUSD']);
   });
 
-  it('wrap debt + USTR equity enter Total and CR liabilities; CMM-owned is the haircut', () => {
+  it('wrap debt enters Total and CR liabilities; CMM-owned is the haircut; USTR equity is omitted', () => {
     const result = computeTreasuryRatios({
       ust1AvailableRaw: UST1_1M,
       ust1Decimals: 6,
@@ -352,15 +352,15 @@ describe('computeTreasuryRatios', () => {
         },
       ],
     });
-    // Total liab: UST1 1.1e6 + USTR 2 + cLUNC 100 + cUSTC 100 = 1,100,202
-    expect(result.totalLiabilitiesUsd).toBeCloseTo(1_100_202);
-    // CR liab: UST1 1e6 + USTR 1 + cLUNC 80 + cUSTC 40 = 1,000,121
-    expect(result.crLiabilitiesUsd).toBeCloseTo(1_000_121);
-    expect(result.collateralization).toBeCloseTo((2_000_000 / 1_000_121) * 100);
+    // Total liab: UST1 1.1e6 + cLUNC 100 + cUSTC 100 = 1,100,200 (USTR omitted)
+    expect(result.totalLiabilitiesUsd).toBeCloseTo(1_100_200);
+    // CR liab: UST1 1e6 + cLUNC 80 + cUSTC 40 = 1,000,120
+    expect(result.crLiabilitiesUsd).toBeCloseTo(1_000_120);
+    expect(result.collateralization).toBeCloseTo((2_000_000 / 1_000_120) * 100);
     expect(result.pricesReady).toBe(true);
   });
 
-  it('unpriced USTR with outstanding supply fail-closes CR liabilities', () => {
+  it('unpriced USTR does not fail-close CR — equity is not a liability', () => {
     const result = computeTreasuryRatios({
       ust1AvailableRaw: UST1_1M,
       ust1Decimals: 6,
@@ -382,10 +382,12 @@ describe('computeTreasuryRatios', () => {
         zeroWrap('cUSTC'),
       ],
     });
-    expect(result.liabilityStatus).toBe('unknown');
-    expect(result.missingPriceSymbols).toContain('USTR');
-    expect(result.pricesReady).toBe(false);
-    expect(Number.isNaN(result.collateralization)).toBe(true);
+    expect(result.liabilityStatus).toBe('positive');
+    expect(result.missingPriceSymbols).not.toContain('USTR');
+    expect(result.pricesReady).toBe(true);
+    expect(result.collateralization).toBeCloseTo(200);
+    expect(result.totalLiabilitiesUsd).toBeCloseTo(1_000_000);
+    expect(result.crLiabilitiesUsd).toBeCloseTo(1_000_000);
   });
 
   it('not-launched wraps are skipped; uncertified wrap inventory fail-closes', () => {

@@ -23,6 +23,8 @@ interface IssuanceCardProps {
   heading?: string;
   /** This token's available supply is part of CR CMM Liabilities. */
   isCrLiability?: boolean;
+  /** Equity token (USTR): shown for inventory, omitted from CR liabilities. */
+  isEquity?: boolean;
 }
 
 export function IssuanceCard({
@@ -36,6 +38,7 @@ export function IssuanceCard({
   explorerUrl,
   heading,
   isCrLiability = false,
+  isEquity = false,
 }: IssuanceCardProps) {
   const outstandingFormatted = formatAmount(issuance.outstanding, decimals, 0);
   const cmmOwnedFormatted = formatAmount(issuance.cmmOwned, decimals, 0);
@@ -127,6 +130,7 @@ export function IssuanceCard({
           <p className="mt-3 text-xs text-gray-500">
             Available supply = outstanding − CMM-owned (treasury spot + allowlisted LP claims).
             {isCrLiability && ' Available supply is part of CR CMM Liabilities.'}
+            {isEquity && ' USTR is equity, not a redeemable liability, and is omitted from CR CMM Liabilities.'}
             {!inventoryKnown && !isLoading && ' Inventory is incomplete — available supply is not certified.'}
           </p>
         )}

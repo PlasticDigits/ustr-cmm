@@ -4,8 +4,8 @@
  * Fetches treasury holdings from tokenlist.json plus protocol-token inventory.
  * Total CMM Assets include protocol issued tokens held spot or in CMM LP.
  * CR CMM Assets omit those. CR denominator is available UST1 + cUSTC + cLUNC
- * (debt) and USTR (equity). Key Ratios stay hidden until every CR price and
- * CR liability is certified.
+ * (redeemable debt only). USTR is equity and is not a CR liability. Key Ratios
+ * stay hidden until every CR price and CR liability is certified.
  */
 
 import { useMemo } from 'react';
@@ -337,7 +337,6 @@ export function useTreasury() {
       prices,
       liabilities: [
         liabilityOf('UST1', data.ust1Issuance, 'ust1', 6),
-        liabilityOf('USTR', data.ustrIssuance, 'ustr', 18),
         liabilityOf('cLUNC', data.cLuncIssuance, 'cLunc', 6),
         liabilityOf('cUSTC', data.cUstcIssuance, 'cUstc', 6),
       ],

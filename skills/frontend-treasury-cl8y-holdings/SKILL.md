@@ -41,7 +41,7 @@ Unrelated gems (EMBER/CORAL/…) stay out.
 3. **Hold signal is LCD** `balance` of `lp_token` at the treasury pin. Indexer `GET /api/v1/traders/{treasury}/positions` was `[]` on 2026-08-25 while treasury held three LPs — **do not** use it as a hold or as a speed-up for CR.
 4. **Fail closed on stale indexer.** 5xx / missing `items` → discovery incomplete. The Treasury page keeps using tokenlist + LCD.
 5. **Pin then `AddCw20`.** A new held LP enters CR only after a `type: "lp"` pin **and** governance whitelist (live `Cw20Whitelist` is still empty — `AllBalances` is native-only; UI must keep querying pins).
-6. **Protocol tokens** (UST1, USTR, cLUNC, cUSTC) stay out of **CR CMM Assets**. They enter **Total CMM Assets** when CMM holds them (spot or LP). CR CMM Liabilities use available UST1 + wraps + USTR. CL8Y-cb is **not** a protocol token — LP other-leg NAV enters CR ([#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20)). cLUNC/cUSTC LP claims reduce wrap available supply.
+6. **Protocol tokens** (UST1, USTR, cLUNC, cUSTC) stay out of **CR CMM Assets**. They enter **Total CMM Assets** when CMM holds them (spot or LP). CR CMM Liabilities use available UST1 + wraps only (USTR is equity, not debt). CL8Y-cb is **not** a protocol token — LP other-leg NAV enters CR ([#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20)). cLUNC/cUSTC LP claims reduce wrap available supply.
 7. **Skip-list exactness** unchanged: `UST1-USTR` is not `UST1`.
 
 ## Tests

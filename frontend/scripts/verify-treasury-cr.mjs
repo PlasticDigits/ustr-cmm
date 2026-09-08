@@ -5,7 +5,8 @@
  * CR = CR CMM Assets / CR CMM Liabilities × 100
  * CR CMM Assets = Σ non-protocol spot USD + Σ LP other-leg NAV
  * Total CMM Assets = CR assets + protocol spot USD + LP protocol-leg NAV
- * CR CMM Liabilities = available UST1×$1 + cUSTC×USTC + cLUNC×LUNC + USTR×USTR
+ * CR CMM Liabilities = available UST1×$1 + cUSTC×USTC + cLUNC×LUNC
+ * (USTR is equity, not a liability).
  * Available = total_supply − treasury_spot − Σ allowlisted LP claims
  *
  * LCD is source of truth. Does not read the frontend or indexer prices into the
@@ -338,12 +339,10 @@ async function main() {
   const totalAssetsUsd = crAssetsUsd + protocolSpotUsd + lpProtocolUsd;
   const totalLiabilitiesUsd =
     whole(ust1Supply, 6) * 1 +
-    whole(ustrSupply, 18) * ustrUsd +
     whole(cluncSupply, 6) * px.LUNC +
     whole(custcSupply, 6) * px.USTC;
   const crLiabilitiesUsd =
     whole(avail.ust1, 6) * 1 +
-    whole(avail.ustr, 18) * ustrUsd +
     whole(avail.cLunc, 6) * px.LUNC +
     whole(avail.cUstc, 6) * px.USTC;
   const denom = crLiabilitiesUsd;
