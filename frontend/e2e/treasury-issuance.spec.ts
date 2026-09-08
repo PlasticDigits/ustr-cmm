@@ -9,5 +9,6 @@ test('issuance cards show outstanding, CMM-owned, and available supply', async (
     await expect(card.getByText('− CMM-owned liquidity', { exact: true })).toBeVisible();
     await expect(card.getByText('Available Supply', { exact: true })).toBeVisible();
   }
-  await expect(page.getByText('Available supply is part of CR CMM Liabilities.')).toHaveCount(4);
+  await expect(page.getByText('Available supply is part of CR CMM Liabilities.')).toHaveCount(3);
+  await expect(page.getByText(/USTR is equity, not a redeemable liability/)).toBeVisible();
 });

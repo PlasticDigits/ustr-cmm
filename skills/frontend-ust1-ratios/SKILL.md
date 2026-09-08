@@ -24,7 +24,7 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 
 ## Invariants (must hold)
 
-1. **Denominator** = **CR CMM Liabilities** = available UST1 ($1 debt) + cUSTC (USTC USD) + cLUNC (LUNC USD) + USTR (equity USD). Never raw `total_supply` alone. Never window volume. See [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16).
+1. **Denominator** = **CR CMM Liabilities** = available UST1 ($1 debt) + cUSTC (USTC USD) + cLUNC (LUNC USD). USTR is equity (no redemption) and is **not** in the denominator. Never raw `total_supply` alone. Never window volume. See [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16).
 2. **∞ only if** CR liability inventories succeeded **and** CR liabilities === 0. Query failure → hide Key Ratios, **never** `∞`.
 3. **Supply > 0 → compute.** Never the stub `hasUst1Issued ? 0 : Infinity`.
 4. **CR%** = (CR CMM Assets / CR CMM Liabilities) × 100. CR CMM Assets = priced non-protocol USD. Protocol issued tokens held by CMM enter **Total CMM Assets** only.
@@ -32,7 +32,7 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 6. **UST1 is not a CR asset and not an LP CR leg.** CMM-held UST1/cLUNC/cUSTC/USTR **do** appear as holdings tiles (Total only). An allowlisted LP’s UST1 leg is **not** CR-eligible.
 7. **Incomplete prices:** Key Ratios shows only `prices not loaded, cannot display key ratios`. Never treat missing USD as $0 or $1. Never paint a partial GREEN/BLUE CR.
 8. **Decimals:** split bigint before `Number` ([decimals.ts](../../frontend/src/utils/decimals.ts)). UST1/cLUNC/cUSTC 6dp; USTR 18.
-9. **Issuance card:** `+ Outstanding` / `− CMM-owned liquidity` / **Available Supply**. Available feeds CR CMM Liabilities. Do not invent lifetime mint/burn. Do not scan LCD txs / `all_accounts`.
+9. **Issuance card:** `+ Outstanding` / `− CMM-owned liquidity` / **Available Supply**. Available UST1 / cUSTC / cLUNC feeds CR CMM Liabilities. USTR issuance is inventory only. Do not invent lifetime mint/burn. Do not scan LCD txs / `all_accounts`.
 10. **getTokenInfoStrict / getTokenBalanceStrict:** do not use the swallowing `getTokenInfo` / `getTokenBalance` for protocol inventory (fake 0 → fake ∞ or undercounted CMM-owned).
 11. **Color tiers** (if touching RatiosCard): RED `<95`, YELLOW `[95, 110)`, GREEN `[110, 190]`, BLUE `>190` including `∞`. Copy is status display — see [frontend-treasury-available-supply](../frontend-treasury-available-supply/SKILL.md).
 

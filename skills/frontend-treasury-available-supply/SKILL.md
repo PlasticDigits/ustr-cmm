@@ -22,7 +22,7 @@ Counting UST1 / USTR (or their LP legs) as assets is treasury-stock distortion. 
 |------|---------|----------|------|
 | Treasury | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` | — | Only CMM holder for owned liquidity |
 | UST1 | `terra1f0eqgy9w7e5e7up97vjudqwx38tesf8ylx75x2lv3nwm0clry0pqmgfy72` | 6 | Liability; not a CR asset |
-| USTR | `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv` | 18 | Ecosystem equity-like; not a CR asset |
+| USTR | `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv` | 18 | Ecosystem equity; not a CR asset or CR liability |
 | cLUNC | `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg` | 6 | Wrap receipt |
 | cUSTC | `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch` | 6 | Wrap receipt |
 
@@ -35,8 +35,8 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 3. **Display NAV / Total CMM Assets** include protocol legs and CMM-held protocol spot. CR CMM Assets omit them.
 4. **CMM-owned** = treasury **spot** + pro-rata allowlisted LP claims `floor(reserve_i × lp_balance / total_share)`. Treasury pin only. No window / wrap-mapper / `all_accounts` / LCD tx crawl. One claim per LP address.
 5. **Available supply** = outstanding − CMM-owned. Outstanding = `getTokenInfoStrict`. Spot / LP balance = `getTokenBalanceStrict`. Negative would-be float → clamp display 0 and **fail closed**.
-6. **CR denominator** = **CR CMM Liabilities** = available supply of UST1 ($1 debt) + cUSTC (USTC USD debt) + cLUNC (LUNC USD debt) + USTR (equity USD). `∞` only when those inventories are certified **and** CR liabilities === 0. Failure → hide Key Ratios, never `∞`.
-7. **Liability units:** 1 UST1 = $1. Wraps use native LUNC/USTC USD. USTR uses a mapped print or the UST1/USTR pool reserve ratio — never invented $1. Do not put protocol issued tokens in the CR numerator.
+6. **CR denominator** = **CR CMM Liabilities** = available supply of UST1 ($1 debt) + cUSTC (USTC USD debt) + cLUNC (LUNC USD debt). USTR is equity and is **not** a CR liability. `∞` only when those debt inventories are certified **and** CR liabilities === 0. Failure → hide Key Ratios, never `∞`.
+7. **Liability units:** 1 UST1 = $1. Wraps use native LUNC/USTC USD. USTR uses a mapped print or the UST1/USTR pool reserve ratio for **Total CMM Assets** only — never invented $1. Do not put protocol issued tokens in the CR numerator or USTR in the CR denominator.
 8. **Price gate:** Key Ratios body is exactly `prices not loaded, cannot display key ratios` unless every CR-relevant spot (`balance > 0`) and every LP `other` leg is priced **and** CR liabilities are known. Total CMM Assets may show N/A independently if protocol spot is unpriced.
 9. **Tiers** (status display, not on-chain enforcement): RED `<95`, YELLOW `[95, 110)`, GREEN `[110, 190]`, BLUE `>190` including `∞`.
 10. **Decimals:** `rawToWholeNumber` only. UST1/wraps/native 6; USTR / CL8Y-cb 18; CL8Y LP mint 18.
@@ -49,4 +49,4 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 cd frontend && npm test
 ```
 
-Fixtures: 1e6 available + $2e6 assets → 200% / BLUE. Same assets + 500k CMM-owned → 400%. Protocol spot in Total not CR. Wrap debt + USTR equity in liabilities; CMM-owned is the haircut.
+Fixtures: 1e6 available + $2e6 assets → 200% / BLUE. Same assets + 500k CMM-owned → 400%. Protocol spot in Total not CR. Wrap debt in liabilities; USTR equity omitted; CMM-owned is the haircut.

@@ -7,9 +7,10 @@
  * - CR CMM Assets = Total minus those protocol issued tokens. Spot non-protocol
  *   USD + LP `other` NAV (`crUsd`). Native LUNC/USTC still count.
  * - Total Liabilities = outstanding UST1 ($1 debt) + cUSTC (USTC USD debt) +
- *   cLUNC (LUNC USD debt) + USTR (equity USD).
+ *   cLUNC (LUNC USD debt). USTR is equity (no redemption promise) and is not
+ *   a liability.
  * - CR CMM Liabilities = those minus CMM-owned (spot + allowlisted LP claims),
- *   i.e. available supply × the same unit prices.
+ *   i.e. available supply × the same unit prices. USTR is omitted.
  * - CR% and Assets/Liabilities use CR CMM Assets / CR CMM Liabilities.
  * - ∞ only when CR liabilities are certified and === 0. Inventory / price
  *   failure → NaN, never ∞.
@@ -41,7 +42,7 @@ export interface RatioAssetInput {
 }
 
 export interface ProtocolLiabilityInput {
-  /** Display / missing-price label (UST1, USTR, cLUNC, cUSTC). */
+  /** Display / missing-price label (UST1, cLUNC, cUSTC). USTR is skipped. */
   label: string;
   /**
    * `null` together with `inventoryKnown === false` and no availableRaw = not
@@ -353,6 +354,8 @@ export function sumProtocolLiabilities(items: ProtocolLiabilityInput[]): {
   let anyPositiveCr = false;
 
   for (const item of items) {
+    // USTR is equity, not a redeemable claim — never count against CR / totals.
+    if (item.label === 'USTR') continue;
     const skipped =
       !item.inventoryKnown && item.outstandingRaw === null && item.availableRaw === null;
     if (skipped) continue;
