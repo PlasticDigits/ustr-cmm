@@ -2,7 +2,8 @@
  * Protocol-LP holding + CR-leg rules (#14, revised by #16).
  *
  * Invariants:
- * - Raw UST1 / USTR / cLUNC / cUSTC are never treasury holdings (exact symbol or pinned address).
+ * - Raw UST1 / USTR / cLUNC / cUSTC are skipped by the tokenlist loop and injected
+ *   as Total-only holdings (CR haircut) by useTreasury.
  * - `type: "lp"` is never skipped by symbol substring (UST1-USTR is not UST1).
  * - Wrap / protocol haircut applies only to pinned addresses — not a lookalike symbol.
  * - CR-eligible LP legs are `other` only. ust1 / ustr / wrap / unknown are out of `crUsd`.

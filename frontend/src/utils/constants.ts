@@ -166,7 +166,7 @@ export const VFDUSD_ORACLE = {
   sessionSchemaVersion: 1,
 } as const;
 
-/** Symbols/addresses that are liabilities or wrap receipts — never treasury CR holdings. */
+/** Symbols/addresses skipped by the tokenlist CR loop — injected as Total-only holdings. */
 export const TREASURY_HOLDING_SKIP_SYMBOLS = ['USTR', 'UST1', 'CLUNC', 'CUSTC'] as const;
 
 /**

@@ -360,7 +360,7 @@ Because UST1 doesn't promise instant redemption at exactly $1, there's no reason
 
 The 95 / 110 / 190 bands are shared. Two readings:
 
-**Treasury page (live frontend, [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)):** CR = (non-protocol spot USD + LP `other` NAV) / UST1 **available supply**. Key Ratios stay hidden until every CR-relevant price is loaded. Operational copy (status display — contracts do not yet enforce these swap/staking gates):
+**Treasury page (live frontend, [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16)):** CR = **CR CMM Assets / CR CMM Liabilities**. CR CMM Assets = non-protocol spot USD + LP `other` NAV. CR CMM Liabilities = available UST1 ($1 debt) + cUSTC + cLUNC (native USD debt) + USTR (equity). Key Ratios stay hidden until every CR-relevant price and liability inventory is loaded. Operational copy (status display — contracts do not yet enforce these swap/staking gates):
 
 | Color | CR | UST1 ↔ collateral swap | Staking rewards | System |
 |-------|----|------------------------|-----------------|--------|

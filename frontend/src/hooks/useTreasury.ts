@@ -2,9 +2,10 @@
  * useTreasury Hook
  *
  * Fetches treasury holdings from tokenlist.json plus protocol-token inventory.
- * CR numerator = non-protocol spot + LP `other` NAV. Denominator = UST1 available
- * supply (outstanding − CMM-owned). Key Ratios stay hidden until every CR price
- * is loaded (#11 / #14 / #16).
+ * Total CMM Assets include protocol issued tokens held spot or in CMM LP.
+ * CR CMM Assets omit those. CR denominator is available UST1 + cUSTC + cLUNC
+ * (debt) and USTR (equity). Key Ratios stay hidden until every CR price and
+ * CR liability is certified.
  */
 
 import { useMemo } from 'react';
@@ -14,15 +15,16 @@ import { fetchTreasuryLpPositions, type LpChainPosition } from '../services/trea
 import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants';
 import { isTerraContractAddress } from '../utils/addresses';
 import { isRawProtocolHolding, resolveLpLegUsd } from '../utils/lpEligibility';
-import { computeLpNav } from '../utils/lpNav';
+import { computeLpNav, type LpNavLegInput } from '../utils/lpNav';
 import { fetchTokenList } from '../utils/tokenlist';
-import { computeTreasuryRatios, type RatioAssetInput } from '../utils/treasuryRatios';
+import { computeTreasuryRatios, type ProtocolLiabilityInput, type RatioAssetInput } from '../utils/treasuryRatios';
 import {
   aggregateProtocolOwned,
   toIssuanceBreakdown,
   type ProtocolTokenId,
   type TokenIssuanceBreakdown,
 } from '../utils/availableSupply';
+import { PROTOCOL_HOLDING_META, protocolHoldingUsd, protocolTokenUnitUsd, resolveUstrUsd } from '../utils/protocolHoldings';
 import { isLpTokenListEntry } from '../types/tokenlist';
 import type { TreasuryData, TreasuryAsset, TokenIssuance, TreasuryRatios } from '../types/treasury';
 import { usePrices } from './usePrices';
@@ -32,6 +34,7 @@ const contracts = CONTRACTS[DEFAULT_NETWORK];
 interface TreasuryChainData {
   assets: Record<string, TreasuryAsset>;
   lpPositions: LpChainPosition[];
+  protocolSpot: Record<ProtocolTokenId, bigint | null>;
   ust1Issuance: TokenIssuance;
   ustrIssuance: TokenIssuance;
   cLuncIssuance: TokenIssuance | null;
@@ -148,6 +151,7 @@ async function fetchTreasuryData(): Promise<TreasuryChainData> {
   return {
     assets,
     lpPositions,
+    protocolSpot: { ust1: ust1Spot, ustr: ustrSpot, cLunc: cLuncSpot, cUstc: cUstcSpot },
     ust1Issuance: issuanceFor(ust1Outstanding, owned.ust1),
     ustrIssuance: issuanceFor(ustrOutstanding, owned.ustr),
     cLuncIssuance: wrapIssuance('cLunc', cLuncOutstanding),
@@ -160,11 +164,17 @@ const EMPTY_RATIOS: TreasuryRatios = {
   collateralization: Number.NaN,
   ustcPerUst1: Number.NaN,
   assetsToLiabilities: Number.NaN,
+  totalAssetsUsd: Number.NaN,
+  crAssetsUsd: Number.NaN,
+  totalLiabilitiesUsd: Number.NaN,
+  crLiabilitiesUsd: Number.NaN,
   incomplete: true,
+  totalIncomplete: true,
   pricesReady: false,
   includedSymbols: [],
   missingPriceSymbols: [],
   ust1SupplyStatus: 'unknown',
+  liabilityStatus: 'unknown',
   tier: null,
 };
 
@@ -191,11 +201,22 @@ export function useTreasury() {
       decimals: asset.decimals,
     }));
 
+    const lpLegSets: LpNavLegInput[][] = [];
     for (const pos of data.lpPositions) {
       if (pos.lpBalance <= 0n && !pos.balanceUnknown) continue;
 
+      const pricedLegs =
+        pos.legs?.map((leg) => ({
+          symbol: leg.symbol,
+          amountRaw: leg.amountRaw,
+          decimals: leg.decimals,
+          kind: leg.kind,
+          usd: resolveLpLegUsd(leg.kind, leg.symbol, prices),
+        })) ?? null;
+      if (pricedLegs) lpLegSets.push(pricedLegs);
+
       const nav =
-        pos.queryFailed || !pos.legs || pos.totalShare === null
+        pos.queryFailed || !pricedLegs || pos.totalShare === null
           ? {
               displayUsd: null as number | null,
               crUsd: null as number | null,
@@ -206,13 +227,7 @@ export function useTreasury() {
           : computeLpNav({
               lpBalance: pos.lpBalance,
               totalShare: pos.totalShare,
-              legs: pos.legs.map((leg) => ({
-                symbol: leg.symbol,
-                amountRaw: leg.amountRaw,
-                decimals: leg.decimals,
-                kind: leg.kind,
-                usd: resolveLpLegUsd(leg.kind, leg.symbol, prices),
-              })),
+              legs: pricedLegs,
             });
 
       if (pos.lpBalance > 0n) {
@@ -245,6 +260,40 @@ export function useTreasury() {
           balanceRaw: pos.lpBalance,
           decimals: pos.lpDecimals,
           crUsd: nav.crUsd,
+          displayUsd: nav.displayUsd,
+        });
+      }
+    }
+
+    const ustrUsd = resolveUstrUsd(prices, lpLegSets);
+    const protocolIds: ProtocolTokenId[] = ['ust1', 'ustr', 'cLunc', 'cUstc'];
+    for (const id of protocolIds) {
+      const meta = PROTOCOL_HOLDING_META[id];
+      const spot = data.protocolSpot[id];
+      const displayUsd = protocolHoldingUsd(id, spot, prices, ustrUsd);
+      if (spot !== null && spot > 0n) {
+        assets[meta.displayName.toLowerCase()] = {
+          denom: meta.address,
+          balance: spot,
+          decimals: meta.decimals,
+          displayName: meta.displayName,
+          gradient: meta.gradient,
+          iconColor: meta.iconColor,
+          kind: 'spot',
+          protocolIssued: true,
+          displayUsd,
+          crUsd: 0,
+          haircutLegs: [meta.displayName],
+          explorerAddress: meta.address,
+        };
+      }
+      if (spot === null || spot > 0n) {
+        ratioAssets.push({
+          symbol: meta.displayName,
+          balanceRaw: spot ?? 0n,
+          decimals: meta.decimals,
+          crUsd: 0,
+          displayUsd,
         });
       }
     }
@@ -253,6 +302,32 @@ export function useTreasury() {
       ? data.ust1Issuance.availableSupply
       : null;
 
+    const liabilityOf = (
+      label: string,
+      issuance: TokenIssuance | null,
+      id: ProtocolTokenId,
+      decimals: number
+    ): ProtocolLiabilityInput => {
+      if (issuance === null) {
+        return {
+          label,
+          outstandingRaw: null,
+          availableRaw: null,
+          inventoryKnown: false,
+          decimals,
+          usd: protocolTokenUnitUsd(id, prices, ustrUsd),
+        };
+      }
+      return {
+        label,
+        outstandingRaw: issuance.outstanding,
+        availableRaw: issuance.inventoryKnown ? issuance.availableSupply : null,
+        inventoryKnown: issuance.inventoryKnown,
+        decimals,
+        usd: protocolTokenUnitUsd(id, prices, ustrUsd),
+      };
+    };
+
     const computed = computeTreasuryRatios({
       ust1AvailableRaw: ust1Available,
       ust1Decimals: 6,
@@ -260,6 +335,12 @@ export function useTreasury() {
       ustcDecimals: data.assets.ustc?.decimals ?? 6,
       assets: ratioAssets,
       prices,
+      liabilities: [
+        liabilityOf('UST1', data.ust1Issuance, 'ust1', 6),
+        liabilityOf('USTR', data.ustrIssuance, 'ustr', 18),
+        liabilityOf('cLUNC', data.cLuncIssuance, 'cLunc', 6),
+        liabilityOf('cUSTC', data.cUstcIssuance, 'cUstc', 6),
+      ],
     });
 
     const ratios = pricesLoading

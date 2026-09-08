@@ -21,8 +21,8 @@ interface IssuanceCardProps {
   notLaunched?: boolean;
   explorerUrl?: string;
   heading?: string;
-  /** UST1 available supply is the CR denominator. */
-  isCrDenominator?: boolean;
+  /** This token's available supply is part of CR CMM Liabilities. */
+  isCrLiability?: boolean;
 }
 
 export function IssuanceCard({
@@ -35,7 +35,7 @@ export function IssuanceCard({
   notLaunched = false,
   explorerUrl,
   heading,
-  isCrDenominator = false,
+  isCrLiability = false,
 }: IssuanceCardProps) {
   const outstandingFormatted = formatAmount(issuance.outstanding, decimals, 0);
   const cmmOwnedFormatted = formatAmount(issuance.cmmOwned, decimals, 0);
@@ -126,7 +126,7 @@ export function IssuanceCard({
         {!notLaunched && (
           <p className="mt-3 text-xs text-gray-500">
             Available supply = outstanding − CMM-owned (treasury spot + allowlisted LP claims).
-            {isCrDenominator && ' UST1 available supply is the CR denominator.'}
+            {isCrLiability && ' Available supply is part of CR CMM Liabilities.'}
             {!inventoryKnown && !isLoading && ' Inventory is incomplete — available supply is not certified.'}
           </p>
         )}

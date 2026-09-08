@@ -30,7 +30,8 @@ export function TreasuryPage() {
         </h2>
         <p className="text-gray-400 max-w-2xl mx-auto text-base md:text-lg">
           Transparent view of treasury assets backing UST1. Collateralization uses
-          non-protocol assets over UST1 available supply (outstanding minus CMM-owned).
+          CR CMM Assets over CR CMM Liabilities (outstanding UST1, cUSTC, cLUNC debt
+          and USTR equity, minus CMM-owned).
         </p>
       </div>
 
@@ -46,11 +47,11 @@ export function TreasuryPage() {
           isLoading={isLoading}
           explorerUrl={`${scanner}/address/${contracts.treasury}`}
         />
-        {Object.values(treasuryData?.assets ?? {}).some((a) => a.kind === 'lp') && (
+        {Object.values(treasuryData?.assets ?? {}).some((a) => a.kind === 'lp' || a.protocolIssued) && (
           <p className="text-xs text-gray-500 mt-3">
             Protocol LP rows use reserve NAV (share of both sides). UST1, USTR, cLUNC, and cUSTC
-            legs are shown in USD but omitted from collateralization — they are not CR assets.
-            Native LUNC/USTC still count.
+            held spot or as LP legs are included in Total CMM Assets and omitted from CR CMM Assets.
+            Native LUNC/USTC still count toward CR.
           </p>
         )}
       </div>
@@ -64,7 +65,7 @@ export function TreasuryPage() {
             decimals={6}
             gradient="from-emerald-500/20 to-teal-500/20"
             isLoading={isLoading}
-            isCrDenominator
+            isCrLiability
             explorerUrl={contracts.ust1Token ? `${scanner}/address/${contracts.ust1Token}` : undefined}
           />
         </div>
@@ -76,6 +77,7 @@ export function TreasuryPage() {
             decimals={18}
             gradient="from-amber-500/20 to-orange-500/20"
             isLoading={isLoading}
+            isCrLiability
             explorerUrl={`${scanner}/address/${contracts.ustrToken}`}
           />
         </div>
@@ -91,6 +93,7 @@ export function TreasuryPage() {
             decimals={6}
             gradient="from-yellow-500/20 to-orange-500/20"
             isLoading={isLoading && treasuryData?.cLuncIssuance === undefined}
+            isCrLiability
             explorerUrl={contracts.cLunc ? `${scanner}/address/${contracts.cLunc}` : undefined}
           />
         </div>
@@ -103,13 +106,15 @@ export function TreasuryPage() {
             decimals={6}
             gradient="from-blue-500/20 to-cyan-500/20"
             isLoading={isLoading && treasuryData?.cUstcIssuance === undefined}
+            isCrLiability
             explorerUrl={contracts.cUstc ? `${scanner}/address/${contracts.cUstc}` : undefined}
           />
         </div>
       </div>
       <p className="text-xs text-gray-500 -mt-6 mb-8 md:mb-10">
-        cLUNC and cUSTC available supply is informational. They are not extra UST1
-        collateral — treasury already counts native LUNC/USTC, and wrap legs are omitted from CR.
+        Available supply of UST1, cUSTC, and cLUNC (debt) and USTR (equity) is the
+        CR CMM Liabilities stack. CMM-owned wrap receipts and protocol tokens are
+        omitted from CR CMM Assets so native LUNC/USTC are not double-counted.
       </p>
 
       <div className="animate-fade-in-up stagger-5">

@@ -24,16 +24,16 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 
 ## Invariants (must hold)
 
-1. **Denominator** = UST1 **available supply** (outstanding − CMM-owned). Never raw `total_supply` alone. Never USTR. Never window volume. See [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16).
-2. **∞ only if** UST1 `token_info` **and** CMM-owned queries succeeded **and** available === 0. Query failure → hide Key Ratios, **never** `∞`.
+1. **Denominator** = **CR CMM Liabilities** = available UST1 ($1 debt) + cUSTC (USTC USD) + cLUNC (LUNC USD) + USTR (equity USD). Never raw `total_supply` alone. Never window volume. See [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16).
+2. **∞ only if** CR liability inventories succeeded **and** CR liabilities === 0. Query failure → hide Key Ratios, **never** `∞`.
 3. **Supply > 0 → compute.** Never the stub `hasUst1Issued ? 0 : Infinity`.
-4. **Liability unit:** 1 UST1 = $1 for the ratio. `CR% = (priced non-protocol USD / whole available UST1) * 100`. Do **not** put UST1 in the numerator.
-5. **No wrap double-count:** raw cLUNC/cUSTC are issuance cards only — not tokenlist holdings, not CR assets. Native LUNC/USTC already count. Allowlisted LP wrap **and** UST1/USTR **legs** are display-only (out of `crUsd`).
-6. **UST1 is not a raw asset and not an LP CR leg.** Do not add it to the spot holdings loop. An allowlisted LP’s UST1 leg is **not** CR-eligible (#16 supersedes the old $1-in-numerator rule).
+4. **CR%** = (CR CMM Assets / CR CMM Liabilities) × 100. CR CMM Assets = priced non-protocol USD. Protocol issued tokens held by CMM enter **Total CMM Assets** only.
+5. **No wrap double-count in CR:** raw cLUNC/cUSTC are Total-only holdings + liability inventory — not CR assets. Native LUNC/USTC already count. Allowlisted LP wrap **and** UST1/USTR **legs** are in Total / display NAV (out of `crUsd`).
+6. **UST1 is not a CR asset and not an LP CR leg.** CMM-held UST1/cLUNC/cUSTC/USTR **do** appear as holdings tiles (Total only). An allowlisted LP’s UST1 leg is **not** CR-eligible.
 7. **Incomplete prices:** Key Ratios shows only `prices not loaded, cannot display key ratios`. Never treat missing USD as $0 or $1. Never paint a partial GREEN/BLUE CR.
 8. **Decimals:** split bigint before `Number` ([decimals.ts](../../frontend/src/utils/decimals.ts)). UST1/cLUNC/cUSTC 6dp; USTR 18.
-9. **Issuance card:** `+ Outstanding` / `− CMM-owned liquidity` / **Available Supply**. Do not invent lifetime mint/burn. Do not scan LCD txs / `all_accounts`.
-10. **getTokenInfoStrict / getTokenBalanceStrict:** do not use the swallowing `getTokenInfo` / `getTokenBalance` for UST1 inventory (fake 0 → fake ∞ or undercounted CMM-owned).
+9. **Issuance card:** `+ Outstanding` / `− CMM-owned liquidity` / **Available Supply**. Available feeds CR CMM Liabilities. Do not invent lifetime mint/burn. Do not scan LCD txs / `all_accounts`.
+10. **getTokenInfoStrict / getTokenBalanceStrict:** do not use the swallowing `getTokenInfo` / `getTokenBalance` for protocol inventory (fake 0 → fake ∞ or undercounted CMM-owned).
 11. **Color tiers** (if touching RatiosCard): RED `<95`, YELLOW `[95, 110)`, GREEN `[110, 190]`, BLUE `>190` including `∞`. Copy is status display — see [frontend-treasury-available-supply](../frontend-treasury-available-supply/SKILL.md).
 
 ## Tests

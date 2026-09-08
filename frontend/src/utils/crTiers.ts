@@ -54,12 +54,15 @@ export function shouldShowKeyRatios(args: {
   isLoading?: boolean;
   pricesReady: boolean;
   ust1SupplyStatus: 'zero' | 'positive' | 'unknown';
+  liabilityStatus?: 'zero' | 'positive' | 'unknown';
   tier: CrColorTier | null;
 }): boolean {
+  const liabilityStatus = args.liabilityStatus ?? args.ust1SupplyStatus;
   return (
     !args.isLoading &&
     args.pricesReady &&
     args.ust1SupplyStatus !== 'unknown' &&
+    liabilityStatus !== 'unknown' &&
     args.tier !== null
   );
 }
