@@ -93,7 +93,7 @@ function AssetTile({
 }) {
   const isTopThree = rank >= 1 && rank <= 3;
   const haircutLine =
-    asset.kind === 'lp' && asset.haircutLegs && asset.haircutLegs.length > 0
+    asset.haircutLegs && asset.haircutLegs.length > 0
       ? formatTreasuryCrHaircut(asset.crUsd, asset.haircutLegs)
       : null;
   const label = asset.pairLabel || asset.displayName;
@@ -186,7 +186,7 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
   };
 
   const getUsdValue = (asset: TreasuryAsset): number => {
-    if (asset.kind === 'lp') {
+    if (asset.kind === 'lp' || asset.protocolIssued) {
       return asset.displayUsd && asset.displayUsd > 0 ? asset.displayUsd : 0;
     }
     const displayBalance = Number(asset.balance) / Math.pow(10, asset.decimals);
@@ -197,6 +197,7 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
   // Prefer hiding sub-$1 dust when we have USD prices; if price is unavailable (0), still show non-zero balances
   const shouldShowAsset = (asset: TreasuryAsset): boolean => {
     if (asset.balance <= 0n) return false;
+    if (asset.protocolIssued) return true;
     if (asset.kind === 'lp') {
       if (asset.displayUsd === null || asset.displayUsd === undefined) return true;
       return asset.displayUsd >= 1;

@@ -6,6 +6,7 @@ import {
   crTierTextClass,
   shouldShowKeyRatios,
 } from '../../utils/crTiers';
+import { formatTreasuryUsd } from '../../utils/treasuryAssetDisplay';
 
 interface RatiosCardProps {
   ratios: TreasuryRatios;
@@ -28,13 +29,25 @@ function formatCollateralization(value: number): string {
   return `${formatted}%`;
 }
 
+function formatUsdMetric(value: number, incomplete?: boolean): string {
+  if (incomplete || Number.isNaN(value)) return 'N/A';
+  if (!Number.isFinite(value)) return '∞';
+  return formatTreasuryUsd(value);
+}
+
 export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
   const {
     collateralization,
     ustcPerUst1,
     assetsToLiabilities,
+    totalAssetsUsd,
+    crAssetsUsd,
+    totalLiabilitiesUsd,
+    crLiabilitiesUsd,
     pricesReady,
+    totalIncomplete,
     ust1SupplyStatus,
+    liabilityStatus,
     tier,
   } = ratios;
 
@@ -42,6 +55,7 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
     isLoading,
     pricesReady,
     ust1SupplyStatus,
+    liabilityStatus,
     tier,
   });
   const collateralColor = crTierTextClass(tier);
@@ -75,6 +89,45 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
           </p>
         ) : (
           <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5">
+                <p className="text-sm text-gray-400 mb-1">Total CMM Assets</p>
+                <p
+                  className="text-2xl font-mono-numbers font-bold text-white"
+                  data-testid="key-ratios-total-assets"
+                >
+                  {formatUsdMetric(totalAssetsUsd, totalIncomplete)}
+                </p>
+              </div>
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5">
+                <p className="text-sm text-gray-400 mb-1">CR CMM Assets</p>
+                <p
+                  className="text-2xl font-mono-numbers font-bold text-white"
+                  data-testid="key-ratios-cr-assets"
+                >
+                  {formatUsdMetric(crAssetsUsd)}
+                </p>
+              </div>
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5">
+                <p className="text-sm text-gray-400 mb-1">Total Liabilities</p>
+                <p
+                  className="text-2xl font-mono-numbers font-bold text-white"
+                  data-testid="key-ratios-total-liabilities"
+                >
+                  {formatUsdMetric(totalLiabilitiesUsd)}
+                </p>
+              </div>
+              <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5">
+                <p className="text-sm text-gray-400 mb-1">CR CMM Liabilities</p>
+                <p
+                  className="text-2xl font-mono-numbers font-bold text-white"
+                  data-testid="key-ratios-cr-liabilities"
+                >
+                  {formatUsdMetric(crLiabilitiesUsd)}
+                </p>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div className="p-4 rounded-xl bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-white/5 hover:border-amber-500/30 transition-all duration-300">
                 <p className="text-sm text-gray-400 mb-1">Collateralization</p>
@@ -124,8 +177,10 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
               </ul>
             )}
             <p className="mt-3 text-xs text-gray-500">
-              Status display for intended swap / staking-reward bands. This page does not change
-              on-chain mint, swap, or staking gates.
+              CR CMM Assets omit protocol issued tokens held by CMM (spot and LP).
+              CR CMM Liabilities are outstanding UST1, cUSTC, and cLUNC debt plus USTR
+              equity, minus that CMM-owned inventory. Status display for intended swap /
+              staking-reward bands — this page does not change on-chain gates.
             </p>
           </>
         )}

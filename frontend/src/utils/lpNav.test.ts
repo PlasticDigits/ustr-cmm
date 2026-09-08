@@ -62,6 +62,22 @@ describe('computeLpNav', () => {
     expect(result.incomplete).toBe(false);
   });
 
+  it('cLUNC/cUSTC: display both wrap legs, crUsd 0', () => {
+    const result = computeLpNav({
+      lpBalance: TEN_PCT,
+      totalShare: SHARE,
+      legs: [
+        { symbol: 'cLUNC', amountRaw: 1_000_000n * 1_000_000n, decimals: 6, kind: 'wrap', usd: 0.0001 },
+        { symbol: 'cUSTC', amountRaw: 1_000n * 1_000_000n, decimals: 6, kind: 'wrap', usd: 0.01 },
+      ],
+    });
+    expect(result.displayUsd).toBeCloseTo(11);
+    expect(result.crUsd).toBe(0);
+    expect(result.haircutLegs).toEqual(['cLUNC', 'cUSTC']);
+    expect(result.includedLegs).toEqual([]);
+    expect(result.incomplete).toBe(false);
+  });
+
   it('cLUNC/LUNC: display both sides, CR only LUNC', () => {
     const millionWhole = 1_000_000n * 1_000_000n; // 1e6 tokens at 6dp
     const result = computeLpNav({

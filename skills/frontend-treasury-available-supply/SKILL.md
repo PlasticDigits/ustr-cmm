@@ -30,17 +30,17 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 
 ## Invariants (must hold)
 
-1. **Not CR assets** (spot or LP leg): pinned UST1, USTR, cUSTC, cLUNC. Native `uluna` / `uusd` **are** assets.
+1. **Not CR assets** (spot or LP leg): pinned UST1, USTR, cUSTC, cLUNC. Native `uluna` / `uusd` **are** assets. Protocol issued tokens **do** appear as holdings tiles when CMM holds them, and they **do** enter **Total CMM Assets**.
 2. **LP `crUsd`** = reserve NAV of `kind === 'other'` only. `ust1` / `ustr` / `wrap` / `unknown` are out. Unknown on a pinned LP → `crUsd = null` → Key Ratios hidden.
-3. **Display NAV** may include protocol legs. Protocol tokens never appear as their own asset rows.
+3. **Display NAV / Total CMM Assets** include protocol legs and CMM-held protocol spot. CR CMM Assets omit them.
 4. **CMM-owned** = treasury **spot** + pro-rata allowlisted LP claims `floor(reserve_i × lp_balance / total_share)`. Treasury pin only. No window / wrap-mapper / `all_accounts` / LCD tx crawl. One claim per LP address.
 5. **Available supply** = outstanding − CMM-owned. Outstanding = `getTokenInfoStrict`. Spot / LP balance = `getTokenBalanceStrict`. Negative would-be float → clamp display 0 and **fail closed**.
-6. **CR denominator** = UST1 available supply. `∞` only when supply **and** CMM-owned queries succeeded **and** available === 0. Failure → hide Key Ratios, never `∞`.
-7. **Liability unit** 1 UST1 = $1 for the ratio only. Do not put UST1 in the numerator.
-8. **Price gate:** Key Ratios body is exactly `prices not loaded, cannot display key ratios` unless every CR-relevant spot (`balance > 0`) and every LP `other` leg is priced **and** available supply is known. No N/A grid, no incomplete banner, no colored % while loading.
+6. **CR denominator** = **CR CMM Liabilities** = available supply of UST1 ($1 debt) + cUSTC (USTC USD debt) + cLUNC (LUNC USD debt) + USTR (equity USD). `∞` only when those inventories are certified **and** CR liabilities === 0. Failure → hide Key Ratios, never `∞`.
+7. **Liability units:** 1 UST1 = $1. Wraps use native LUNC/USTC USD. USTR uses a mapped print or the UST1/USTR pool reserve ratio — never invented $1. Do not put protocol issued tokens in the CR numerator.
+8. **Price gate:** Key Ratios body is exactly `prices not loaded, cannot display key ratios` unless every CR-relevant spot (`balance > 0`) and every LP `other` leg is priced **and** CR liabilities are known. Total CMM Assets may show N/A independently if protocol spot is unpriced.
 9. **Tiers** (status display, not on-chain enforcement): RED `<95`, YELLOW `[95, 110)`, GREEN `[110, 190]`, BLUE `>190` including `∞`.
 10. **Decimals:** `rawToWholeNumber` only. UST1/wraps/native 6; USTR / CL8Y-cb 18; CL8Y LP mint 18.
-11. **Skip list exact:** `UST1-USTR` is not `UST1`. `type: "lp"` never uses the raw-protocol skip.
+11. **Skip list exact:** `UST1-USTR` is not `UST1`. `type: "lp"` never uses the raw-protocol skip. The skip list still keeps protocol tokens out of the generic tokenlist CR loop; `useTreasury` injects them as Total-only rows.
 12. **No** missing USD as `$0` / `$1`. No LP mint `simulate_swap`. vFDUSD remains session oracle.
 
 ## Tests
@@ -49,4 +49,4 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 cd frontend && npm test
 ```
 
-Fixtures: 1e6 available + $2e6 assets → 200% / BLUE. Same assets + 500k CMM-owned → 400%. UST1/USTR LP `crUsd = 0`.
+Fixtures: 1e6 available + $2e6 assets → 200% / BLUE. Same assets + 500k CMM-owned → 400%. Protocol spot in Total not CR. Wrap debt + USTR equity in liabilities; CMM-owned is the haircut.

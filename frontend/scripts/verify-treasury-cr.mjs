@@ -2,8 +2,11 @@
 /**
  * Independent treasury CR calculator (#18 / #16 / #20).
  *
- * CR = (Σ non-protocol spot USD + Σ LP other-leg NAV) / whole(UST1 available) × 100
- * UST1 available = total_supply − treasury_spot − Σ allowlisted LP UST1 claims
+ * CR = CR CMM Assets / CR CMM Liabilities × 100
+ * CR CMM Assets = Σ non-protocol spot USD + Σ LP other-leg NAV
+ * Total CMM Assets = CR assets + protocol spot USD + LP protocol-leg NAV
+ * CR CMM Liabilities = available UST1×$1 + cUSTC×USTC + cLUNC×LUNC + USTR×USTR
+ * Available = total_supply − treasury_spot − Σ allowlisted LP claims
  *
  * LCD is source of truth. Does not read the frontend or indexer prices into the
  * denominator. Numerator USD uses CEX + session-equivalent oracle + DEX simulate
@@ -58,6 +61,11 @@ const LPS = [
     symbol: 'UST1-ALPHA',
     lp: 'terra12ff3nhu239y6a5lh0rs8nwlntc9wulkm3c4x598hp5gjfeqk87xszxkrmp',
     pair: 'terra1rmdtckz5gd0usja36ydwat6prnmew639ry37yq72xh9ek4s3m83sehn5u6',
+  },
+  {
+    symbol: 'cLUNC-cUSTC',
+    lp: 'terra132uuzdnjce0c8g5dalyvdgl47ny697udesk972cg05e5y7gn485qz6tdch',
+    pair: 'terra15rl8g308yzzt5kxu4skgwlahrvm8adyv0s2cupsmvte0akgs2ttsszau38',
   },
 ];
 
@@ -200,6 +208,7 @@ async function main() {
     cLunc: await cw20Bal(CLUNC),
     cUstc: await cw20Bal(CUSTC),
   };
+  const protocolSpot = { ...owned };
 
   const spots = {
     vFDUSD: await cw20Bal(VFDUSD),
@@ -210,6 +219,7 @@ async function main() {
   };
 
   let lpOtherUsd = 0;
+  let lpProtocolUsd = 0;
   const lpRows = [];
   for (const lp of LPS) {
     const bal = await cw20Bal(lp.lp);
@@ -284,14 +294,39 @@ async function main() {
     whole(spots['CL8Y-cb'], 18) * cl8yUsd;
   if (ustrixUsd && spots.USTRIX > 0n) spotUsd += whole(spots.USTRIX, 6) * ustrixUsd;
 
+  let ustrUsd = 0;
   for (const row of lpRows) {
-    for (const leg of row.legs) {
-      if (leg.kind !== 'other') continue;
-      const usd = otherUsd[leg.addr];
-      if (!(usd > 0)) throw new Error(`unpriced other LP leg ${leg.addr}`);
-      lpOtherUsd += whole(leg.claim, leg.decimals) * usd;
+    const u1 = row.legs.find((leg) => leg.kind === 'ust1');
+    const ur = row.legs.find((leg) => leg.kind === 'ustr');
+    if (u1 && ur) {
+      const ustrWhole = whole(ur.claim, ur.decimals);
+      if (ustrWhole > 0) ustrUsd = whole(u1.claim, u1.decimals) / ustrWhole;
     }
   }
+  if (!(ustrUsd > 0)) {
+    throw new Error('USTR USD unpriced — fail closed');
+  }
+
+  for (const row of lpRows) {
+    for (const leg of row.legs) {
+      if (leg.kind === 'other') {
+        const usd = otherUsd[leg.addr];
+        if (!(usd > 0)) throw new Error(`unpriced other LP leg ${leg.addr}`);
+        lpOtherUsd += whole(leg.claim, leg.decimals) * usd;
+        continue;
+      }
+      const usd =
+        leg.kind === 'ust1' ? 1 : leg.kind === 'ustr' ? ustrUsd : leg.addr === CLUNC ? px.LUNC : px.USTC;
+      if (!(usd > 0)) throw new Error(`unpriced protocol LP leg ${leg.addr}`);
+      lpProtocolUsd += whole(leg.claim, leg.decimals) * usd;
+    }
+  }
+
+  const protocolSpotUsd =
+    whole(protocolSpot.ust1, 6) * 1 +
+    whole(protocolSpot.ustr, 18) * ustrUsd +
+    whole(protocolSpot.cLunc, 6) * px.LUNC +
+    whole(protocolSpot.cUstc, 6) * px.USTC;
 
   const avail = {
     ust1: ust1Supply - owned.ust1,
@@ -299,15 +334,28 @@ async function main() {
     cLunc: cluncSupply - owned.cLunc,
     cUstc: custcSupply - owned.cUstc,
   };
-  const denom = whole(avail.ust1, 6);
-  const assetsUsd = spotUsd + lpOtherUsd;
+  const crAssetsUsd = spotUsd + lpOtherUsd;
+  const totalAssetsUsd = crAssetsUsd + protocolSpotUsd + lpProtocolUsd;
+  const totalLiabilitiesUsd =
+    whole(ust1Supply, 6) * 1 +
+    whole(ustrSupply, 18) * ustrUsd +
+    whole(cluncSupply, 6) * px.LUNC +
+    whole(custcSupply, 6) * px.USTC;
+  const crLiabilitiesUsd =
+    whole(avail.ust1, 6) * 1 +
+    whole(avail.ustr, 18) * ustrUsd +
+    whole(avail.cLunc, 6) * px.LUNC +
+    whole(avail.cUstc, 6) * px.USTC;
+  const denom = crLiabilitiesUsd;
+  const assetsUsd = crAssetsUsd;
   const cr = (assetsUsd / denom) * 100;
-  const ustcPer = whole(uusd, 6) / denom;
+  const ustcPer = whole(uusd, 6) / whole(avail.ust1, 6);
   const tier = cr > 190 ? 'BLUE' : cr >= 110 ? 'GREEN' : cr >= 95 ? 'YELLOW' : 'RED';
 
   const out = {
     prices: {
       ...px,
+      USTR: ustrUsd,
       vFDUSD: vfdUsd,
       SpaceUSD: spaceUsd,
       ALPHA: alphaUsd,
@@ -320,12 +368,20 @@ async function main() {
       cLunc: { outstanding: cluncSupply.toString(), owned: owned.cLunc.toString(), available: avail.cLunc.toString() },
       cUstc: { outstanding: custcSupply.toString(), owned: owned.cUstc.toString(), available: avail.cUstc.toString() },
     },
-    numerator: { spotUsd, lpOtherUsd, assetsUsd },
+    numerator: {
+      spotUsd,
+      lpOtherUsd,
+      protocolSpotUsd,
+      lpProtocolUsd,
+      crAssetsUsd,
+      totalAssetsUsd,
+    },
+    liabilities: { totalLiabilitiesUsd, crLiabilitiesUsd },
     collateralization: cr,
     ustcPerAvailableUst1: ustcPer,
     assetsToLiabilities: assetsUsd / denom,
     tier,
-    formula: 'CR = (non-protocol spot USD + LP other NAV) / whole(UST1 available) × 100',
+    formula: 'CR = CR CMM Assets / CR CMM Liabilities × 100',
   };
   console.log(JSON.stringify(out, null, 2));
 }
