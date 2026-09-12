@@ -9,6 +9,7 @@ describe('tokenIconFileStem', () => {
 
   it('leaves other symbols as uppercase filenames', () => {
     expect(tokenIconFileStem('cUSTC')).toBe('CUSTC');
+    expect(tokenIconFileStem('USDT')).toBe('USDT');
     expect(tokenIconFileStem('SpaceUSD')).toBe('SPACEUSD');
     expect(tokenIconFileStem('CL8Y')).toBe('CL8Y');
   });
