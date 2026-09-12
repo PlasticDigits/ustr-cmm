@@ -34,6 +34,7 @@ describe('holding skip list', () => {
     expect(isExactSkipHoldingSymbol('CL8Y-cb-ALPHA')).toBe(false);
     expect(isExactSkipHoldingSymbol('UST1-ALPHA')).toBe(false);
     expect(isExactSkipHoldingSymbol('cLUNC-cUSTC')).toBe(false);
+    expect(isExactSkipHoldingSymbol('USDT-cLUNC')).toBe(false);
     expect(isExactSkipHoldingSymbol('UST1/USTR')).toBe(false);
   });
 
@@ -87,6 +88,15 @@ describe('classifyLpLeg', () => {
         known
       )
     ).toBe('unknown');
+    expect(
+      classifyLpLeg(
+        {
+          symbol: 'USDT',
+          address: 'terra1z0xe7t5ymmltg4vju8tghkq0pewy4et548ta23nlu9zxtl950uyqkv8mv4',
+        },
+        new Set([...known, 'terra1z0xe7t5ymmltg4vju8tghkq0pewy4et548ta23nlu9zxtl950uyqkv8mv4'])
+      )
+    ).toBe('other');
   });
 
   it('CR eligibility: other only — ust1/ustr/wrap/unknown are out (#16)', () => {
@@ -109,6 +119,8 @@ describe('resolveLpLegUsd', () => {
     expect(resolveLpLegUsd('ustr', 'USTR', {})).toBeNull();
     expect(resolveLpLegUsd('other', 'vFDUSD', {})).toBeNull();
     expect(resolveLpLegUsd('other', 'vFDUSD', { vFDUSD: 1.22 })).toBe(1.22);
+    expect(resolveLpLegUsd('other', 'USDT', {})).toBeNull();
+    expect(resolveLpLegUsd('other', 'USDT', { USDT: 1.01 })).toBe(1.01);
   });
 });
 

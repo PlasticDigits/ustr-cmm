@@ -228,7 +228,7 @@ class PriceService {
    * @param ustcUsd - USTC price in USD
    * @param pool - Optional pool config with address, dex type, and quote asset
    * @param decimals - Token decimals. Garuda/Terraswap 1e6 fallback is 6dp only —
-   *   never use it for CL8Y-cb (18dp). CL8Y dex prices via LCD pool reserve ratio,
+   *   never use it for CL8Y-cb or USDT (18dp). CL8Y dex prices via LCD pool reserve ratio,
    *   not simulate-swap (#20).
    * @returns Token price in USD, or null if all DEX queries fail
    */
@@ -257,7 +257,7 @@ class PriceService {
       }
     }
 
-    // 18dp CW20s (CL8Y-cb) must not use the historical 1e6 simulate fallback.
+    // 18dp CW20s (CL8Y-cb, USDT) must not use the historical 1e6 simulate fallback.
     if (decimals !== 6) {
       return null;
     }
@@ -287,7 +287,7 @@ class PriceService {
    * Supports Garuda (simulate_swap), TerraSwap/Terraport (simulation), and CL8Y
    * (LCD `{ pool: {} }` reserve ratio — pair has `hybrid_simulation`, not `simulation`).
    *
-   * Offer is 1 whole token. Quote legs are 6dp (LUNC / USTC / cUSTC), so
+   * Offer is 1 whole token. Quote legs are 6dp (LUNC / USTC / cUSTC / cLUNC), so
    * `calculateUsdPrice` still divides by 1e6.
    *
    * @param tokenAddress - The CW20 token contract address

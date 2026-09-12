@@ -1,6 +1,6 @@
 {
   "name": "USTR CMM Token List",
-  "version": "1.3.5",
+  "version": "1.3.6",
   "tokens": [
     {
       "symbol": "USTC",
@@ -76,6 +76,21 @@
       "type": "cw20",
       "decimals": 6,
       "gradient": "from-emerald-500 to-teal-500",
+      "iconColor": "text-emerald-400"
+    },
+    {
+      "symbol": "USDT",
+      "name": "Tether USD",
+      "address": "terra1z0xe7t5ymmltg4vju8tghkq0pewy4et548ta23nlu9zxtl950uyqkv8mv4",
+      "type": "cw20",
+      "decimals": 18,
+      "pool": {
+        "address": "terra17l7eqc5j8vkm09up55etfggpr6y92ka6p03yc765mt3nerqcnhdsl6l7jq",
+        "dex": "cl8y",
+        "name": "CL8Y DEX USDT/cLUNC",
+        "quoteAsset": "lunc"
+      },
+      "gradient": "from-emerald-500 to-green-600",
       "iconColor": "text-emerald-400"
     },
     {
@@ -259,6 +274,30 @@
           {
             "symbol": "cUSTC",
             "address": "terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch"
+          }
+        ]
+      }
+    },
+    {
+      "symbol": "USDT-cLUNC",
+      "name": "USDT/cLUNC LP",
+      "type": "lp",
+      "address": "terra10ur635zd6fmt4fxveven8lcx8xkr55t6dxjxh5dctmcc5lrxjqqslq4l3s",
+      "decimals": 18,
+      "gradient": "from-emerald-500 to-yellow-500",
+      "iconColor": "text-emerald-400",
+      "pool": {
+        "address": "terra17l7eqc5j8vkm09up55etfggpr6y92ka6p03yc765mt3nerqcnhdsl6l7jq",
+        "dex": "cl8y",
+        "name": "LP USDT/cLUNC",
+        "assets": [
+          {
+            "symbol": "USDT",
+            "address": "terra1z0xe7t5ymmltg4vju8tghkq0pewy4et548ta23nlu9zxtl950uyqkv8mv4"
+          },
+          {
+            "symbol": "cLUNC",
+            "address": "terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg"
           }
         ]
       }
