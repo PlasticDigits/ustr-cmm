@@ -5,6 +5,7 @@ Project skills for third-party / Cursor agents working in this repo.
 | Skill | When to use |
 |-------|-------------|
 | [treasury-cw20-instant-withdraw](./treasury-cw20-instant-withdraw/SKILL.md) | CW20 InstantWithdraw, spender registry, 24h per-(spender,token) pull limits, pause semantics, migrate / `SetCw20Spender` ops ([#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6), [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7)) |
+| [treasury-migrate-owned](./treasury-migrate-owned/SKILL.md) | Governance `MigrateOwnedContract` / CMM-admin CW20 migrate (ALPHA 11666); treasury cw2 **0.2.2** ([#43](https://git.cl8y.com/code/ustr-cmm/issues/43)) |
 | [treasury-swap-removal](./treasury-swap-removal/SKILL.md) | Removed treasury `SwapDeposit` / `SetSwapContract` / `swap_contract`; live path is ustc-swap `Swap` → BankMsg to treasury; migrate strips legacy config ([#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8), bundled with [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5)) |
 | [wrap-mapper-asymmetric-fees](./wrap-mapper-asymmetric-fees/SKILL.md) | `fee_wrap_bps` / `fee_unwrap_bps` split, retune rule for burn tax, migrate + `SetFees` ops, solvency without gross-up ([#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9); DEX [#516](https://gitlab.com/PlasticDigits/cl8y-dex-terraclassic/-/work_items/516)) |
 | [frontend-vfdusd-oracle](./frontend-vfdusd-oracle/SKILL.md) | Session-once ust1-oracle USD for treasury vFDUSD; never DEX/BSC; no $1 fallback ([#10](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/10)) |

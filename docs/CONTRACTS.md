@@ -91,6 +91,7 @@ This document provides an overview of all USTR CMM smart contracts with links to
 - `SetCw20SpenderLimit { token, spender, limit_24h }` / `RemoveCw20SpenderLimit { token, spender }` - Governance-configurable tumbling 24h pull quota per `(token, spender)`. Remove is fail-closed (pulls denied until reset).
 - `SetCw20InstantWithdrawPaused { paused }` - Pause CW20 InstantWithdraw only (independent of wrapping)
 - `InstantWithdrawCw20 { recipient, token, amount }` - CW20 `Transfer` by registered spender (not gated by `wrapping_paused`; enforces 24h pull limit)
+- `MigrateOwnedContract { contract, new_code_id, msg? }` - Governance-only `WasmMsg::Migrate` for a contract whose wasm admin is this treasury ([#43](https://git.cl8y.com/code/ustr-cmm/issues/43)). Omit `msg` for `{}`. Not a wrap / InstantWithdraw change.
 
 **Note**: `SetSwapContract` and `SwapDeposit` were removed in [#8](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/8). Users call `Swap { referral_code, leaderboard_hint }` on ustc-swap; the swap contract forwards USTC to Treasury via `BankMsg::Send` and mints USTR. Treasury migrate strips `swap_contract` from state (bundled with the [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5) migrate). See [skills/treasury-swap-removal](../skills/treasury-swap-removal/SKILL.md).
 
@@ -130,6 +131,8 @@ This document provides an overview of all USTR CMM smart contracts with links to
 10. **24h CW20 pull limit per (spender, token)**: `InstantWithdrawCw20` enforces a governance-set tumbling 24h (`86400s`) quota keyed by `(token, spender)`. Unset / removed limit ⇒ fail-closed (`Cw20PullLimitNotSet`). Exceed ⇒ `Cw20PullLimitExceeded` with no Transfer. Native InstantWithdraw and ProposeWithdraw are unaffected. Window-side inventory caps remain a product control; treasury limit is the hard ceiling. See [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7) and [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md).
 
 11. **Whitelist vs spender registry**: `CW20_WHITELIST` is for CR / `AllBalances` tracking only. InstantWithdrawCw20 does **not** require the token to be whitelisted.
+
+12. **Migrate owned CW20s**: CosmWasm `MsgMigrateContract` is signed by the **instance wasm admin**. When that admin is the treasury (DEX listed tax tokens, e.g. ALPHA), an EOA / 2-of-3 cannot migrate the token directly. `MigrateOwnedContract` is governance-only, fail-closed unless LCD `ContractInfo.admin` equals this treasury, and emits `WasmMsg::Migrate`. InstantWithdrawCw20 still must not emit arbitrary wasm (invariant 7 of the CW20 pull skill).
 
 **Security Features**:
 - Governance changes require 7-day waiting period

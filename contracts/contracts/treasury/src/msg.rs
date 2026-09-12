@@ -125,6 +125,18 @@ pub enum ExecuteMsg {
         token: String,
         amount: Uint128,
     },
+
+    /// Governance-only: emit `WasmMsg::Migrate` for a contract whose wasm admin
+    /// is this treasury ([#43](https://git.cl8y.com/code/ustr-cmm/issues/43)).
+    /// Columbus-5: DEX 2-of-3 is both treasury wasm admin and `Config.governance`.
+    /// Omit `msg` (or send empty) for `{}` — tax-token 1.0.0 → 1.1.0 same-crate bump.
+    /// No 7-day withdraw timelock (same posture as `SetCw20Spender`).
+    MigrateOwnedContract {
+        contract: String,
+        new_code_id: u64,
+        #[serde(default)]
+        msg: Option<cosmwasm_std::Binary>,
+    },
 }
 
 /// Query messages

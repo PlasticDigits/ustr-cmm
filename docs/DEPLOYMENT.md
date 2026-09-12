@@ -332,6 +332,21 @@ In-place migrate keeps mainnet treasury address
 
 **Mainnet status (2026-08-15):** treasury migrated `10673` → **`11564`**; wrap-mapper code **`11574`** (was `11565`; cw2 `0.3.0`, [#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13)); cLUNC/cUSTC + denom wiring complete; vFDUSD → ust1-window spender registered with `limit_24h=10000000000`. See [Contract Addresses](#contract-addresses) and issue [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5).
 
+**Wasm admin / governance (2026-09-12):** both are DEX 2-of-3 `terra1zlmv2xydxcusurtr6rl78wsvytdc6mfex6hep7`. Do **not** `wasm migrate` this treasury as `cl8y2_admin`. `treasury-migrate-wrap-wire.sh` still names that EOA and is stale for migrate.
+
+### Treasury 0.2.2 — migrate owned CW20s (#43)
+
+Store optimizer `treasury.wasm` (permissionless), then 2-of-3 `wasm migrate` this treasury to the new code id (cw2 **0.2.2**). Then 2-of-3 **execute** (not `wasm migrate` on the token):
+
+```bash
+# After CMM is on 0.2.2. Omit msg → "{}". ALPHA → listed tax 11666:
+# from cl8y-dex-terraclassic:
+# ./scripts/multisig-2of3-host-tx.sh wasm execute $TREASURY \
+#   '{"migrate_owned_contract":{"contract":"terra1x6e64es6yhauhvs3prvpdg2gkqdtfru840wgnhs935x8axr7zxkqzysuxz","new_code_id":11666}}'
+```
+
+Do not Refresh DEX pair pins until ALPHA LCD `code_id` is **11666**. Keep factory whitelist **11630** until Refresh. DEX leftover: [cl8y-dex-terraclassic#1250](https://git.cl8y.com/code/cl8y-dex-terraclassic/issues/1250).
+
 **One-shot operator script** (steps A+B+C): [`contracts/scripts/treasury-migrate-wrap-wire.sh`](../contracts/scripts/treasury-migrate-wrap-wire.sh) — signs as `cl8y2_admin` (`terra1xsecn…`). Prefer `--gas auto --gas-prices 28.325uluna` (store adj **1.5**, execute/migrate adj **1.4**). Fixed `--fees 100000000uluna` is **insufficient for wasm store** (~covers ≤3.53M gas; treasury store sim was ~3.30M raw / ~4.95M with 1.5 adj ≈ **140 LUNC**).
 
 **Fail-closed (#7):** InstantWithdrawCw20 requires a configured 24h pull limit for `(token, spender)`. Set the limit **with** or **before** enabling window redeem.

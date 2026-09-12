@@ -77,5 +77,14 @@ pub enum ContractError {
 
     #[error("CW20 pull limit usage overflow")]
     Cw20PullLimitOverflow,
+
+    #[error("new_code_id must be greater than zero")]
+    InvalidMigrateCodeId,
+
+    #[error("treasury is not wasm admin of {contract} (on-chain admin={admin:?})")]
+    NotContractAdmin {
+        contract: String,
+        admin: Option<String>,
+    },
 }
 

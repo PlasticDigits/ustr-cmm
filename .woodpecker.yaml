@@ -1,0 +1,16 @@
+# Trusted Woodpecker PR/master gate. Forgejo branch protection requires
+# context `ci/woodpecker/pr/woodpecker`. Cargo/frontend jobs stay local
+# (gitleaks on this repo flags public terra1 addresses). Never force_merge.
+#
+# Digest-pinned image. Do not float tags.
+
+when:
+  - event: [push, manual]
+    branch: master
+  - event: pull_request
+
+steps:
+  - name: pr-gate
+    image: alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
+    commands:
+      - echo ci-ok

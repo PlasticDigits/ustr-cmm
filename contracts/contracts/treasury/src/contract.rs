@@ -15,8 +15,8 @@
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    to_json_binary, Addr, BankMsg, Binary, Coin, CosmosMsg, Deps, DepsMut, Env, MessageInfo,
-    Order, Response, StdError, StdResult, Uint128, WasmMsg,
+    to_json_binary, Addr, BankMsg, Binary, Coin, ContractInfoResponse, CosmosMsg, Deps, DepsMut,
+    Empty, Env, MessageInfo, Order, Response, StdError, StdResult, Uint128, WasmMsg,
 };
 use sha2::{Digest, Sha256};
 use cw2::{get_contract_version, set_contract_version};
@@ -191,6 +191,11 @@ pub fn execute(
             token,
             amount,
         } => execute_instant_withdraw_cw20(deps, env, info, recipient, token, amount),
+        ExecuteMsg::MigrateOwnedContract {
+            contract,
+            new_code_id,
+            msg,
+        } => execute_migrate_owned_contract(deps, env, info, contract, new_code_id, msg),
     }
 }
 
@@ -1021,6 +1026,56 @@ fn execute_instant_withdraw_cw20(
         .add_attribute("spender", info.sender))
 }
 
+/// Governance-only migrate of a contract this treasury wasm-admins (#43).
+///
+/// Fail-closed: `ContractInfo` query errors propagate; missing / other admin
+/// is `NotContractAdmin`. Does not touch wrap / InstantWithdraw / spenders.
+fn execute_migrate_owned_contract(
+    deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    contract: String,
+    new_code_id: u64,
+    msg: Option<Binary>,
+) -> Result<Response, ContractError> {
+    let config = CONFIG.load(deps.storage)?;
+    if info.sender != config.governance {
+        return Err(ContractError::Unauthorized);
+    }
+    if new_code_id == 0 {
+        return Err(ContractError::InvalidMigrateCodeId);
+    }
+
+    let contract_addr = deps.api.addr_validate(&contract)?;
+    let on_chain: ContractInfoResponse = deps
+        .querier
+        .query_wasm_contract_info(contract_addr.as_str())?;
+    match on_chain.admin.as_deref() {
+        Some(admin) if admin == env.contract.address.as_str() => {}
+        other => {
+            return Err(ContractError::NotContractAdmin {
+                contract: contract_addr.to_string(),
+                admin: other.map(str::to_string),
+            });
+        }
+    }
+
+    let migrate_msg = match msg {
+        Some(b) if !b.is_empty() => b,
+        _ => to_json_binary(&Empty {})?,
+    };
+
+    Ok(Response::new()
+        .add_message(WasmMsg::Migrate {
+            contract_addr: contract_addr.to_string(),
+            new_code_id,
+            msg: migrate_msg,
+        })
+        .add_attribute("action", "migrate_owned_contract")
+        .add_attribute("contract", &contract_addr)
+        .add_attribute("new_code_id", new_code_id.to_string()))
+}
+
 // ============ QUERY ============
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -1271,7 +1326,10 @@ fn query_cw20_spender_limit(
 mod tests {
     use super::*;
     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-    use cosmwasm_std::{coin, coins, from_json, Timestamp, Uint128};
+    use cosmwasm_std::{
+        coin, coins, from_json, ContractResult, SystemError, SystemResult, Timestamp, Uint128,
+        WasmQuery,
+    };
     use cw20::BalanceResponse as Cw20BalanceResponse;
     use sha2::{Digest, Sha256};
     use hex;
@@ -6201,6 +6259,166 @@ mod tests {
                 spender: CW20_SPENDER_B.to_string(),
             }
         );
+    }
+
+    // ============ MIGRATE OWNED CONTRACT (#43) ============
+
+    fn mock_contract_admin(deps: &mut OwnedDeps, contract: &str, admin: Option<&str>) {
+        let contract = contract.to_string();
+        let admin = admin.map(str::to_string);
+        deps.querier.update_wasm(move |query| match query {
+            WasmQuery::ContractInfo { contract_addr } if *contract_addr == contract => {
+                let mut resp = ContractInfoResponse::default();
+                resp.code_id = 11630;
+                resp.creator = "creator".to_string();
+                resp.admin = admin.clone();
+                SystemResult::Ok(ContractResult::Ok(to_json_binary(&resp).unwrap()))
+            }
+            _ => SystemResult::Err(SystemError::UnsupportedRequest {
+                kind: "wasm".into(),
+            }),
+        });
+    }
+
+    type OwnedDeps = cosmwasm_std::OwnedDeps<
+        cosmwasm_std::MemoryStorage,
+        cosmwasm_std::testing::MockApi,
+        cosmwasm_std::testing::MockQuerier,
+    >;
+
+    #[test]
+    fn test_migrate_owned_contract_emits_wasm_migrate() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        let env = mock_env();
+        mock_contract_admin(&mut deps, CW20_TOKEN, Some(env.contract.address.as_str()));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let res = execute(
+            deps.as_mut(),
+            env,
+            info,
+            ExecuteMsg::MigrateOwnedContract {
+                contract: CW20_TOKEN.to_string(),
+                new_code_id: 11666,
+                msg: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(res.attributes[0].value, "migrate_owned_contract");
+        assert_eq!(res.messages.len(), 1);
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Migrate {
+                contract_addr,
+                new_code_id,
+                msg,
+            }) => {
+                assert_eq!(contract_addr, CW20_TOKEN);
+                assert_eq!(*new_code_id, 11666);
+                assert_eq!(msg.as_slice(), b"{}");
+            }
+            other => panic!("expected WasmMsg::Migrate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_migrate_owned_contract_unauthorized() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        let env = mock_env();
+        mock_contract_admin(&mut deps, CW20_TOKEN, Some(env.contract.address.as_str()));
+
+        let info = mock_info(USER, &[]);
+        let err = execute(
+            deps.as_mut(),
+            env,
+            info,
+            ExecuteMsg::MigrateOwnedContract {
+                contract: CW20_TOKEN.to_string(),
+                new_code_id: 11666,
+                msg: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::Unauthorized);
+    }
+
+    #[test]
+    fn test_migrate_owned_contract_not_admin() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        mock_contract_admin(&mut deps, CW20_TOKEN, Some("someone_else"));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let err = execute(
+            deps.as_mut(),
+            mock_env(),
+            info,
+            ExecuteMsg::MigrateOwnedContract {
+                contract: CW20_TOKEN.to_string(),
+                new_code_id: 11666,
+                msg: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err,
+            ContractError::NotContractAdmin {
+                contract: CW20_TOKEN.to_string(),
+                admin: Some("someone_else".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_migrate_owned_contract_zero_code_id() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        let env = mock_env();
+        mock_contract_admin(&mut deps, CW20_TOKEN, Some(env.contract.address.as_str()));
+
+        let info = mock_info(GOVERNANCE, &[]);
+        let err = execute(
+            deps.as_mut(),
+            env,
+            info,
+            ExecuteMsg::MigrateOwnedContract {
+                contract: CW20_TOKEN.to_string(),
+                new_code_id: 0,
+                msg: None,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(err, ContractError::InvalidMigrateCodeId);
+    }
+
+    #[test]
+    fn test_migrate_owned_contract_forwards_msg() {
+        let mut deps = mock_dependencies();
+        setup_contract(deps.as_mut());
+        let env = mock_env();
+        mock_contract_admin(&mut deps, CW20_TOKEN, Some(env.contract.address.as_str()));
+
+        let payload = Binary::from(br#"{"adopt":null}"#);
+        let info = mock_info(GOVERNANCE, &[]);
+        let res = execute(
+            deps.as_mut(),
+            env,
+            info,
+            ExecuteMsg::MigrateOwnedContract {
+                contract: CW20_TOKEN.to_string(),
+                new_code_id: 11666,
+                msg: Some(payload.clone()),
+            },
+        )
+        .unwrap();
+        match &res.messages[0].msg {
+            CosmosMsg::Wasm(WasmMsg::Migrate { msg, .. }) => {
+                assert_eq!(msg, &payload);
+            }
+            other => panic!("expected WasmMsg::Migrate, got {other:?}"),
+        }
     }
 }
 
