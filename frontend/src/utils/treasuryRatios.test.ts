@@ -228,7 +228,7 @@ describe('computeTreasuryRatios', () => {
     expect(result.tier).toBe('BLUE');
   });
 
-  it('USDT-cLUNC LP other-leg crUsd enters the numerator', () => {
+  it('cLUNC-USDT LP other-leg crUsd enters the numerator', () => {
     const result = computeTreasuryRatios({
       ust1AvailableRaw: UST1_1M,
       ust1Decimals: 6,
@@ -236,13 +236,13 @@ describe('computeTreasuryRatios', () => {
       ustcDecimals: 6,
       assets: [
         { symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 },
-        { symbol: 'USDT-cLUNC', balanceRaw: 1n, decimals: 18, crUsd: 1_000, displayUsd: 2_000 },
+        { symbol: 'cLUNC-USDT', balanceRaw: 1n, decimals: 18, crUsd: 1_000, displayUsd: 2_000 },
       ],
       prices: { vFDUSD: 2 },
       liabilities: ust1OnlyLiabilities(UST1_1M),
     });
     expect(result.collateralization).toBeCloseTo(200.1);
-    expect(result.includedSymbols).toEqual(['vFDUSD', 'USDT-cLUNC']);
+    expect(result.includedSymbols).toEqual(['vFDUSD', 'cLUNC-USDT']);
     expect(result.incomplete).toBe(false);
   });
 

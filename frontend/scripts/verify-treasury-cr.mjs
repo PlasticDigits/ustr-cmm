@@ -71,7 +71,7 @@ const LPS = [
     pair: 'terra15rl8g308yzzt5kxu4skgwlahrvm8adyv0s2cupsmvte0akgs2ttsszau38',
   },
   {
-    symbol: 'USDT-cLUNC',
+    symbol: 'cLUNC-USDT',
     lp: 'terra10ur635zd6fmt4fxveven8lcx8xkr55t6dxjxh5dctmcc5lrxjqqslq4l3s',
     pair: 'terra17l7eqc5j8vkm09up55etfggpr6y92ka6p03yc765mt3nerqcnhdsl6l7jq',
   },

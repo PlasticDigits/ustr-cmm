@@ -18,5 +18,5 @@ test('treasury assets include protocol holdings with CR haircut and keep LP rows
   await expect(page.getByTestId('treasury-asset-CL8Y-cb-ALPHA')).toBeVisible();
   await expect(page.getByTestId('treasury-asset-UST1-ALPHA')).toBeVisible();
   await expect(page.getByTestId('treasury-asset-cLUNC-cUSTC')).toBeVisible();
-  await expect(page.getByTestId('treasury-asset-USDT-cLUNC')).toBeVisible();
+  await expect(page.getByTestId('treasury-asset-cLUNC-USDT')).toBeVisible();
 });

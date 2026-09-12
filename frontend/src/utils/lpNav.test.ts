@@ -115,7 +115,7 @@ describe('computeLpNav', () => {
     expect(result.haircutLegs).toEqual(['USTR']);
   });
 
-  it('USDT/cLUNC: CR is USDT other only; unpriced USDT implies from wrap LUNC', () => {
+  it('cLUNC/USDT: CR is USDT other only; unpriced USDT implies from wrap LUNC', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,
       totalShare: SHARE,
