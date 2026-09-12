@@ -1,6 +1,7 @@
 [package]
 name = "treasury"
-version.workspace = true
+# Bumped for #43 governance MigrateOwnedContract (CMM-admin CW20s).
+version = "0.2.2"
 authors.workspace = true
 edition.workspace = true
 license.workspace = true

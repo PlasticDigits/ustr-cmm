@@ -83,6 +83,7 @@ Treasury is a passive custodian for swap USTC; it does not participate in swap e
 - 7-day timelock on governance changes
 - Native wrapping custody (`WrapDeposit` / wrapper `InstantWithdraw`)
 - Registered CW20 spender pulls (`InstantWithdrawCw20`) for ust1-window vFDUSD redeem, with per-(spender, token) 24h pull limits — see [#6](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/6), [#7](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/7), and [skills/treasury-cw20-instant-withdraw](../skills/treasury-cw20-instant-withdraw/SKILL.md)
+- Governance `MigrateOwnedContract` so CMM can `WasmMsg::Migrate` CW20s it wasm-admins (DEX ALPHA 11630→11666) — [#43](https://git.cl8y.com/code/ustr-cmm/issues/43) / [skills/treasury-migrate-owned](../skills/treasury-migrate-owned/SKILL.md)
 
 **Dependencies**: 
 - Wrap-mapper (registered via `SetDenomWrapper`)
