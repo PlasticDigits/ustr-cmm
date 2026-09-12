@@ -115,6 +115,36 @@ describe('computeLpNav', () => {
     expect(result.haircutLegs).toEqual(['USTR']);
   });
 
+  it('USDT/cLUNC: CR is USDT other only; unpriced USDT implies from wrap LUNC', () => {
+    const result = computeLpNav({
+      lpBalance: TEN_PCT,
+      totalShare: SHARE,
+      legs: [
+        {
+          symbol: 'USDT',
+          amountRaw: 1000n * 10n ** 18n,
+          decimals: 18,
+          kind: 'other',
+          usd: null,
+        },
+        {
+          symbol: 'cLUNC',
+          amountRaw: 1_000_000n * 1_000_000n,
+          decimals: 6,
+          kind: 'wrap',
+          usd: 0.0001,
+        },
+      ],
+    });
+    // implied USDT = (1e6 × $0.0001) / 1000 = $0.1; 10% → display $20, CR $10
+    expect(result.ok).toBe(true);
+    expect(result.displayUsd).toBeCloseTo(20);
+    expect(result.crUsd).toBeCloseTo(10);
+    expect(result.includedLegs).toEqual(['USDT']);
+    expect(result.haircutLegs).toEqual(['cLUNC']);
+    expect(result.incomplete).toBe(false);
+  });
+
   it('CL8Y-cb/cUSTC: CR is CL8Y other only; unpriced CL8Y implies from wrap USTC', () => {
     const result = computeLpNav({
       lpBalance: TEN_PCT,

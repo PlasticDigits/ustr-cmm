@@ -27,8 +27,10 @@ const ALPHA = 'terra1x6e64es6yhauhvs3prvpdg2gkqdtfru840wgnhs935x8axr7zxkqzysuxz'
 const USTRIX = 'terra1r3eaa2tucjr3es88wzuqpgxvssqflk9cghrjmf9uneds8wljyapqwtrcp5';
 const SPACEUSD = 'terra1cvd5cgrs8rrl96hte34n57497u5f9cwuv3e6ztxgetkx4uzmcdyswv79zl';
 const CL8Y_CB = 'terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3';
+const USDT = 'terra1z0xe7t5ymmltg4vju8tghkq0pewy4et548ta23nlu9zxtl950uyqkv8mv4';
 const SPACEUSD_POOL = 'terra1ts0r4whpr48cwsnd7elgpuqqaqu5phy0ywx5x09f5zrnj9wda54sreeumg';
 const CL8Y_CUSTC_POOL = 'terra1tz5vwrungh6drd9nt95qym3k892vs3as8nqmu7sg4ypek7wxvv4qm89upc';
+const USDT_CLUNC_POOL = 'terra17l7eqc5j8vkm09up55etfggpr6y92ka6p03yc765mt3nerqcnhdsl6l7jq';
 const USTRIX_POOL = 'terra1rvrywq2wxmzve8dm7sae2zx6er5969qnsl68pnh2xu2y6atdwq6qq9zq05';
 const GARUDA_FACTORY = 'terra1ypwj6sw25g0qcykv7mzmcvsndvx56r3yrgkaw3fds7yzwl7fwwcsnxkeh7';
 
@@ -67,6 +69,11 @@ const LPS = [
     symbol: 'cLUNC-cUSTC',
     lp: 'terra132uuzdnjce0c8g5dalyvdgl47ny697udesk972cg05e5y7gn485qz6tdch',
     pair: 'terra15rl8g308yzzt5kxu4skgwlahrvm8adyv0s2cupsmvte0akgs2ttsszau38',
+  },
+  {
+    symbol: 'USDT-cLUNC',
+    lp: 'terra10ur635zd6fmt4fxveven8lcx8xkr55t6dxjxh5dctmcc5lrxjqqslq4l3s',
+    pair: 'terra17l7eqc5j8vkm09up55etfggpr6y92ka6p03yc765mt3nerqcnhdsl6l7jq',
   },
 ];
 
@@ -123,7 +130,7 @@ function kind(addr) {
 }
 
 function decOf(addr) {
-  return addr === USTR || addr === CL8Y_CB ? 18 : 6;
+  return addr === USTR || addr === CL8Y_CB || addr === USDT ? 18 : 6;
 }
 
 function whole(raw, decimals) {
@@ -217,6 +224,7 @@ async function main() {
     USTRIX: await cw20Bal(USTRIX),
     SpaceUSD: await cw20Bal(SPACEUSD),
     'CL8Y-cb': await cw20Bal(CL8Y_CB),
+    USDT: await cw20Bal(USDT),
   };
 
   let lpOtherUsd = 0;
@@ -264,6 +272,19 @@ async function main() {
   if (!(cl8yUsd > 0)) {
     throw new Error('CL8Y-cb USD unpriced — fail closed');
   }
+  const usdtPool = await lcdSmart(USDT_CLUNC_POOL, { pool: {} });
+  let usdtRes = 0n;
+  let usdtCluncRes = 0n;
+  for (const asset of usdtPool.assets || []) {
+    const addr = asset.info?.token?.contract_addr;
+    if (addr === USDT) usdtRes = BigInt(asset.amount);
+    if (addr === CLUNC) usdtCluncRes = BigInt(asset.amount);
+  }
+  const usdtWhole = whole(usdtRes, 18);
+  const usdtUsd = usdtWhole > 0 ? (whole(usdtCluncRes, 6) * px.LUNC) / usdtWhole : 0;
+  if (!(usdtUsd > 0)) {
+    throw new Error('USDT USD unpriced — fail closed');
+  }
   const ustrixSim = await lcdSmart(USTRIX_POOL, {
     simulate_swap: {
       offer_asset: { cw20: USTRIX },
@@ -282,6 +303,7 @@ async function main() {
     [SPACEUSD]: spaceUsd,
     [ALPHA]: alphaUsd,
     [CL8Y_CB]: cl8yUsd,
+    [USDT]: usdtUsd,
     uluna: px.LUNC,
     uusd: px.USTC,
   };
@@ -292,7 +314,8 @@ async function main() {
     whole(spots.vFDUSD, 6) * vfdUsd +
     whole(spots.ALPHA, 6) * alphaUsd +
     whole(spots.SpaceUSD, 6) * spaceUsd +
-    whole(spots['CL8Y-cb'], 18) * cl8yUsd;
+    whole(spots['CL8Y-cb'], 18) * cl8yUsd +
+    whole(spots.USDT, 18) * usdtUsd;
   if (ustrixUsd && spots.USTRIX > 0n) spotUsd += whole(spots.USTRIX, 6) * ustrixUsd;
 
   let ustrUsd = 0;
@@ -360,6 +383,7 @@ async function main() {
       ALPHA: alphaUsd,
       USTRIX: ustrixUsd,
       'CL8Y-cb': cl8yUsd,
+      USDT: usdtUsd,
     },
     issuance: {
       ust1: { outstanding: ust1Supply.toString(), owned: owned.ust1.toString(), available: avail.ust1.toString() },

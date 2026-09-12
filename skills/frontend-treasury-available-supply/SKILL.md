@@ -39,7 +39,7 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 7. **Liability units:** 1 UST1 = $1. Wraps use native LUNC/USTC USD. USTR uses a mapped print or the UST1/USTR pool reserve ratio for **Total CMM Assets** only — never invented $1. Do not put protocol issued tokens in the CR numerator or USTR in the CR denominator.
 8. **Price gate:** Key Ratios body is exactly `prices not loaded, cannot display key ratios` unless every CR-relevant spot (`balance > 0`) and every LP `other` leg is priced **and** CR liabilities are known. Total CMM Assets may show N/A independently if protocol spot is unpriced.
 9. **Tiers** (status display, not on-chain enforcement): RED `<95`, YELLOW `[95, 110)`, GREEN `[110, 190]`, BLUE `>190` including `∞`.
-10. **Decimals:** `rawToWholeNumber` only. UST1/wraps/native 6; USTR / CL8Y-cb 18; CL8Y LP mint 18.
+10. **Decimals:** `rawToWholeNumber` only. UST1/wraps/native 6; USTR / CL8Y-cb / USDT 18; CL8Y LP mint 18.
 11. **Skip list exact:** `UST1-USTR` is not `UST1`. `type: "lp"` never uses the raw-protocol skip. The skip list still keeps protocol tokens out of the generic tokenlist CR loop; `useTreasury` injects them as Total-only rows.
 12. **No** missing USD as `$0` / `$1`. No LP mint `simulate_swap`. vFDUSD remains session oracle.
 
