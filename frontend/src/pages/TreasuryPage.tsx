@@ -4,12 +4,14 @@
  * Shows treasury reserves, asset holdings, token issuance, wrap supplies, and key ratios.
  */
 
-import { TreasuryAssetsCard, IssuanceCard, RatiosCard } from '../components/treasury';
+import { TreasuryAssetsCard, IssuanceCard, RatiosCard, BridgeHoldingsCard } from '../components/treasury';
+import { useBridgeHoldings } from '../hooks/useBridgeHoldings';
 import { useTreasury, EMPTY_RATIOS } from '../hooks/useTreasury';
 import { NETWORKS, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
 
 export function TreasuryPage() {
   const { treasuryData, isLoading, error } = useTreasury();
+  const { holdings: bridgeHoldings, isLoading: bridgeLoading } = useBridgeHoldings();
   const scanner = NETWORKS[DEFAULT_NETWORK].scanner;
   const contracts = CONTRACTS[DEFAULT_NETWORK];
   const emptyIssuance = {
@@ -54,6 +56,10 @@ export function TreasuryPage() {
             Native LUNC/USTC still count toward CR.
           </p>
         )}
+      </div>
+
+      <div className="mb-8 md:mb-10 animate-fade-in-up stagger-2">
+        <BridgeHoldingsCard holdings={bridgeHoldings} isLoading={bridgeLoading} />
       </div>
 
       <div className="grid md:grid-cols-2 gap-6 md:gap-8 mb-8 md:mb-10">
