@@ -4,14 +4,16 @@
  * Fetches treasury holdings from tokenlist.json plus protocol-token inventory.
  * Total CMM Assets include protocol issued tokens held spot or in CMM LP.
  * CR CMM Assets omit those. CR denominator is available UST1 + cUSTC + cLUNC
- * (redeemable debt only). USTR is equity and is not a CR liability. Key Ratios
- * stay hidden until every CR price and CR liability is certified.
- * BSC bridge lock/unlock balances are loaded by useBridgeHoldings and must
- * not be merged into `assets` or `computeTreasuryRatios`.
+ * plus certified Bridge-Debt outstanding in full. The debt receipt is not an
+ * asset and does not offset that borrow. USTR is equity and is not a CR
+ * liability. Key Ratios stay hidden until every CR price and CR liability is
+ * certified. BSC bridge lock/unlock balances are loaded by useBridgeHoldings
+ * and must not be merged into `assets` or `computeTreasuryRatios`.
  */
 
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { bridgeDebtLiabilities } from '../services/bridgeDebt';
 import { contractService } from '../services/contract';
 import { fetchTreasuryLpPositions, type LpChainPosition } from '../services/treasuryLp';
 import { CONTRACTS, DEFAULT_NETWORK, POLLING_INTERVAL } from '../utils/constants';
@@ -19,7 +21,12 @@ import { isTerraContractAddress } from '../utils/addresses';
 import { isRawProtocolHolding, resolveLpLegUsd } from '../utils/lpEligibility';
 import { computeLpNav, type LpNavLegInput } from '../utils/lpNav';
 import { fetchTokenList } from '../utils/tokenlist';
-import { computeTreasuryRatios, type ProtocolLiabilityInput, type RatioAssetInput } from '../utils/treasuryRatios';
+import {
+  computeTreasuryRatios,
+  isBridgeDebtReceiptSymbol,
+  type ProtocolLiabilityInput,
+  type RatioAssetInput,
+} from '../utils/treasuryRatios';
 import {
   aggregateProtocolOwned,
   toIssuanceBreakdown,
@@ -29,6 +36,7 @@ import {
 import { PROTOCOL_HOLDING_META, protocolHoldingUsd, protocolTokenUnitUsd, resolveUstrUsd } from '../utils/protocolHoldings';
 import { isLpTokenListEntry } from '../types/tokenlist';
 import type { TreasuryData, TreasuryAsset, TokenIssuance, TreasuryRatios } from '../types/treasury';
+import { useBridgeDebt } from './useBridgeDebt';
 import { usePrices } from './usePrices';
 
 const contracts = CONTRACTS[DEFAULT_NETWORK];
@@ -89,6 +97,7 @@ async function fetchTreasuryData(): Promise<TreasuryChainData> {
 
   for (const token of tokenList.tokens) {
     if (isLpTokenListEntry(token) || isRawProtocolHolding(token)) continue;
+    if (isBridgeDebtReceiptSymbol(token.symbol)) continue;
 
     try {
       let balance = BigInt(0);
@@ -182,6 +191,7 @@ const EMPTY_RATIOS: TreasuryRatios = {
 
 export function useTreasury() {
   const { prices, isLoading: pricesLoading } = usePrices();
+  const { snapshot: bridgeDebtSnapshot, isLoading: bridgeDebtLoading } = useBridgeDebt();
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['treasury', 'fullData'],
@@ -196,8 +206,17 @@ export function useTreasury() {
   const treasuryData: TreasuryData | null = useMemo(() => {
     if (!data) return null;
 
-    const assets: Record<string, TreasuryAsset> = { ...data.assets };
-    const ratioAssets: RatioAssetInput[] = Object.values(data.assets).map((asset) => ({
+    const receiptAddresses = new Set(
+      (bridgeDebtSnapshot?.markets ?? []).map((market) => market.debtToken),
+    );
+    const hideReceipt = (displayName: string, denom: string) =>
+      isBridgeDebtReceiptSymbol(displayName) || receiptAddresses.has(denom);
+
+    const assets: Record<string, TreasuryAsset> = {};
+    for (const [key, asset] of Object.entries(data.assets)) {
+      if (!hideReceipt(asset.displayName, asset.denom)) assets[key] = asset;
+    }
+    const ratioAssets: RatioAssetInput[] = Object.values(assets).map((asset) => ({
       symbol: asset.displayName,
       balanceRaw: asset.balance,
       decimals: asset.decimals,
@@ -205,6 +224,7 @@ export function useTreasury() {
 
     const lpLegSets: LpNavLegInput[][] = [];
     for (const pos of data.lpPositions) {
+      if (hideReceipt(pos.displayName, pos.lpAddress)) continue;
       if (pos.lpBalance <= 0n && !pos.balanceUnknown) continue;
 
       const pricedLegs =
@@ -342,6 +362,9 @@ export function useTreasury() {
         liabilityOf('cLUNC', data.cLuncIssuance, 'cLunc', 6),
         liabilityOf('cUSTC', data.cUstcIssuance, 'cUstc', 6),
       ],
+      bridgeDebts: bridgeDebtLoading
+        ? bridgeDebtLiabilities(null, prices)
+        : bridgeDebtLiabilities(bridgeDebtSnapshot, prices),
     });
 
     const ratios = pricesLoading
@@ -357,7 +380,7 @@ export function useTreasury() {
       ratios,
       lastUpdated: data.lastUpdated,
     };
-  }, [data, prices, pricesLoading]);
+  }, [data, prices, pricesLoading, bridgeDebtSnapshot, bridgeDebtLoading]);
 
   return {
     treasuryData,

@@ -198,6 +198,9 @@ export function TreasuryAssetsCard({ assets, isLoading = false, explorerUrl }: T
   const shouldShowAsset = (asset: TreasuryAsset): boolean => {
     if (asset.balance <= 0n) return false;
     if (asset.protocolIssued) return true;
+    // Residual spot USDT is a CMM asset. The $1 dust cutoff would hide it;
+    // the borrowed size is the UST1-USDT LP row, not this balance.
+    if (asset.displayName === 'USDT') return true;
     if (asset.kind === 'lp') {
       if (asset.displayUsd === null || asset.displayUsd === undefined) return true;
       return asset.displayUsd >= 1;

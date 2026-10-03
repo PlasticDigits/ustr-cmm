@@ -70,7 +70,9 @@ export interface TokenIssuance {
  *
  * Total CMM Assets include protocol issued tokens held by CMM (spot + LP).
  * CR CMM Assets omit those. Total / CR liabilities are outstanding vs available
- * of UST1 + cUSTC + cLUNC (redeemable debt). USTR is equity, not a liability.
+ * of UST1 + cUSTC + cLUNC (redeemable debt), plus certified Bridge-Debt
+ * outstanding in full. The Bridge-Debt receipt is not an asset and does not
+ * offset that borrow. USTR is equity, not a liability.
  */
 export interface TreasuryRatios {
   /** Collateralization percentage (e.g., 150 means 150% backed). NaN → hidden, Infinity → ∞ */
@@ -83,9 +85,9 @@ export interface TreasuryRatios {
   totalAssetsUsd: number;
   /** Holdings minus protocol issued tokens held by CMM / CMM LP */
   crAssetsUsd: number;
-  /** Outstanding UST1 + cUSTC + cLUNC (redeemable debt). USTR is not included. */
+  /** Outstanding UST1 + cUSTC + cLUNC, plus certified Bridge-Debt. USTR is not included. */
   totalLiabilitiesUsd: number;
-  /** Available supply of those same debt tokens (outstanding − CMM-owned) */
+  /** Available supply of those protocol debts, plus the same full Bridge-Debt outstanding. */
   crLiabilitiesUsd: number;
   /** True when a CR-relevant price or inventory input is missing */
   incomplete: boolean;

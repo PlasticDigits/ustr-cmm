@@ -6,7 +6,9 @@
  * CR CMM Assets = Σ non-protocol spot USD + Σ LP other-leg NAV
  * Total CMM Assets = CR assets + protocol spot USD + LP protocol-leg NAV
  * CR CMM Liabilities = available UST1×$1 + cUSTC×USTC + cLUNC×LUNC
- * (USTR is equity, not a liability).
+ *   + certified Bridge-Debt outstanding × underlying USD
+ * (USTR is equity, not a liability. The Bridge-Debt receipt is not an asset
+ * and does not offset the borrow. BSC lock balances are not inputs.)
  * Available = total_supply − treasury_spot − Σ allowlisted LP claims
  *
  * LCD is source of truth. Does not read the frontend or indexer prices into the
@@ -28,6 +30,7 @@ const USTRIX = 'terra1r3eaa2tucjr3es88wzuqpgxvssqflk9cghrjmf9uneds8wljyapqwtrcp5
 const SPACEUSD = 'terra1cvd5cgrs8rrl96hte34n57497u5f9cwuv3e6ztxgetkx4uzmcdyswv79zl';
 const CL8Y_CB = 'terra16wtml2q66g82fdkx66tap0qjkahqwp4lwq3ngtygacg5q0kzycgqvhpax3';
 const USDT = 'terra1z0xe7t5ymmltg4vju8tghkq0pewy4et548ta23nlu9zxtl950uyqkv8mv4';
+const BRIDGE_DEBT_ISSUER = 'terra12c6hyez8fvvcrfhvq04xc8t63y7kmmdrkktlwefx4txrgf6peuxqk5x6rq';
 const SPACEUSD_POOL = 'terra1ts0r4whpr48cwsnd7elgpuqqaqu5phy0ywx5x09f5zrnj9wda54sreeumg';
 const CL8Y_CUSTC_POOL = 'terra1tz5vwrungh6drd9nt95qym3k892vs3as8nqmu7sg4ypek7wxvv4qm89upc';
 const USDT_CLUNC_POOL = 'terra17l7eqc5j8vkm09up55etfggpr6y92ka6p03yc765mt3nerqcnhdsl6l7jq';
@@ -74,6 +77,11 @@ const LPS = [
     symbol: 'cLUNC-USDT',
     lp: 'terra10ur635zd6fmt4fxveven8lcx8xkr55t6dxjxh5dctmcc5lrxjqqslq4l3s',
     pair: 'terra17l7eqc5j8vkm09up55etfggpr6y92ka6p03yc765mt3nerqcnhdsl6l7jq',
+  },
+  {
+    symbol: 'UST1-USDT',
+    lp: 'terra17nny5femmkq2nfu7ne9nxw0zjnpgwxl0zvfzqwg88vgskhldztxqytjtus',
+    pair: 'terra1qfa8hn0tnu33mnpahl382ekyd4873gmp2vsvcm3apw526tnrh8aqtrknvf',
   },
 ];
 
@@ -198,6 +206,48 @@ async function garudaUsd(token, luncUsd) {
     simulate_swap: { offer_asset: { cw20: token }, offer_amount: '1000000' },
   });
   return (Number(sim.return_amount) / 1e6) * luncUsd;
+}
+
+async function certifiedBridgeDebtUsd(unitUsdByUnderlying) {
+  const markets = [];
+  let startAfter;
+  for (let page = 0; page < 20; page += 1) {
+    const response = await lcdSmart(BRIDGE_DEBT_ISSUER, {
+      markets: { limit: 30, start_after: startAfter },
+    });
+    if (!Array.isArray(response.markets)) {
+      throw new Error('bridge debt markets unreadable — fail closed');
+    }
+    markets.push(...response.markets);
+    if (response.markets.length < 30) break;
+    startAfter = response.markets[response.markets.length - 1]?.underlying;
+    if (!startAfter) throw new Error('bridge debt pagination stalled — fail closed');
+    if (page === 19) throw new Error('bridge debt market list truncated — fail closed');
+  }
+
+  let usd = 0;
+  for (const market of markets) {
+    if (market.debtor !== TREASURY) {
+      throw new Error('bridge debt debtor is not the treasury — fail closed');
+    }
+    const outstanding = BigInt(market.outstanding);
+    const balance = await lcdSmart(market.debt_token, { balance: { address: market.debtor } });
+    if (BigInt(balance.balance) !== outstanding) {
+      throw new Error('bridge debt balance disagrees with outstanding — fail closed');
+    }
+    const info = await lcdSmart(market.debt_token, { token_info: {} });
+    if (BigInt(info.total_supply) !== outstanding || info.decimals !== market.decimals) {
+      throw new Error('bridge debt receipt does not match the issuer market — fail closed');
+    }
+    const unit = unitUsdByUnderlying[market.underlying];
+    if (!(unit > 0)) {
+      throw new Error(`bridge debt underlying ${market.underlying} unpriced — fail closed`);
+    }
+    const amount = whole(outstanding, market.decimals);
+    if (!(amount >= 0)) throw new Error('bridge debt amount unusable — fail closed');
+    usd += amount * unit;
+  }
+  return usd;
 }
 
 async function main() {
@@ -360,14 +410,17 @@ async function main() {
   };
   const crAssetsUsd = spotUsd + lpOtherUsd;
   const totalAssetsUsd = crAssetsUsd + protocolSpotUsd + lpProtocolUsd;
+  const bridgeDebtUsd = await certifiedBridgeDebtUsd({ [USDT]: usdtUsd });
   const totalLiabilitiesUsd =
     whole(ust1Supply, 6) * 1 +
     whole(cluncSupply, 6) * px.LUNC +
-    whole(custcSupply, 6) * px.USTC;
+    whole(custcSupply, 6) * px.USTC +
+    bridgeDebtUsd;
   const crLiabilitiesUsd =
     whole(avail.ust1, 6) * 1 +
     whole(avail.cLunc, 6) * px.LUNC +
-    whole(avail.cUstc, 6) * px.USTC;
+    whole(avail.cUstc, 6) * px.USTC +
+    bridgeDebtUsd;
   const denom = crLiabilitiesUsd;
   const assetsUsd = crAssetsUsd;
   const cr = (assetsUsd / denom) * 100;
@@ -399,7 +452,7 @@ async function main() {
       crAssetsUsd,
       totalAssetsUsd,
     },
-    liabilities: { totalLiabilitiesUsd, crLiabilitiesUsd },
+    liabilities: { totalLiabilitiesUsd, crLiabilitiesUsd, bridgeDebtUsd },
     collateralization: cr,
     ustcPerAvailableUst1: ustcPer,
     assetsToLiabilities: assetsUsd / denom,

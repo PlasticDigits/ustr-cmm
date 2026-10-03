@@ -36,6 +36,8 @@ Treasury may hold DEX LP for `UST1/xxx`, `USTR/xxx`, `cUSTC/xxx`, `cLUNC/xxx`, a
 | cLUNC/cUSTC LP | `terra132uuzdnjce0c8g5dalyvdgl47ny697udesk972cg05e5y7gn485qz6tdch` | 18dp LP mint; LCD treasury ~100% of pool (2026-09-08) |
 | cLUNC/USDT pair | `terra17l7eqc5j8vkm09up55etfggpr6y92ka6p03yc765mt3nerqcnhdsl6l7jq` | USDT other-leg in CR; cLUNC wrap haircut |
 | cLUNC/USDT LP | `terra10ur635zd6fmt4fxveven8lcx8xkr55t6dxjxh5dctmcc5lrxjqqslq4l3s` | 18dp LP mint; LCD treasury ~100% of pool (2026-09-12) |
+| UST1/USDT pair | `terra1qfa8hn0tnu33mnpahl382ekyd4873gmp2vsvcm3apw526tnrh8aqtrknvf` | USDT other-leg in CR; UST1 leg display-only |
+| UST1/USDT LP | `terra17nny5femmkq2nfu7ne9nxw0zjnpgwxl0zvfzqwg88vgskhldztxqytjtus` | 18dp LP mint; LCD treasury holds the remaining supply (2026-10-03) |
 
 Pair / LP CW20 addresses are **tokenlist `type: "lp"` pins only**. Do not invent factory results into CR. Garuda / CL8Y LP mint is often **not** the pair (`liquidity_token`). Discover CL8Y pairs from `https://indexer.dex.cl8y.com/api/v1/pairs` — still pin into tokenlist; indexer is not CR input. Catalog vs pin + LCD hold check: [frontend-treasury-cl8y-holdings](../frontend-treasury-cl8y-holdings/SKILL.md) / [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18). CL8Y-cb/cUSTC was pinned after LCD hold ([#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20)); do not factory-paginate other CL8Y pairs.
 

@@ -7,17 +7,22 @@
  * - CR CMM Assets = Total minus those protocol issued tokens. Spot non-protocol
  *   USD + LP `other` NAV (`crUsd`). Native LUNC/USTC still count.
  * - Total Liabilities = outstanding UST1 ($1 debt) + cUSTC (USTC USD debt) +
- *   cLUNC (LUNC USD debt). USTR is equity (no redemption promise) and is not
- *   a liability.
- * - CR CMM Liabilities = those minus CMM-owned (spot + allowlisted LP claims),
- *   i.e. available supply × the same unit prices. USTR is omitted.
+ *   cLUNC (LUNC USD debt) + certified Bridge-Debt outstanding. USTR is equity
+ *   (no redemption promise) and is not a liability. Bridge-Debt is an external
+ *   borrow: the full outstanding is the liability. The treasury's receipt is
+ *   the borrow record, not an asset and not an offset.
+ * - CR CMM Liabilities = protocol liabilities minus CMM-owned (spot +
+ *   allowlisted LP claims) plus that same full Bridge-Debt outstanding.
+ *   USTR is omitted.
  * - CR% and Assets/Liabilities use CR CMM Assets / CR CMM Liabilities.
  * - ∞ only when CR liabilities are certified and === 0. Inventory / price
- *   failure → NaN, never ∞.
+ *   failure → NaN, never ∞. A missing or disagreed Bridge-Debt query is a
+ *   liability failure, never $0.
  * - Missing USD is omitted and flagged incomplete — never treated as $0 or $1.
  * - $0 CR numerator with no missing CR prices is a valid complete CR (0% / RED).
- * - BSC bridge lock/unlock balances are not CMM asset or CR inputs. A later
- *   debt-to-bridge comparison stays outside this function.
+ * - BSC bridge lock/unlock balances are not CMM asset or CR inputs. Comparing
+ *   a lock balance with Bridge-Debt is a coverage check and stays outside
+ *   this function.
  */
 
 import { crColorTier, type CrColorTier } from './crTiers';
@@ -59,6 +64,27 @@ export interface ProtocolLiabilityInput {
   usd: number | null;
 }
 
+/**
+ * External bridge borrow. Unlike UST1 / cLUNC / cUSTC, custody of the receipt
+ * does not reduce this liability — the receipt is the borrow record.
+ * `certified: false` fail-closes the ratios. Never treat that as $0.
+ */
+export interface BridgeDebtLiabilityInput {
+  /** Underlying symbol (for example USDT). Also the missing-price label. */
+  label: string;
+  /** Issuer outstanding after it matched the debtor balance. Null if uncertified. */
+  outstandingRaw: bigint | null;
+  decimals: number;
+  /** Underlying unit USD from the price map. Null if unpriced. Never invent $1. */
+  usd: number | null;
+  certified: boolean;
+}
+
+/** `XXX-Bridge-Debt` receipts are borrow records, not treasury assets. */
+export function isBridgeDebtReceiptSymbol(symbol: string): boolean {
+  return symbol.trim().toUpperCase().endsWith('-BRIDGE-DEBT');
+}
+
 export interface ComputeTreasuryRatiosArgs {
   /** null = token_info failed, CMM-owned unknown, or available could not be certified */
   ust1AvailableRaw: bigint | null;
@@ -68,6 +94,12 @@ export interface ComputeTreasuryRatiosArgs {
   assets: RatioAssetInput[];
   prices: Record<string, number>;
   liabilities: ProtocolLiabilityInput[];
+  /**
+   * Certified bridge borrows. `[]` means the caller certified that the issuer
+   * has no markets. A failed or still-loading read is one uncertified item,
+   * not an empty list and not a zero.
+   */
+  bridgeDebts?: BridgeDebtLiabilityInput[];
 }
 
 export interface ComputedTreasuryRatios {
@@ -119,11 +151,13 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
     assets,
     prices,
     liabilities,
+    bridgeDebts = [],
   } = args;
 
   const crSum = sumCrNumerator(assets, prices);
   const totalSum = sumTotalAssets(assets, prices);
   const liab = sumProtocolLiabilities(liabilities);
+  const bridge = sumBridgeDebts(bridgeDebts);
 
   const ust1SupplyStatus = classifyAmount(ust1AvailableRaw, ust1Decimals);
   const wholeUstc = rawToWholeNumber(ustcBalanceRaw, ustcDecimals);
@@ -144,14 +178,22 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
     ...crSum.missingPriceSymbols,
     ...totalSum.missingPriceSymbols,
     ...liab.missingPriceSymbols,
+    ...bridge.missingPriceSymbols,
   ]);
 
   const crAssetsUsd = crIncomplete ? NA : crSum.assetsUsd;
   const totalAssetsUsd = totalIncomplete ? NA : totalSum.assetsUsd;
-  const totalLiabilitiesUsd = liab.totalUsd ?? NA;
-  const crLiabilitiesUsd = liab.crUsd ?? NA;
-  const liabilityStatus: LiabilityStatus =
+  const protocolTotal = liab.totalUsd;
+  const protocolCr = liab.crUsd;
+  const bridgeTotal = bridge.totalUsd;
+  const bridgeCr = bridge.crUsd;
+  const sumsKnown =
+    protocolTotal !== null && protocolCr !== null && bridgeTotal !== null && bridgeCr !== null;
+  const totalLiabilitiesUsd = sumsKnown ? protocolTotal + bridgeTotal : NA;
+  const crLiabilitiesUsd = sumsKnown ? protocolCr + bridgeCr : NA;
+  const protocolStatus: LiabilityStatus =
     liab.status === 'unknown' || ust1SupplyStatus === 'unknown' ? 'unknown' : liab.status;
+  const liabilityStatus = mergeLiabilityStatus(protocolStatus, bridge.status);
 
   if (liabilityStatus === 'unknown') {
     return finish({
@@ -189,7 +231,12 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
     });
   }
 
-  if (crIncomplete || !Number.isFinite(crSum.assetsUsd) || liab.crUsd === null) {
+  if (
+    crIncomplete ||
+    !Number.isFinite(crSum.assetsUsd) ||
+    !Number.isFinite(crLiabilitiesUsd) ||
+    crLiabilitiesUsd <= 0
+  ) {
     return finish({
       collateralization: NA,
       ustcPerUst1,
@@ -208,13 +255,13 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
   }
 
   return finish({
-    collateralization: (crSum.assetsUsd / liab.crUsd!) * 100,
+    collateralization: (crSum.assetsUsd / crLiabilitiesUsd) * 100,
     ustcPerUst1,
-    assetsToLiabilities: crSum.assetsUsd / liab.crUsd!,
+    assetsToLiabilities: crSum.assetsUsd / crLiabilitiesUsd,
     totalAssetsUsd,
     crAssetsUsd: crSum.assetsUsd,
     totalLiabilitiesUsd,
-    crLiabilitiesUsd: liab.crUsd!,
+    crLiabilitiesUsd,
     incomplete: false,
     totalIncomplete,
     includedSymbols: crSum.includedSymbols,
@@ -222,6 +269,12 @@ export function computeTreasuryRatios(args: ComputeTreasuryRatiosArgs): Computed
     ust1SupplyStatus,
     liabilityStatus: 'positive',
   });
+}
+
+function mergeLiabilityStatus(a: LiabilityStatus, b: LiabilityStatus): LiabilityStatus {
+  if (a === 'unknown' || b === 'unknown') return 'unknown';
+  if (a === 'positive' || b === 'positive') return 'positive';
+  return 'zero';
 }
 
 function sumCrNumerator(
@@ -413,6 +466,49 @@ export function sumProtocolLiabilities(items: ProtocolLiabilityInput[]): {
     totalUsd,
     crUsd,
     status: anyPositiveCr || crUsd > 0 ? 'positive' : 'zero',
+    missingPriceSymbols,
+  };
+}
+
+/**
+ * Full outstanding on both Total and CR. The receipt is not subtracted.
+ * Any uncertified item fail-closes the whole bridge-debt sum.
+ */
+export function sumBridgeDebts(items: BridgeDebtLiabilityInput[]): {
+  totalUsd: number | null;
+  crUsd: number | null;
+  status: LiabilityStatus;
+  missingPriceSymbols: string[];
+} {
+  const missingPriceSymbols: string[] = [];
+  let usd = 0;
+  let anyPositive = false;
+
+  for (const item of items) {
+    if (!item.certified || item.outstandingRaw === null || item.outstandingRaw < 0n) {
+      return { totalUsd: null, crUsd: null, status: 'unknown', missingPriceSymbols };
+    }
+    const whole = rawToWholeNumber(item.outstandingRaw, item.decimals);
+    if (!Number.isFinite(whole) || whole < 0) {
+      return { totalUsd: null, crUsd: null, status: 'unknown', missingPriceSymbols };
+    }
+    if (whole === 0) continue;
+    if (!isValidPositivePrice(item.usd)) {
+      missingPriceSymbols.push(item.label);
+      continue;
+    }
+    usd += whole * item.usd;
+    anyPositive = true;
+  }
+
+  if (missingPriceSymbols.length > 0 || !Number.isFinite(usd) || usd < 0) {
+    return { totalUsd: null, crUsd: null, status: 'unknown', missingPriceSymbols };
+  }
+
+  return {
+    totalUsd: usd,
+    crUsd: usd,
+    status: anyPositive ? 'positive' : 'zero',
     missingPriceSymbols,
   };
 }

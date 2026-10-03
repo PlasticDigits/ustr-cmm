@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { computeTreasuryRatios, type ProtocolLiabilityInput } from './treasuryRatios';
+import {
+  computeTreasuryRatios,
+  isBridgeDebtReceiptSymbol,
+  type BridgeDebtLiabilityInput,
+  type ProtocolLiabilityInput,
+} from './treasuryRatios';
 
 const UST1_1M = 1_000_000_000_000n; // 1,000,000 UST1 at 6dp
 const UST1_500K = 500_000_000_000n;
@@ -463,5 +468,141 @@ describe('computeTreasuryRatios', () => {
     expect(result.collateralization).toBeCloseTo(200);
     expect(Number.isNaN(result.totalAssetsUsd)).toBe(true);
     expect(result.crAssetsUsd).toBeCloseTo(2_000_000);
+  });
+});
+
+const USDT_10K = 10_000n * 10n ** 18n;
+
+function usdtBorrow(
+  outstanding: bigint | null,
+  certified = true,
+  usd: number | null = 1,
+): BridgeDebtLiabilityInput {
+  return {
+    label: 'USDT',
+    outstandingRaw: outstanding,
+    decimals: 18,
+    usd,
+    certified,
+  };
+}
+
+describe('bridge-debt liabilities', () => {
+  it('books the full outstanding in Total and CR and does not add the receipt to assets', () => {
+    const result = computeTreasuryRatios({
+      ust1AvailableRaw: UST1_1M,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [{ symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 }],
+      prices: { vFDUSD: 2 },
+      liabilities: ust1OnlyLiabilities(UST1_1M),
+      bridgeDebts: [usdtBorrow(USDT_10K)],
+    });
+    expect(result.totalAssetsUsd).toBeCloseTo(2_000_000);
+    expect(result.crAssetsUsd).toBeCloseTo(2_000_000);
+    expect(result.includedSymbols).toEqual(['vFDUSD']);
+    expect(result.totalLiabilitiesUsd).toBeCloseTo(1_010_000);
+    expect(result.crLiabilitiesUsd).toBeCloseTo(1_010_000);
+    expect(result.collateralization).toBeCloseTo((2_000_000 / 1_010_000) * 100);
+    expect(result.pricesReady).toBe(true);
+    expect(isBridgeDebtReceiptSymbol('USDT-Bridge-Debt')).toBe(true);
+    expect(isBridgeDebtReceiptSymbol('USDT')).toBe(false);
+  });
+
+  it('is a CR liability on its own when protocol debt is certified zero', () => {
+    const result = computeTreasuryRatios({
+      ust1AvailableRaw: 0n,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [{ symbol: 'vFDUSD', balanceRaw: 20_000_000_000n, decimals: 6 }],
+      prices: { vFDUSD: 1 },
+      liabilities: ust1OnlyLiabilities(0n),
+      bridgeDebts: [usdtBorrow(USDT_10K)],
+    });
+    expect(result.liabilityStatus).toBe('positive');
+    expect(result.collateralization).toBeCloseTo(200);
+    expect(result.crLiabilitiesUsd).toBeCloseTo(10_000);
+    expect(result.totalLiabilitiesUsd).toBeCloseTo(10_000);
+    expect(Number.isFinite(result.collateralization)).toBe(true);
+  });
+
+  it('fail-closes when the borrow is uncertified instead of treating it as zero', () => {
+    const result = computeTreasuryRatios({
+      ust1AvailableRaw: UST1_1M,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [{ symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 }],
+      prices: { vFDUSD: 2 },
+      liabilities: ust1OnlyLiabilities(UST1_1M),
+      bridgeDebts: [usdtBorrow(USDT_10K, false)],
+    });
+    expect(result.liabilityStatus).toBe('unknown');
+    expect(result.pricesReady).toBe(false);
+    expect(result.incomplete).toBe(true);
+    expect(Number.isNaN(result.collateralization)).toBe(true);
+    expect(Number.isNaN(result.totalLiabilitiesUsd)).toBe(true);
+    expect(Number.isNaN(result.crLiabilitiesUsd)).toBe(true);
+  });
+
+  it('fail-closes an unpriced borrow and does not invent $1', () => {
+    const result = computeTreasuryRatios({
+      ust1AvailableRaw: UST1_1M,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [{ symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 }],
+      prices: { vFDUSD: 2 },
+      liabilities: ust1OnlyLiabilities(UST1_1M),
+      bridgeDebts: [usdtBorrow(USDT_10K, true, null)],
+    });
+    expect(result.missingPriceSymbols).toContain('USDT');
+    expect(result.liabilityStatus).toBe('unknown');
+    expect(Number.isNaN(result.collateralization)).toBe(true);
+    expect(result.pricesReady).toBe(false);
+  });
+
+  it('ignores a certified zero borrow even when its price is missing', () => {
+    const result = computeTreasuryRatios({
+      ust1AvailableRaw: UST1_1M,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [{ symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 }],
+      prices: { vFDUSD: 2 },
+      liabilities: ust1OnlyLiabilities(UST1_1M),
+      bridgeDebts: [usdtBorrow(0n, true, null)],
+    });
+    expect(result.collateralization).toBeCloseTo(200);
+    expect(result.totalLiabilitiesUsd).toBeCloseTo(1_000_000);
+    expect(result.crLiabilitiesUsd).toBeCloseTo(1_000_000);
+    expect(result.pricesReady).toBe(true);
+  });
+
+  it('adds every certified underlying to both liability totals', () => {
+    const result = computeTreasuryRatios({
+      ust1AvailableRaw: 0n,
+      ust1Decimals: 6,
+      ustcBalanceRaw: 0n,
+      ustcDecimals: 6,
+      assets: [{ symbol: 'vFDUSD', balanceRaw: 1_000_000_000_000n, decimals: 6 }],
+      prices: { vFDUSD: 2 },
+      liabilities: ust1OnlyLiabilities(0n),
+      bridgeDebts: [
+        usdtBorrow(USDT_10K, true, 1.01),
+        {
+          label: 'OTHER',
+          outstandingRaw: 5n * 10n ** 6n,
+          decimals: 6,
+          usd: 2,
+          certified: true,
+        },
+      ],
+    });
+    expect(result.totalLiabilitiesUsd).toBeCloseTo(10_000 * 1.01 + 10);
+    expect(result.crLiabilitiesUsd).toBeCloseTo(10_000 * 1.01 + 10);
+    expect(result.totalAssetsUsd).toBeCloseTo(2_000_000);
   });
 });

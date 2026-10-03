@@ -229,18 +229,29 @@ export const BSC_RPC = {
 } as const;
 
 /**
- * BSC lock/unlock address. Holdings are displayed on the treasury page and
- * are not inputs to Total CMM Assets or CR. A later debt-to-bridge ratio
- * stays outside `computeTreasuryRatios`.
+ * BSC lock/unlock address and the columbus-5 bridge-debt issuer.
  *
- * USDT is BSC-USD (18 decimals). CL8Y is the BSC token (18 decimals).
+ * Lock balances are shown on the treasury page and are not inputs to Total
+ * CMM Assets or CR. They back ordinary user bridge mints, which do not create
+ * Bridge-Debt. Outstanding Bridge-Debt is a CMM liability inside
+ * `computeTreasuryRatios` (full issuer outstanding, not reduced by the receipt
+ * the treasury holds). A lock-versus-borrow coverage check stays on the Bridge
+ * card and is not a ratio input.
+ *
+ * Markets come from the issuer `markets` query. USDT is one underlying, not
+ * the only one the issuer can register.
+ *
+ * USDT on BSC is BSC-USD (18 decimals). CL8Y is the BSC token (18 decimals).
  * Both decimals were read from the token contracts.
  */
 export const BRIDGE = {
+  /** BSC lock balances are not CMM asset or CR inputs. */
   countedInCmmRatios: false,
   chainId: 56,
   explorer: 'https://bscscan.com',
   lockAddress: '0xD7b3Bf05987052009c350874E810Df98dA95D258',
+  /** cl8y-dex-terraclassic bridge-debt issuer on columbus-5. */
+  debtIssuer: 'terra12c6hyez8fvvcrfhvq04xc8t63y7kmmdrkktlwefx4txrgf6peuxqk5x6rq',
   tokens: [
     {
       symbol: 'USDT',

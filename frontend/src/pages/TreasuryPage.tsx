@@ -5,6 +5,7 @@
  */
 
 import { TreasuryAssetsCard, IssuanceCard, RatiosCard, BridgeHoldingsCard } from '../components/treasury';
+import { useBridgeDebt } from '../hooks/useBridgeDebt';
 import { useBridgeHoldings } from '../hooks/useBridgeHoldings';
 import { useTreasury, EMPTY_RATIOS } from '../hooks/useTreasury';
 import { NETWORKS, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
@@ -12,6 +13,7 @@ import { NETWORKS, CONTRACTS, DEFAULT_NETWORK } from '../utils/constants';
 export function TreasuryPage() {
   const { treasuryData, isLoading, error } = useTreasury();
   const { holdings: bridgeHoldings, isLoading: bridgeLoading } = useBridgeHoldings();
+  const { snapshot: bridgeDebts, isLoading: bridgeDebtLoading } = useBridgeDebt();
   const scanner = NETWORKS[DEFAULT_NETWORK].scanner;
   const contracts = CONTRACTS[DEFAULT_NETWORK];
   const emptyIssuance = {
@@ -32,8 +34,10 @@ export function TreasuryPage() {
         </h2>
         <p className="text-gray-400 max-w-2xl mx-auto text-base md:text-lg">
           Transparent view of treasury assets backing UST1. Collateralization uses
-          CR CMM Assets over CR CMM Liabilities (outstanding UST1, cUSTC, and cLUNC
-          debt, minus CMM-owned). USTR is equity and is not a CR liability.
+          CR CMM Assets over CR CMM Liabilities (available UST1, cUSTC, and cLUNC,
+          plus outstanding Bridge-Debt). The Bridge-Debt receipt is a liability, not
+          an asset. USTR is equity and is not a CR liability. BSC lock balances are
+          not CMM assets.
         </p>
       </div>
 
@@ -59,7 +63,12 @@ export function TreasuryPage() {
       </div>
 
       <div className="mb-8 md:mb-10 animate-fade-in-up stagger-2">
-        <BridgeHoldingsCard holdings={bridgeHoldings} isLoading={bridgeLoading} />
+        <BridgeHoldingsCard
+          holdings={bridgeHoldings}
+          isLoading={bridgeLoading}
+          debts={bridgeDebts}
+          debtLoading={bridgeDebtLoading}
+        />
       </div>
 
       <div className="grid md:grid-cols-2 gap-6 md:gap-8 mb-8 md:mb-10">
@@ -118,10 +127,11 @@ export function TreasuryPage() {
         </div>
       </div>
       <p className="text-xs text-gray-500 -mt-6 mb-8 md:mb-10">
-        Available supply of UST1, cUSTC, and cLUNC (redeemable debt) is the CR CMM
-        Liabilities stack. USTR is equity and is omitted. CMM-owned wrap receipts
-        and protocol tokens are omitted from CR CMM Assets so native LUNC/USTC are
-        not double-counted.
+        Available supply of UST1, cUSTC, and cLUNC (redeemable debt), plus outstanding
+        Bridge-Debt in full, is the CR CMM Liabilities stack. The Bridge-Debt receipt
+        is a liability, not an asset, and holding it does not offset that borrow.
+        USTR is equity and is omitted. CMM-owned wrap receipts and protocol tokens
+        are omitted from CR CMM Assets so native LUNC/USTC are not double-counted.
       </p>
 
       <div className="animate-fade-in-up stagger-5">
