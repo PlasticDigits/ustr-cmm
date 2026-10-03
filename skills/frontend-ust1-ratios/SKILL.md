@@ -24,7 +24,7 @@ Finder: `https://finder.terraclassic.community/columbus-5`.
 
 ## Invariants (must hold)
 
-1. **Denominator** = **CR CMM Liabilities** = available UST1 ($1 debt) + cUSTC (USTC USD) + cLUNC (LUNC USD). USTR is equity (no redemption) and is **not** in the denominator. Never raw `total_supply` alone. Never window volume. See [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16).
+1. **Denominator** = **CR CMM Liabilities** = available UST1 ($1 debt) + cUSTC (USTC USD) + cLUNC (LUNC USD) + certified Bridge-Debt outstanding in full. The receipt is not an asset and does not offset the borrow. A missing or disagreed issuer/debtor read fail-closes Key Ratios (never $0). USTR is equity (no redemption) and is **not** in the denominator. Never raw `total_supply` alone. Never window volume. BSC lock balances are not CR inputs. See [#16](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/16).
 2. **∞ only if** CR liability inventories succeeded **and** CR liabilities === 0. Query failure → hide Key Ratios, **never** `∞`.
 3. **Supply > 0 → compute.** Never the stub `hasUst1Issued ? 0 : Infinity`.
 4. **CR%** = (CR CMM Assets / CR CMM Liabilities) × 100. CR CMM Assets = priced non-protocol USD. Protocol issued tokens held by CMM enter **Total CMM Assets** only.

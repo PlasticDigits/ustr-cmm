@@ -178,10 +178,12 @@ export function RatiosCard({ ratios, isLoading }: RatiosCardProps) {
             )}
             <p className="mt-3 text-xs text-gray-500">
               CR CMM Assets omit protocol issued tokens held by CMM (spot and LP).
-              CR CMM Liabilities are outstanding UST1, cUSTC, and cLUNC debt minus
-              CMM-owned inventory. USTR is equity and is not a CR liability. Status
-              display for intended swap / staking-reward bands — this page does not
-              change on-chain gates.
+              CR CMM Liabilities are available UST1, cUSTC, and cLUNC, plus outstanding
+              Bridge-Debt. That receipt is a liability, not an asset, and holding it
+              does not reduce the borrow. USTR is equity and is not a CR liability.
+              BSC lock balances are not counted in CMM asset ratios. Status display
+              for intended swap / staking-reward bands — this page does not change
+              on-chain gates.
             </p>
           </>
         )}

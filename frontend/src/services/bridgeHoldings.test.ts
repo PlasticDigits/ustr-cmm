@@ -6,6 +6,7 @@ describe('BRIDGE', () => {
   it('is excluded from CMM ratios and pins the lock address tokens', () => {
     expect(BRIDGE.countedInCmmRatios).toBe(false);
     expect(BRIDGE.lockAddress).toBe('0xD7b3Bf05987052009c350874E810Df98dA95D258');
+    expect(BRIDGE.debtIssuer).toBe('terra12c6hyez8fvvcrfhvq04xc8t63y7kmmdrkktlwefx4txrgf6peuxqk5x6rq');
     expect(BRIDGE.tokens.map((token) => [token.symbol, token.address, token.decimals])).toEqual([
       ['USDT', '0x55d398326f99059ff775485246999027b3197955', 18],
       ['CL8Y', '0x8f452a1fdd388a45e1080992eff051b4dd9048d2', 18],

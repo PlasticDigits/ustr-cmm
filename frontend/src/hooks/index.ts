@@ -15,6 +15,7 @@ export {
 } from './useContract';
 export { useTreasury } from './useTreasury';
 export { useBridgeHoldings } from './useBridgeHoldings';
+export { useBridgeDebt } from './useBridgeDebt';
 export { usePrices } from './usePrices';
 export { useLegalAcceptance } from './useLegalAcceptance';
 
