@@ -208,3 +208,59 @@ export const LEGAL_CLICKWRAP = {
   appName: 'USTR CMM',
   network: 'TerraClassic' as const,
 } as const;
+
+/**
+ * Public BSC JSON-RPC endpoints that answer browser `eth_call`
+ * (`Access-Control-Allow-Origin: *`). Tried in order. Failed hosts cool down.
+ */
+export const BSC_RPC = {
+  endpoints: [
+    'https://bsc-dataseed.binance.org',
+    'https://bsc-dataseed1.binance.org',
+    'https://bsc-dataseed2.binance.org',
+    'https://bsc-dataseed1.defibit.io',
+    'https://bsc-dataseed1.ninicoin.io',
+  ],
+  /** Minimum gap between HTTP calls so public dataseeds are not burst. */
+  minRequestIntervalMs: 500,
+  cacheTtlMs: 20_000,
+  requestTimeoutMs: 8_000,
+  endpointCooldownMs: 30_000,
+} as const;
+
+/**
+ * BSC lock/unlock address. Holdings are displayed on the treasury page and
+ * are not inputs to Total CMM Assets or CR. A later debt-to-bridge ratio
+ * stays outside `computeTreasuryRatios`.
+ *
+ * USDT is BSC-USD (18 decimals). CL8Y is the BSC token (18 decimals).
+ * Both decimals were read from the token contracts.
+ */
+export const BRIDGE = {
+  countedInCmmRatios: false,
+  chainId: 56,
+  explorer: 'https://bscscan.com',
+  lockAddress: '0xD7b3Bf05987052009c350874E810Df98dA95D258',
+  tokens: [
+    {
+      symbol: 'USDT',
+      name: 'Tether USD',
+      address: '0x55d398326f99059ff775485246999027b3197955',
+      decimals: 18,
+      /** Display-only key in the existing price map. Not a CR input. */
+      priceSymbol: 'USDT',
+      gradient: 'from-emerald-500 to-green-600',
+      iconColor: 'text-emerald-400',
+    },
+    {
+      symbol: 'CL8Y',
+      name: 'CL8Y',
+      address: '0x8f452a1fdd388a45e1080992eff051b4dd9048d2',
+      decimals: 18,
+      /** Columbus-5 CL8Y-cb tracks this BSC token. Display only. */
+      priceSymbol: 'CL8Y-cb',
+      gradient: 'from-cyan-500 to-blue-600',
+      iconColor: 'text-cyan-400',
+    },
+  ],
+} as const;

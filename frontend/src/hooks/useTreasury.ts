@@ -6,6 +6,8 @@
  * CR CMM Assets omit those. CR denominator is available UST1 + cUSTC + cLUNC
  * (redeemable debt only). USTR is equity and is not a CR liability. Key Ratios
  * stay hidden until every CR price and CR liability is certified.
+ * BSC bridge lock/unlock balances are loaded by useBridgeHoldings and must
+ * not be merged into `assets` or `computeTreasuryRatios`.
  */
 
 import { useMemo } from 'react';

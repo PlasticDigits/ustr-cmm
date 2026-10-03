@@ -16,6 +16,8 @@
  *   failure → NaN, never ∞.
  * - Missing USD is omitted and flagged incomplete — never treated as $0 or $1.
  * - $0 CR numerator with no missing CR prices is a valid complete CR (0% / RED).
+ * - BSC bridge lock/unlock balances are not CMM asset or CR inputs. A later
+ *   debt-to-bridge comparison stays outside this function.
  */
 
 import { crColorTier, type CrColorTier } from './crTiers';

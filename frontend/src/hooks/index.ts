@@ -14,6 +14,7 @@ export {
   useInvalidateQueries,
 } from './useContract';
 export { useTreasury } from './useTreasury';
+export { useBridgeHoldings } from './useBridgeHoldings';
 export { usePrices } from './usePrices';
 export { useLegalAcceptance } from './useLegalAcceptance';
 
