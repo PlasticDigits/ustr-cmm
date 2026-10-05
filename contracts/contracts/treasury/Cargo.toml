@@ -24,7 +24,7 @@ cw20.workspace = true
 thiserror.workspace = true
 schemars.workspace = true
 serde.workspace = true
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 common = { path = "../../packages/common" }
 
