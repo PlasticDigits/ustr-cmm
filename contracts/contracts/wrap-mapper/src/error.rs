@@ -6,6 +6,12 @@ pub enum ContractError {
     #[error("{0}")]
     Std(#[from] StdError),
 
+    #[error("Wrapper settlement already in progress")]
+    SettlementInProgress,
+
+    #[error("Minimum receive not met: received {received}, required {required}")]
+    MinimumReceive { received: String, required: String },
+
     #[error("Unauthorized")]
     Unauthorized,
 

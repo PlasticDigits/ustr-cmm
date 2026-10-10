@@ -155,3 +155,6 @@ GPL-3.0 (consistent with cw20-mintable dependency)
 
 Contributions welcome. Please review the proposal document and open issues for discussion before submitting PRs.
 
+
+Protected direct wrapping for [DEX #1459](https://git.cl8y.com/code/cl8y-dex-terraclassic/issues/1459):
+[protocol/checklist](docs/qa/dex-1459/README.md) and [agent invariants](skills/direct-wrapper-floors/SKILL.md).

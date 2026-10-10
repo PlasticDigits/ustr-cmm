@@ -70,6 +70,9 @@ pub enum ExecuteMsg {
     /// Native tokens stay in treasury; wrapper is notified to mint CW20.
     WrapDeposit {},
 
+    /// Forward a positive actual-receive floor to the registered mapper.
+    WrapDepositWithMinimum { minimum_receive: Uint128 },
+
     /// Allows a registered wrapper to withdraw assets to a recipient.
     /// Caller must be the registered wrapper for the denom being withdrawn.
     InstantWithdraw {
@@ -146,6 +149,8 @@ pub enum QueryMsg {
     /// Returns current governance and timelock settings
     #[returns(ConfigResponse)]
     Config {},
+    #[returns(ExecutionCapabilitiesResponse)]
+    ExecutionCapabilities {},
 
     /// Returns all pending governance proposals
     #[returns(PendingGovernanceResponse)]
@@ -288,6 +293,12 @@ pub struct Cw20SpenderLimitResponse {
 /// Matches the wrap-mapper's ExecuteMsg::NotifyDeposit variant.
 #[cw_serde]
 pub enum WrapperExecuteMsg {
+    NotifyDepositWithMinimum {
+        depositor: String,
+        denom: String,
+        amount: Uint128,
+        minimum_receive: Uint128,
+    },
     NotifyDeposit {
         depositor: String,
         denom: String,
@@ -295,3 +306,32 @@ pub enum WrapperExecuteMsg {
     },
 }
 
+#[cw_serde]
+pub struct ExecutionCapabilitiesResponse {
+    pub direct_wrapper_floor_version: u8,
+}
+
+#[cfg(test)]
+mod floor_wire_compatibility {
+    use super::*;
+    use cosmwasm_std::{from_json, to_json_binary};
+
+    #[cw_serde]
+    enum LegacyDeposit {
+        WrapDeposit {},
+    }
+
+    #[test]
+    fn distinct_protected_deposit_is_rejected_by_legacy_abi() {
+        assert!(
+            from_json::<LegacyDeposit>(&to_json_binary(&ExecuteMsg::WrapDeposit {}).unwrap())
+                .is_ok()
+        );
+        let protected = to_json_binary(&ExecuteMsg::WrapDepositWithMinimum {
+            minimum_receive: Uint128::one(),
+        })
+        .unwrap();
+        assert!(from_json::<LegacyDeposit>(&protected).is_err());
+        assert!(from_json::<ExecuteMsg>(br#"{"wrap_deposit_with_minimum":{}}"#).is_err());
+    }
+}

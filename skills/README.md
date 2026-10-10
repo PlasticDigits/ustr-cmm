@@ -18,3 +18,5 @@ Project skills for third-party / Cursor agents working in this repo.
 | [frontend-keplr-compatible-wallets](./frontend-keplr-compatible-wallets/SKILL.md) | Trust Wallet / Keplr-compatible injects (`window.keplr` or `window.trustwallet.cosmos`); one `WalletName.KEPLR` path ([#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4)) |
 
 Human-facing docs: [docs/CONTRACTS.md](../docs/CONTRACTS.md), [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md), [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md), [docs/WALLETS.md](../docs/WALLETS.md).
+
+- [Direct wrapper receive floors](direct-wrapper-floors/SKILL.md): protected DEX zero-hop protocol, actual recipient balance deltas and atomic rollback.
