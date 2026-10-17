@@ -68,6 +68,11 @@ terrad tx wasm execute $WRAP_MAPPER \
 
 Full runbook: [docs/DEPLOYMENT.md](../../docs/DEPLOYMENT.md#asymmetric-wrapunwrap-fees-vs-burn-tax).
 
+Direct DEX receive protection is an additive protocol in mapper 0.4.0 / treasury
+0.3.0; follow [direct wrapper floor invariants](../direct-wrapper-floors/SKILL.md)
+and [rollback checklist](../../docs/qa/dex-1459/README.md). Source versions do not
+establish production migration or capability support.
+
 ## Tests to run
 
 ```bash

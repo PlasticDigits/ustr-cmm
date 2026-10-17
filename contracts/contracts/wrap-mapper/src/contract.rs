@@ -118,12 +118,27 @@ pub fn execute(
     info: MessageInfo,
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
+    crate::settlement::ensure_idle(deps.storage)?;
     match msg {
         ExecuteMsg::NotifyDeposit {
             depositor,
             denom,
             amount,
         } => execute_notify_deposit(deps, env, info, depositor, denom, amount),
+        ExecuteMsg::NotifyDepositWithMinimum {
+            depositor,
+            denom,
+            amount,
+            minimum_receive,
+        } => execute_notify_deposit_with_minimum(
+            deps,
+            env,
+            info,
+            depositor,
+            denom,
+            amount,
+            minimum_receive,
+        ),
         ExecuteMsg::Receive(cw20_msg) => execute_receive_cw20(deps, env, info, cw20_msg),
         ExecuteMsg::SetDenomMapping { denom, cw20_addr } => {
             execute_set_denom_mapping(deps, env, info, denom, cw20_addr)
@@ -221,10 +236,44 @@ fn execute_notify_deposit(
         .add_attribute("mint_amount", mint_amount))
 }
 
+fn execute_notify_deposit_with_minimum(
+    mut deps: DepsMut,
+    env: Env,
+    info: MessageInfo,
+    depositor: String,
+    denom: String,
+    amount: Uint128,
+    minimum_receive: Uint128,
+) -> Result<Response, ContractError> {
+    if minimum_receive.is_zero() {
+        return Err(ContractError::ZeroAmount);
+    }
+    let recipient = deps.api.addr_validate(&depositor)?;
+    let response =
+        execute_notify_deposit(deps.branch(), env, info, depositor, denom.clone(), amount)?;
+    let token = DENOM_TO_CW20.load(deps.storage, &denom)?;
+    crate::settlement::protect(
+        deps,
+        response,
+        recipient,
+        crate::settlement::ReceiveAsset::Cw20(token),
+        minimum_receive,
+    )
+}
+
+#[cfg_attr(not(feature = "library"), entry_point)]
+pub fn reply(
+    deps: DepsMut,
+    _env: Env,
+    msg: cosmwasm_std::Reply,
+) -> Result<Response, ContractError> {
+    crate::settlement::settle(deps, msg)
+}
+
 // ---- Unwrap flow (user -> CW20 Send -> wrap-mapper -> burn + treasury.InstantWithdraw) ----
 
 fn execute_receive_cw20(
-    deps: DepsMut,
+    mut deps: DepsMut,
     env: Env,
     info: MessageInfo,
     cw20_msg: Cw20ReceiveMsg,
@@ -244,7 +293,18 @@ fn execute_receive_cw20(
         })?;
 
     let hook_msg: Cw20HookMsg = from_json(&cw20_msg.msg)?;
-    let Cw20HookMsg::Unwrap { recipient } = hook_msg;
+    let (recipient, minimum_receive) = match hook_msg {
+        Cw20HookMsg::Unwrap { recipient } => (recipient, None),
+        Cw20HookMsg::UnwrapWithMinimum {
+            recipient,
+            minimum_receive,
+        } => {
+            if minimum_receive.is_zero() {
+                return Err(ContractError::ZeroAmount);
+            }
+            (recipient, Some(minimum_receive))
+        }
+    };
 
     let amount = cw20_msg.amount;
     if amount.is_zero() {
@@ -280,17 +340,27 @@ fn execute_receive_cw20(
         funds: vec![],
     };
 
-    Ok(Response::new()
+    let response = Response::new()
         .add_message(burn_msg)
         .add_message(withdraw_msg)
         .add_attribute("action", "unwrap")
         .add_attribute("cw20_contract", cw20_contract)
-        .add_attribute("recipient", recipient_addr)
-        .add_attribute("denom", denom)
+        .add_attribute("recipient", recipient_addr.clone())
+        .add_attribute("denom", denom.clone())
         .add_attribute("gross_amount", amount)
         .add_attribute("fee", fee)
         .add_attribute("fee_unwrap_bps", config.fee_unwrap_bps.to_string())
-        .add_attribute("withdraw_amount", withdraw_amount))
+        .add_attribute("withdraw_amount", withdraw_amount);
+    match minimum_receive {
+        Some(floor) => crate::settlement::protect(
+            deps.branch(),
+            response,
+            recipient_addr,
+            crate::settlement::ReceiveAsset::Native(denom),
+            floor,
+        ),
+        None => Ok(response),
+    }
 }
 
 // ---- Governance handlers ----
@@ -677,6 +747,11 @@ fn check_rate_limit(
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => to_json_binary(&query_config(deps)?),
+        QueryMsg::ExecutionCapabilities {} => {
+            to_json_binary(&crate::msg::ExecutionCapabilitiesResponse {
+                direct_wrapper_floor_version: 1,
+            })
+        }
         QueryMsg::DenomMapping { denom } => to_json_binary(&query_denom_mapping(deps, denom)?),
         QueryMsg::AllDenomMappings {} => to_json_binary(&query_all_denom_mappings(deps)?),
         QueryMsg::RateLimit { denom } => to_json_binary(&query_rate_limit(deps, denom)?),
@@ -2539,7 +2614,7 @@ mod tests {
         assert_eq!(config.fee_unwrap_bps, 200);
 
         let ver = cw2::get_contract_version(&deps.storage).unwrap();
-        assert_eq!(ver.version, "0.3.0");
+        assert_eq!(ver.version, crate::state::CONTRACT_VERSION);
     }
 
     #[test]
@@ -3079,7 +3154,8 @@ mod integration_tests {
             crate::contract::execute,
             crate::contract::instantiate,
             crate::contract::query,
-        );
+        )
+        .with_reply(crate::contract::reply);
         Box::new(contract)
     }
 
@@ -3301,6 +3377,255 @@ mod integration_tests {
     }
 
     // ============ C1: FULL WRAP FLOW ============
+
+    fn install_floor_rate_limit(env: &mut TestEnv) {
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.wrapper_addr.clone(),
+                &crate::msg::ExecuteMsg::SetRateLimit {
+                    denom: DENOM_LUNC.into(),
+                    config: crate::state::RateLimitConfig {
+                        max_amount_per_window: Uint128::new(10_000_000),
+                        window_seconds: 3600,
+                    },
+                },
+                &[],
+            )
+            .unwrap();
+    }
+    fn floor_snapshot(env: &TestEnv) -> (Uint128, Uint128, Uint128, Uint128, Uint128) {
+        let native = env
+            .app
+            .wrap()
+            .query_balance(USER, DENOM_LUNC)
+            .unwrap()
+            .amount;
+        let treasury = env
+            .app
+            .wrap()
+            .query_balance(&env.treasury_addr, DENOM_LUNC)
+            .unwrap()
+            .amount;
+        let token = query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER);
+        let supply: cw20::TokenInfoResponse = env
+            .app
+            .wrap()
+            .query_wasm_smart(&env.cw20_lunc_addr, &cw20::Cw20QueryMsg::TokenInfo {})
+            .unwrap();
+        let rate: crate::msg::RateLimitResponse = env
+            .app
+            .wrap()
+            .query_wasm_smart(
+                &env.wrapper_addr,
+                &crate::msg::QueryMsg::RateLimit {
+                    denom: DENOM_LUNC.into(),
+                },
+            )
+            .unwrap();
+        (
+            native,
+            treasury,
+            token,
+            supply.total_supply,
+            rate.amount_used,
+        )
+    }
+    #[test]
+    fn direct_wrap_floor_failure_reverts_deposit_mint_supply_and_rate_then_retries() {
+        let mut env = setup_full_env();
+        install_floor_rate_limit(&mut env);
+        let before = floor_snapshot(&env);
+        let err = env
+            .app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDepositWithMinimum {
+                    minimum_receive: Uint128::new(995_001),
+                },
+                &[Coin::new(1_000_000, DENOM_LUNC)],
+            )
+            .unwrap_err();
+        assert!(err
+            .root_cause()
+            .to_string()
+            .contains("Minimum receive not met"));
+        assert_eq!(before, floor_snapshot(&env));
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDepositWithMinimum {
+                    minimum_receive: Uint128::new(995_000),
+                },
+                &[Coin::new(1_000_000, DENOM_LUNC)],
+            )
+            .unwrap();
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER),
+            Uint128::new(995_000)
+        );
+        // Existing wallet inventory cannot satisfy a new receive floor after fee drift.
+        env.app
+            .execute_contract(
+                Addr::unchecked(GOVERNANCE),
+                env.wrapper_addr.clone(),
+                &crate::msg::ExecuteMsg::SetFeeWrapBps { fee_wrap_bps: 100 },
+                &[],
+            )
+            .unwrap();
+        let before = floor_snapshot(&env);
+        assert!(env
+            .app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDepositWithMinimum {
+                    minimum_receive: Uint128::new(995_000)
+                },
+                &[Coin::new(1_000_000, DENOM_LUNC)]
+            )
+            .is_err());
+        assert_eq!(before, floor_snapshot(&env));
+    }
+    #[test]
+    fn direct_unwrap_floor_failure_reverts_send_burn_withdraw_rate_and_recipient_then_retries() {
+        let mut env = setup_full_env();
+        install_floor_rate_limit(&mut env);
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDeposit {},
+                &[Coin::new(1_000_000, DENOM_LUNC)],
+            )
+            .unwrap();
+        let before = floor_snapshot(&env);
+        let recipient_before = env
+            .app
+            .wrap()
+            .query_balance(USER2, DENOM_LUNC)
+            .unwrap()
+            .amount;
+        let hook = crate::msg::Cw20HookMsg::UnwrapWithMinimum {
+            recipient: Some(USER2.into()),
+            minimum_receive: Uint128::new(497_501),
+        };
+        let err = env
+            .app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: Uint128::new(500_000),
+                    msg: cosmwasm_std::to_json_binary(&hook).unwrap(),
+                },
+                &[],
+            )
+            .unwrap_err();
+        assert!(err
+            .root_cause()
+            .to_string()
+            .contains("Minimum receive not met"));
+        assert_eq!(before, floor_snapshot(&env));
+        assert_eq!(
+            recipient_before,
+            env.app
+                .wrap()
+                .query_balance(USER2, DENOM_LUNC)
+                .unwrap()
+                .amount
+        );
+        let hook = crate::msg::Cw20HookMsg::UnwrapWithMinimum {
+            recipient: Some(USER2.into()),
+            minimum_receive: Uint128::new(497_500),
+        };
+        env.app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.cw20_lunc_addr.clone(),
+                &Cw20ExecuteMsg::Send {
+                    contract: env.wrapper_addr.to_string(),
+                    amount: Uint128::new(500_000),
+                    msg: cosmwasm_std::to_json_binary(&hook).unwrap(),
+                },
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            env.app
+                .wrap()
+                .query_balance(USER2, DENOM_LUNC)
+                .unwrap()
+                .amount
+                - recipient_before,
+            Uint128::new(497_500)
+        );
+        assert_eq!(
+            query_cw20_balance(&env.app, &env.cw20_lunc_addr, USER),
+            Uint128::new(495_000)
+        );
+    }
+    #[test]
+    fn direct_floor_capability_and_zero_floor_are_explicit() {
+        let mut env = setup_full_env();
+        let mapper: crate::msg::ExecutionCapabilitiesResponse = env
+            .app
+            .wrap()
+            .query_wasm_smart(
+                &env.wrapper_addr,
+                &crate::msg::QueryMsg::ExecutionCapabilities {},
+            )
+            .unwrap();
+        let treasury: treasury::msg::ExecutionCapabilitiesResponse = env
+            .app
+            .wrap()
+            .query_wasm_smart(
+                &env.treasury_addr,
+                &treasury::msg::QueryMsg::ExecutionCapabilities {},
+            )
+            .unwrap();
+        assert_eq!(mapper.direct_wrapper_floor_version, 1);
+        assert_eq!(treasury.direct_wrapper_floor_version, 1);
+        let err = env.app.execute_contract(Addr::unchecked(USER), env.wrapper_addr.clone(),
+            &crate::msg::ExecuteMsg::NotifyDepositWithMinimum {
+                depositor: USER.into(), denom: DENOM_LUNC.into(), amount: Uint128::new(1_000_000), minimum_receive: Uint128::one(),
+            }, &[]).unwrap_err();
+        assert!(err.root_cause().to_string().contains("Unauthorized"));
+        let before = floor_snapshot(&env);
+        assert!(env
+            .app
+            .execute_contract(
+                Addr::unchecked(USER),
+                env.treasury_addr.clone(),
+                &treasury::msg::ExecuteMsg::WrapDepositWithMinimum {
+                    minimum_receive: Uint128::zero()
+                },
+                &[Coin::new(1_000_000, DENOM_LUNC)]
+            )
+            .is_err());
+        assert_eq!(before, floor_snapshot(&env));
+        let encoded =
+            cosmwasm_std::to_json_binary(&treasury::msg::ExecuteMsg::WrapDepositWithMinimum {
+                minimum_receive: Uint128::new(995000),
+            })
+            .unwrap();
+        assert_eq!(
+            encoded.as_slice(),
+            br#"{"wrap_deposit_with_minimum":{"minimum_receive":"995000"}}"#
+        );
+        let encoded = cosmwasm_std::to_json_binary(&crate::msg::Cw20HookMsg::UnwrapWithMinimum {
+            recipient: None,
+            minimum_receive: Uint128::new(497500),
+        })
+        .unwrap();
+        assert_eq!(
+            encoded.as_slice(),
+            br#"{"unwrap_with_minimum":{"recipient":null,"minimum_receive":"497500"}}"#
+        );
+    }
 
     #[test]
     fn test_full_wrap_flow() {

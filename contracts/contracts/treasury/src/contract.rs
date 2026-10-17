@@ -155,10 +155,14 @@ pub fn execute(
         ExecuteMsg::SetDenomWrapper { denom, wrapper } => {
             execute_set_denom_wrapper(deps, info, denom, wrapper)
         }
-        ExecuteMsg::RemoveDenomWrapper { denom } => {
-            execute_remove_denom_wrapper(deps, info, denom)
+        ExecuteMsg::RemoveDenomWrapper { denom } => execute_remove_denom_wrapper(deps, info, denom),
+        ExecuteMsg::WrapDeposit {} => execute_wrap_deposit(deps, info, None),
+        ExecuteMsg::WrapDepositWithMinimum { minimum_receive } => {
+            if minimum_receive.is_zero() {
+                return Err(ContractError::ZeroAmount);
+            }
+            execute_wrap_deposit(deps, info, Some(minimum_receive))
         }
-        ExecuteMsg::WrapDeposit {} => execute_wrap_deposit(deps, info),
         ExecuteMsg::InstantWithdraw {
             recipient,
             denom,
@@ -627,6 +631,7 @@ fn execute_set_wrapping_paused(
 fn execute_wrap_deposit(
     deps: DepsMut,
     info: MessageInfo,
+    minimum_receive: Option<Uint128>,
 ) -> Result<Response, ContractError> {
     let config = CONFIG.load(deps.storage)?;
     if config.wrapping_paused {
@@ -650,10 +655,18 @@ fn execute_wrap_deposit(
 
     let notify_msg = WasmMsg::Execute {
         contract_addr: wrapper.to_string(),
-        msg: to_json_binary(&WrapperExecuteMsg::NotifyDeposit {
-            depositor: info.sender.to_string(),
-            denom: coin.denom.clone(),
-            amount: coin.amount,
+        msg: to_json_binary(&match minimum_receive {
+            Some(minimum_receive) => WrapperExecuteMsg::NotifyDepositWithMinimum {
+                depositor: info.sender.to_string(),
+                denom: coin.denom.clone(),
+                amount: coin.amount,
+                minimum_receive,
+            },
+            None => WrapperExecuteMsg::NotifyDeposit {
+                depositor: info.sender.to_string(),
+                denom: coin.denom.clone(),
+                amount: coin.amount,
+            },
         })?,
         funds: vec![],
     };
@@ -1082,6 +1095,11 @@ fn execute_migrate_owned_contract(
 pub fn query(deps: Deps, env: Env, msg: QueryMsg) -> StdResult<Binary> {
     match msg {
         QueryMsg::Config {} => to_json_binary(&query_config(deps)?),
+        QueryMsg::ExecutionCapabilities {} => {
+            to_json_binary(&crate::msg::ExecutionCapabilitiesResponse {
+                direct_wrapper_floor_version: 1,
+            })
+        }
         QueryMsg::PendingGovernance {} => to_json_binary(&query_pending_governance(deps)?),
         QueryMsg::Balance { asset } => to_json_binary(&query_balance(deps, env, asset)?),
         QueryMsg::AllBalances {} => to_json_binary(&query_all_balances(deps, env)?),
@@ -4415,6 +4433,7 @@ mod tests {
                         assert_eq!(denom, DENOM_LUNC);
                         assert_eq!(amount, Uint128::new(500_000));
                     }
+                    _ => panic!("Legacy WrapDeposit must retain legacy callback"),
                 }
             }
             _ => panic!("Expected WasmMsg::Execute"),

@@ -588,3 +588,11 @@ cargo test --package referral --lib
 ## Deployment
 
 See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions and contract addresses.
+
+## Protected direct wrapping (DEX #1459)
+
+Treasury 0.3.0 and wrap-mapper 0.4.0 add explicit positive receive-floor messages,
+actual recipient balance-delta settlement and capability queries. Legacy ABI
+remains compatible. See [protocol and agent verification](qa/dex-1459/README.md)
+and [invariants](../skills/direct-wrapper-floors/SKILL.md). Production support
+requires deployed capability readback; current source versions do not prove it.

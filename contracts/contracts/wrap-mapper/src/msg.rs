@@ -27,19 +27,22 @@ pub enum ExecuteMsg {
         amount: Uint128,
     },
 
+    /// Floor-bearing treasury callback. Version 1 checks actual recipient delta.
+    NotifyDepositWithMinimum {
+        depositor: String,
+        denom: String,
+        amount: Uint128,
+        minimum_receive: Uint128,
+    },
+
     /// CW20 receive hook for unwrapping
     Receive(Cw20ReceiveMsg),
 
     /// Sets a denom->CW20 mapping (governance-only)
-    SetDenomMapping {
-        denom: String,
-        cw20_addr: String,
-    },
+    SetDenomMapping { denom: String, cw20_addr: String },
 
     /// Removes a denom mapping (governance-only)
-    RemoveDenomMapping {
-        denom: String,
-    },
+    RemoveDenomMapping { denom: String },
 
     /// Sets rate limit for a denom (governance-only)
     SetRateLimit {
@@ -48,14 +51,10 @@ pub enum ExecuteMsg {
     },
 
     /// Removes rate limit for a denom (governance-only)
-    RemoveRateLimit {
-        denom: String,
-    },
+    RemoveRateLimit { denom: String },
 
     /// Proposes governance transfer with 7-day timelock (governance-only)
-    ProposeGovernanceTransfer {
-        new_governance: String,
-    },
+    ProposeGovernanceTransfer { new_governance: String },
 
     /// Accepts a pending governance transfer after timelock (new governance only)
     AcceptGovernanceTransfer {},
@@ -64,19 +63,13 @@ pub enum ExecuteMsg {
     CancelGovernanceTransfer {},
 
     /// Pauses or unpauses the contract (governance-only)
-    SetPaused {
-        paused: bool,
-    },
+    SetPaused { paused: bool },
 
     /// Updates wrap fee only (governance-only, max 1000 = 10%)
-    SetFeeWrapBps {
-        fee_wrap_bps: u16,
-    },
+    SetFeeWrapBps { fee_wrap_bps: u16 },
 
     /// Updates unwrap fee only (governance-only, max 1000 = 10%)
-    SetFeeUnwrapBps {
-        fee_unwrap_bps: u16,
-    },
+    SetFeeUnwrapBps { fee_unwrap_bps: u16 },
 
     /// Updates both wrap and unwrap fees atomically (governance-only)
     SetFees {
@@ -87,7 +80,13 @@ pub enum ExecuteMsg {
 
 #[cw_serde]
 pub enum Cw20HookMsg {
-    Unwrap { recipient: Option<String> },
+    Unwrap {
+        recipient: Option<String>,
+    },
+    UnwrapWithMinimum {
+        recipient: Option<String>,
+        minimum_receive: Uint128,
+    },
 }
 
 #[cw_serde]
@@ -95,6 +94,8 @@ pub enum Cw20HookMsg {
 pub enum QueryMsg {
     #[returns(ConfigResponse)]
     Config {},
+    #[returns(ExecutionCapabilitiesResponse)]
+    ExecutionCapabilities {},
 
     #[returns(DenomMappingResponse)]
     DenomMapping { denom: String },
@@ -158,4 +159,35 @@ pub enum TreasuryExecuteMsg {
         denom: String,
         amount: Uint128,
     },
+}
+
+#[cw_serde]
+pub struct ExecutionCapabilitiesResponse {
+    pub direct_wrapper_floor_version: u8,
+}
+
+#[cfg(test)]
+mod floor_wire_compatibility {
+    use super::*;
+    use cosmwasm_std::{from_json, to_json_binary};
+
+    #[cw_serde]
+    enum LegacyHook {
+        Unwrap { recipient: Option<String> },
+    }
+
+    #[test]
+    fn distinct_protected_hook_is_rejected_by_legacy_abi() {
+        let legacy = to_json_binary(&Cw20HookMsg::Unwrap { recipient: None }).unwrap();
+        assert!(from_json::<LegacyHook>(&legacy).is_ok());
+        let protected = to_json_binary(&Cw20HookMsg::UnwrapWithMinimum {
+            recipient: None,
+            minimum_receive: Uint128::one(),
+        })
+        .unwrap();
+        assert!(from_json::<LegacyHook>(&protected).is_err());
+        assert!(
+            from_json::<Cw20HookMsg>(br#"{"unwrap_with_minimum":{"recipient":null}}"#).is_err()
+        );
+    }
 }
