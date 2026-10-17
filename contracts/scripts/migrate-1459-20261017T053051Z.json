@@ -1,0 +1,22 @@
+{
+  "time_utc": "2026-10-17T05:40:08Z",
+  "chain": "columbus-5",
+  "treasury": {
+    "address": "terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2",
+    "code_old": "11667",
+    "code_new": "11728",
+    "migrate_tx": "43CA371388BD0127BF7631543192C21A2EAC309822A326985CC204499350A0DD",
+    "capability": "{\"direct_wrapper_floor_version\":1}"
+  },
+  "mapper": {
+    "address": "terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2",
+    "code_old": "11574",
+    "code_new": "11729",
+    "migrate_tx": "4F4DDF3ADEC59206D7ED7FE08081B64C83F1FA25C752303C6FC9A27DAC51449C",
+    "capability": "{\"direct_wrapper_floor_version\":1}"
+  },
+  "artifacts": {
+    "treasury_sha256": "709b2b1a7026342518bbbe58713690a2e35dfd6127582a12fc9c205fcd33da76",
+    "mapper_sha256": "b9fc56bafe0b0c8066ed3f47ce64cc8936c92648352e91304f1632a9fb84c966"
+  }
+}

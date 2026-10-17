@@ -17,8 +17,8 @@ USTR CMM creates a pathway for USTC holders to participate in a new collateraliz
 | Contract | Code ID | Address |
 |----------|---------|---------|
 | USTR Token | `10184` | `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv` |
-| Treasury | `11564` | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
-| wrap-mapper | `11574` | `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` |
+| Treasury | `11728` | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
+| wrap-mapper | `11729` | `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` |
 | cLUNC | `10184` | `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg` |
 | cUSTC | `10184` | `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch` |
 | USTC-Swap | `10838` | `terra16ytnkhw53elefz2rhulcr4vq8fs83nd97ht3wt05wtcq7ypcmpqqv37lel` |
@@ -29,7 +29,7 @@ USTR CMM creates a pathway for USTC holders to participate in a new collateraliz
 | ust1-oracle | — | `terra1fmht0t6svq3n24zx03nkfja0m40zhfyyxkdcvlrkl6u7gfe6aagq4gch8n` |
 | ust1-window | `11566` | `terra1zxwpzpzpleatqn39r00grau4yt29sld8pw78s7ktvjafnj5nsaxq0h3rh2` |
 
-See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for wrap/spender wiring, the 2026-08-08 treasury migrate record, and the 2026-08-15 wrap-mapper `11574` / `SetFees` 200/51 record. Frontend Treasury + Legal + wallets: [skills/frontend-vfdusd-oracle](./skills/frontend-vfdusd-oracle/SKILL.md), [skills/frontend-ust1-ratios](./skills/frontend-ust1-ratios/SKILL.md), [skills/frontend-treasury-lp-nav](./skills/frontend-treasury-lp-nav/SKILL.md), [skills/frontend-treasury-available-supply](./skills/frontend-treasury-available-supply/SKILL.md), [skills/frontend-treasury-cl8y-holdings](./skills/frontend-treasury-cl8y-holdings/SKILL.md), [skills/frontend-treasury-assets-layout](./skills/frontend-treasury-assets-layout/SKILL.md), [skills/frontend-legal-clickwrap](./skills/frontend-legal-clickwrap/SKILL.md), [skills/frontend-keplr-compatible-wallets](./skills/frontend-keplr-compatible-wallets/SKILL.md) ([docs/WALLETS.md](./docs/WALLETS.md), [#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4), [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18), [#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20), [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21)).
+See [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) for wrap/spender wiring, the 2026-08-08 treasury migrate record, the 2026-08-15 wrap-mapper `SetFees` 200/51 record, and the 2026-10-17 DEX #1459 protected-floor migration (treasury `11728`, wrap-mapper `11729`, capability `direct_wrapper_floor_version:1`). Frontend Treasury + Legal + wallets: [skills/frontend-vfdusd-oracle](./skills/frontend-vfdusd-oracle/SKILL.md), [skills/frontend-ust1-ratios](./skills/frontend-ust1-ratios/SKILL.md), [skills/frontend-treasury-lp-nav](./skills/frontend-treasury-lp-nav/SKILL.md), [skills/frontend-treasury-available-supply](./skills/frontend-treasury-available-supply/SKILL.md), [skills/frontend-treasury-cl8y-holdings](./skills/frontend-treasury-cl8y-holdings/SKILL.md), [skills/frontend-treasury-assets-layout](./skills/frontend-treasury-assets-layout/SKILL.md), [skills/frontend-legal-clickwrap](./skills/frontend-legal-clickwrap/SKILL.md), [skills/frontend-keplr-compatible-wallets](./skills/frontend-keplr-compatible-wallets/SKILL.md) ([docs/WALLETS.md](./docs/WALLETS.md), [#4](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/4), [#18](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/18), [#20](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/20), [#21](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/21)).
 
 ## Project Structure
 

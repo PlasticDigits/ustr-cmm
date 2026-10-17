@@ -57,11 +57,11 @@ This document provides an overview of all USTR CMM smart contracts with links to
 **Description**: Secure custodian for all protocol assets. Holds USTC received from swaps and will eventually hold the diversified basket of assets backing UST1.
 
 **Deployed Code IDs**:
-- Mainnet: `11564` (migrated from `10673` on 2026-08-08; [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5))
+- Mainnet: `11728` (cw2 `0.3.0`; was `11667`; chain `10673`→`11564` 2026-08-08 [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5), `11564`→`11667` [#43](https://git.cl8y.com/code/ustr-cmm/issues/43), `11667`→`11728` 2026-10-17 DEX #1459)
 
 **Deployed Contract Addresses**:
 - Mainnet (columbus-5): `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2`
-- Admin / governance: `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` (`cl8y2_admin`)
+- Wasm admin / governance: `terra1zlmv2xydxcusurtr6rl78wsvytdc6mfex6hep7` (DEX 2-of-3, live 2026-09-12; originally `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` `cl8y2_admin`)
 
 **Key Features**:
 - Holds native tokens (USTC, LUNC, etc.) and CW20 tokens
@@ -161,14 +161,14 @@ This document provides an overview of all USTR CMM smart contracts with links to
 **Description**: Orchestrates native ↔ CW20 wrapping (cLUNC / cUSTC). Never holds native tokens — treasury keeps custody; wrap-mapper mints/burns CW20 and calls treasury `InstantWithdraw` on unwrap. Design: [plans/NATIVE_TOKEN_WRAPPING.md](../plans/NATIVE_TOKEN_WRAPPING.md).
 
 **Deployed Code IDs**:
-- Mainnet: `11574` (was `11565`; cw2 `0.3.0`)
+- Mainnet: `11729` (cw2 `0.4.0`; was `11574`; protected direct-wrapper floors 2026-10-17 DEX #1459)
 
 **Deployed Contract Addresses**:
 - Mainnet wrap-mapper: `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2`
 - Mainnet cLUNC (cw20-mintable `10184`): `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg`
 - Mainnet cUSTC (cw20-mintable `10184`): `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch`
 
-**Mainnet config (live 2026-08-15, [#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13)):** **`fee_wrap_bps=200`**, **`fee_unwrap_bps=51`** (≈2% unwrap all-in under 1.5% burn tax, **no** InstantWithdraw gross-up). Previously a single `fee_bps=200` on both paths until [#9](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/9) code + this migrate. Treasury = CMM treasury above, governance = `terra1xsecn…`, not paused. Mappings: `uluna`→cLUNC, `uusd`→cUSTC. Treasury `denom_wrappers` point both denoms at wrap-mapper. wrap-mapper is a minter on both CW20s. Per-denom rate limits unset (fail-open).
+**Mainnet config (live 2026-10-17):** **`fee_wrap_bps=200`**, **`fee_unwrap_bps=51`** (≈2% unwrap all-in under 1.5% burn tax, **no** InstantWithdraw gross-up), governance = `terra1zlmv2xy…` (DEX 2-of-3), not paused. Mappings: `uluna`→cLUNC, `uusd`→cUSTC. Treasury `denom_wrappers` point both denoms at wrap-mapper. wrap-mapper is a minter on both CW20s. Rate limits live: `uluna` `110000000000000`/86400s, `uusd` `1100000000000`/86400s. `execution_capabilities.direct_wrapper_floor_version = 1` on treasury `11728` and wrap-mapper `11729` (DEX #1459 protected `WrapDepositWithMinimum` / `UnwrapWithMinimum`).
 
 **Fees:** wrap uses only `fee_wrap_bps` (untaxed path); unwrap uses only `fee_unwrap_bps` then receiver pays burn tax on `BankMsg::Send`. Solvency: burn `A` CW20 / withdraw `A − fee_unwrap` → surplus ≈ `+fee_unwrap`; unwrap fee need **not** cover tax. Retune rule + operator msgs: [docs/DEPLOYMENT.md](./DEPLOYMENT.md#asymmetric-wrapunwrap-fees-vs-burn-tax). Agent skill: [`skills/wrap-mapper-asymmetric-fees`](../skills/wrap-mapper-asymmetric-fees/SKILL.md).
 
