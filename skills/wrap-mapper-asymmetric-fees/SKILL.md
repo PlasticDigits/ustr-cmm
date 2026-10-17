@@ -29,9 +29,9 @@ A single `fee_bps=200` on wrap **and** unwrap plus 1.5% burn tax made unwrap all
 | `Config.fee_bps` / `ConfigResponse.fee_bps` / `SetFeeBps` | **Removed** |
 | `fee_wrap_bps`, `fee_unwrap_bps` | Required |
 | `SetFeeWrapBps` / `SetFeeUnwrapBps` / `SetFees` | Governance-only |
-| cw2 version | `0.3.0` (wrap-mapper package) |
+| cw2 version | `0.4.0` (adds protected `*WithMinimum` floor ABI; fee ABI unchanged from `0.3.0`) |
 
-Mainnet wrap-mapper is on this ABI (code `11574`, 2026-08-15). No dual-read `fee_bps` window. DEX consumer: [#516](https://gitlab.com/PlasticDigits/cl8y-dex-terraclassic/-/work_items/516) / Coolify still needs the same-window frontend rebuild.
+Mainnet wrap-mapper is on this fee ABI (code `11729`, cw2 `0.4.0`, migrated 2026-10-17 from `11574`; DEX #1459 added `NotifyDepositWithMinimum` / `UnwrapWithMinimum` plus `execution_capabilities.direct_wrapper_floor_version:1`). No dual-read `fee_bps` window. DEX consumer: [#516](https://gitlab.com/PlasticDigits/cl8y-dex-terraclassic/-/work_items/516) / Coolify still needs the same-window frontend rebuild.
 
 ## Invariants (must hold)
 
@@ -55,7 +55,7 @@ Aim: `receive/A = 0.98`. Example: `0.015` → **51**. Prefer ≤ 2% all-in when 
 
 ## Ops (no secrets; human operators broadcast)
 
-Mainnet wrap-mapper: `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` — code **`11574`**, live fees **200 / 51**.
+Mainnet wrap-mapper: `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` — code **`11729`** (cw2 `0.4.0`, `0.3.0` fees preserved), live fees **200 / 51**.
 
 First-time migrate (already executed 2026-08-15): store wasm → migrate `{}` (maps legacy `fee_bps` → both fields) → same-window `SetFees`:
 

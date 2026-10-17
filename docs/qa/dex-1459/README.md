@@ -61,7 +61,8 @@ arithmetic. Source implementation and tests do not establish deployed support.
 - [x] Isolated LocalTerra actual nonzero bank-tax execution, actual-net floor
   retry and protected gas measurement; [upstream-token receipt](localterra-receipt.json)
   and [DEX-token receipt](localterra-dex-token-receipt.json).
-- [ ] Production migration, capability readback and deployed DEX acceptance.
+- [x] Production migration + capability readback (2026-10-17): treasury `11667`→`11728` (0.3.0), wrap-mapper `11574`→`11729` (0.4.0), `direct_wrapper_floor_version:1` on both.
+- [ ] Deployed DEX/browser acceptance (DEX-side direct signing and consumer rollout).
 
 An agent unable to complete a check may mark it **SKIP** with a concrete reason
 and use overall **PASS WITH SKIPS** when all executed checks pass. Leave skipped

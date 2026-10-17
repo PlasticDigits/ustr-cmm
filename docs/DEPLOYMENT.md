@@ -330,7 +330,7 @@ terrad query wasm contract-state smart $SWAP '{"status": {}}' \
 In-place migrate keeps mainnet treasury address
 `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` stable.
 
-**Mainnet status (2026-08-15):** treasury migrated `10673` → **`11564`**; wrap-mapper code **`11574`** (was `11565`; cw2 `0.3.0`, [#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13)); cLUNC/cUSTC + denom wiring complete; vFDUSD → ust1-window spender registered with `limit_24h=10000000000`. See [Contract Addresses](#contract-addresses) and issue [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5).
+**Mainnet status (2026-10-17):** treasury code **`11728`** (cw2 `0.3.0`; chain `10673`→`11564` 2026-08-08, `11564`→`11667` [#43](https://git.cl8y.com/code/ustr-cmm/issues/43), `11667`→`11728` DEX #1459); wrap-mapper code **`11729`** (cw2 `0.4.0`; was `11574`; DEX #1459 protected floors); cLUNC/cUSTC + denom wiring complete; vFDUSD → ust1-window spender registered with `limit_24h=10000000000`. See [Contract Addresses](#contract-addresses), the [2026-10-17 #1459 record](#mainnet-migrate-record-1459--done-2026-10-17), and issue [#5](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/5).
 
 **Wasm admin / governance (2026-09-12):** both are DEX 2-of-3 `terra1zlmv2xydxcusurtr6rl78wsvytdc6mfex6hep7`. Do **not** `wasm migrate` this treasury as `cl8y2_admin`. `treasury-migrate-wrap-wire.sh` still names that EOA and is stale for migrate.
 
@@ -347,7 +347,7 @@ Store optimizer `treasury.wasm` (permissionless), then 2-of-3 `wasm migrate` thi
 
 Do not Refresh DEX pair pins until ALPHA LCD `code_id` is **11666**. Keep factory whitelist **11630** until Refresh. DEX leftover: [cl8y-dex-terraclassic#1250](https://git.cl8y.com/code/cl8y-dex-terraclassic/issues/1250).
 
-**One-shot operator script** (steps A+B+C): [`contracts/scripts/treasury-migrate-wrap-wire.sh`](../contracts/scripts/treasury-migrate-wrap-wire.sh) — signs as `cl8y2_admin` (`terra1xsecn…`). Prefer `--gas auto --gas-prices 28.325uluna` (store adj **1.5**, execute/migrate adj **1.4**). Fixed `--fees 100000000uluna` is **insufficient for wasm store** (~covers ≤3.53M gas; treasury store sim was ~3.30M raw / ~4.95M with 1.5 adj ≈ **140 LUNC**).
+**One-shot operator script** (steps A+B+C): [`contracts/scripts/treasury-migrate-wrap-wire.sh`](../contracts/scripts/treasury-migrate-wrap-wire.sh) — signs as `cl8y2_admin` (`terra1xsecn…`). Prefer `--gas auto --gas-prices 28.325uluna` (store adj **1.5**, execute/migrate adj **1.4**). Fixed `--fees 100000000uluna` is **insufficient for wasm store** (~covers ≤3.53M gas; treasury store sim was ~3.30M raw / ~4.95M with 1.5 adj ≈ **140 LUNC**). The 2026-10-17 DEX #1459 migration used the reviewed idempotent [`contracts/scripts/migrate-1459-mainnet.sh`](../contracts/scripts/migrate-1459-mainnet.sh) (2-of-3, mapper-first, `execution_capabilities` readback).
 
 **Fail-closed (#7):** InstantWithdrawCw20 requires a configured 24h pull limit for `(token, spender)`. Set the limit **with** or **before** enabling window redeem.
 
@@ -421,6 +421,7 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 - [x] `Cw20SpenderLimit` query confirms production quota
 - [x] wrap-mapper + cLUNC/cUSTC denom wiring (#5)
 - [x] wrap-mapper migrate + `SetFees` 200/51 ([#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13); code `11574`, 2026-08-15)
+- [x] Protected direct-wrapper floors migrated ([PR #62](https://git.cl8y.com/code/ustr-cmm/pulls/62) / DEX #1459; treasury `11728`, wrap-mapper `11729`, capability v1, 2026-10-17)
 - [ ] Small mainnet wrap/unwrap smoke both denoms
 - [ ] Window redeem smoke after companion ready
 
@@ -439,8 +440,8 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 | Contract | Code ID | Address |
 |----------|---------|---------|
 | USTR Token | `10184` | `terra1vy3kc0swag2rhn7jz6n72jp0l2ns0p6r6ez5grxq5uhj2rvs97fqfsetxv` |
-| Treasury | `11564` (was `10673`) | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
-| wrap-mapper | `11574` (was `11565`) | `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` |
+| Treasury | `11728` (was `11667`/`11564`/`10673`) | `terra16j5u6ey7a84g40sr3gd94nzg5w5fm45046k9s2347qhfpwm5fr6sem3lr2` |
+| wrap-mapper | `11729` (was `11574`/`11565`) | `terra1xuuuhpmyd5t29ry7mydg7ra2q2phrwhx7j28nx7x9sjw6zznkumsz0nmd2` |
 | cLUNC | `10184` | `terra1437qslye72t7qmmahn4t5chz50r8a62g45phwkquwpyu2l62u6ksqssgdg` |
 | cUSTC | `10184` | `terra1nap4dxh9tv35v0ynd9m4k6zt6c0dq6weszc4j5m564kjls56hu7qcr56ch` |
 | USTC-Swap | `10838` | `terra16ytnkhw53elefz2rhulcr4vq8fs83nd97ht3wt05wtcq7ypcmpqqv37lel` |
@@ -455,9 +456,9 @@ Agent/operator playbook: [skills/treasury-cw20-instant-withdraw](../skills/treas
 
 | Binding | Value |
 |---------|-------|
-| Admin / governance (`cl8y2_admin`) | `terra1xsecn4snv94ezcez0z3vq8an9j4h4kxxcydp8l` |
+| Wasm admin / governance (DEX 2-of-3) | `terra1zlmv2xydxcusurtr6rl78wsvytdc6mfex6hep7` |
 | wrap-mapper `fee_wrap_bps` / `fee_unwrap_bps` | **Live:** `200` / `51` ([#13](https://gitlab.com/PlasticDigits2/ustr-cmm/-/issues/13), 2026-08-15) — see [Asymmetric wrap/unwrap fees vs burn tax](#asymmetric-wrapunwrap-fees-vs-burn-tax) |
-| Per-denom rate limits | **unset** (fail-open until `SetRateLimit`) |
+| Per-denom rate limits | `uluna` `110000000000000`/86400s, `uusd` `1100000000000`/86400s (live 2026-10-17) |
 | `uluna` → cLUNC → wrap-mapper | wired |
 | `uusd` → cUSTC → wrap-mapper | wired |
 | CW20 spender | vFDUSD `terra1mnl9…svj3` → ust1-window `terra1zxwpz…h3rh2` |
@@ -496,7 +497,7 @@ If tax rises above ~2%, “2% all-in with no gross-up” is impossible without s
 
 #### Mainnet migrate record (#13 — done 2026-08-15)
 
-Live wrap-mapper is code **`11574`**, cw2 `0.3.0`, `Config { fee_wrap_bps: 200, fee_unwrap_bps: 51 }` (no `fee_bps`). Address unchanged.
+As of 2026-08-15 the live wrap-mapper was code **`11574`** (cw2 `0.3.0`, `Config { fee_wrap_bps: 200, fee_unwrap_bps: 51 }`, no `fee_bps`); it was later migrated to **`11729`** on 2026-10-17 (see [the #1459 record](#mainnet-migrate-record-1459--done-2026-10-17)). Address unchanged.
 
 | Step | Height | Tx |
 |------|--------|----|
@@ -528,6 +529,21 @@ terrad tx wasm execute $WRAP_MAPPER \
   --from cl8y2_admin --chain-id columbus-5 --node $RPC \
   --gas auto --gas-adjustment 1.4 --gas-prices 28.325uluna -y
 ```
+
+### Mainnet migrate record (#1459 — done 2026-10-17)
+
+Treasury **`11667` → `11728`** (cw2 `0.2.2` → `0.3.0`) and wrap-mapper **`11574` → `11729`** (cw2 `0.3.0` → `0.4.0`) add the protected `WrapDepositWithMinimum` / `NotifyDepositWithMinimum` / `UnwrapWithMinimum` protocol ([PR #62](https://git.cl8y.com/code/ustr-cmm/pulls/62), [DEX #1459](https://git.cl8y.com/code/cl8y-dex-terraclassic/issues/1459)). Both wasm admins are the DEX 2-of-3 `terra1zlmv2xy…`; wasm stored by `cl8ydeploy`. Legacy `WrapDeposit` / `NotifyDeposit` / `Unwrap` remain valid; addresses unchanged.
+
+| Step | Height | Tx |
+|------|--------|----|
+| Store treasury | `30873663` | [`A4C654F3…A6048E`](https://finder.terraclassic.community/columbus-5/tx/A4C654F3B545002789C1BDB2048F9EE25C7DF597762E54E89FAE5DBAAAA6048E) → code `11728` |
+| Store wrap-mapper | `30873666` | [`B715B896…2E6480`](https://finder.terraclassic.community/columbus-5/tx/B715B896037A8BA3ABD1734A28E643E8EBA90F67314AD2268ADBFE483B2E6480) → code `11729` |
+| Migrate mapper `{}` | `30873672` | [`4F4DDF3A…449C`](https://finder.terraclassic.community/columbus-5/tx/4F4DDF3ADEC59206D7ED7FE08081B64C83F1FA25C752303C6FC9A27DAC51449C) — `0.3.0` → `0.4.0` |
+| Migrate treasury `{}` | `30873676` | [`43CA3713…A0DD`](https://finder.terraclassic.community/columbus-5/tx/43CA371388BD0127BF7631543192C21A2EAC309822A326985CC204499350A0DD) — `0.2.2` → `0.3.0` |
+
+Artifacts (optimizer `cosmwasm/workspace-optimizer:0.16.1`): treasury sha256 `709b2b1a7026342518bbbe58713690a2e35dfd6127582a12fc9c205fcd33da76`, wrap_mapper sha256 `b9fc56bafe0b0c8066ed3f47ce64cc8936c92648352e91304f1632a9fb84c966`; both equal the on-chain code `data_hash`. Receipt: [`contracts/scripts/migrate-1459-20261017T053051Z.json`](../contracts/scripts/migrate-1459-20261017T053051Z.json). Idempotent one-shot script: [`contracts/scripts/migrate-1459-mainnet.sh`](../contracts/scripts/migrate-1459-mainnet.sh).
+
+Capability readback `{"execution_capabilities":{}}` → `{"direct_wrapper_floor_version":1}` on both contracts. State preserved across the migrate (2-of-3 governance, fees 200/51, `uluna`/`uusd` denom mappings, rate limits, vFDUSD spender limit). DEX-side direct signing remains gated on the separate DEX capability observation; this record is migration evidence, not deployed DEX acceptance.
 
 ### Frontend address wiring (#10 / #11 / #14 / #16)
 
